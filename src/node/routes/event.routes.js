@@ -1,7 +1,25 @@
 import express from 'express';
 import { protect } from '../middleware/auth.js';
 import { validateCreateEvent } from '../middleware/validation.js';
-import * as eventController from '../controllers/event.controller.js';
+import {
+    planEvent,
+    analyzeEventFeedback,
+    createEvent,
+    getEvents,
+    updateEvent,
+    deleteEvent,
+    addVendor,
+    removeVendor,
+    addGuest,
+    removeGuest,
+    updateBudget,
+    updateSchedule,
+    addTimelineItem,
+    addChecklistItem,
+    addDocument,
+    addNote,
+    getEventById
+} from '../controllers/event.controller.js';
 
 const router = express.Router();
 
@@ -9,26 +27,30 @@ const router = express.Router();
 router.use(protect);
 
 // Event routes
-router.post('/', validateCreateEvent, eventController.createEvent);
-router.get('/', eventController.getEvents);
-router.get('/:id', eventController.getEventById);
-router.patch('/:id', validateCreateEvent, eventController.updateEvent);
-router.delete('/:id', eventController.deleteEvent);
+router.post('/', validateCreateEvent, createEvent);
+router.get('/', getEvents);
+router.get('/:id', getEventById);
+router.put('/:id', updateEvent);
+router.delete('/:id', deleteEvent);
 
 // Event-specific routes
-router.post('/:id/vendors', eventController.addVendor);
-router.delete('/:id/vendors/:vendorId', eventController.removeVendor);
-router.post('/:id/guests', eventController.addGuest);
-router.delete('/:id/guests/:guestId', eventController.removeGuest);
-router.post('/:id/budget', eventController.updateBudget);
-router.post('/:id/schedule', eventController.updateSchedule);
+router.post('/:id/vendors', addVendor);
+router.delete('/:id/vendors/:vendorId', removeVendor);
+router.post('/:id/guests', addGuest);
+router.delete('/:id/guests/:guestId', removeGuest);
+router.post('/:id/budget', updateBudget);
+router.post('/:id/schedule', updateSchedule);
 
 // Timeline and checklist routes
-router.post('/:id/timeline', eventController.addTimelineItem);
-router.post('/:id/checklist', eventController.addChecklistItem);
+router.post('/:id/timeline', addTimelineItem);
+router.post('/:id/checklist', addChecklistItem);
 
 // Document and note routes
-router.post('/:id/documents', eventController.addDocument);
-router.post('/:id/notes', eventController.addNote);
+router.post('/:id/documents', addDocument);
+router.post('/:id/notes', addNote);
+
+// New routes for AI-powered features
+router.post('/plan', protect, planEvent);
+router.post('/analyze-feedback', protect, analyzeEventFeedback);
 
 export default router; 

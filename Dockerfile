@@ -31,8 +31,11 @@ ENV PATH="/usr/src/app/venv/bin:$PATH"
 RUN pip install --no-cache-dir --upgrade pip setuptools wheel && \
     pip install --no-cache-dir -r src/python/requirements.txt
 
+# Debug: Confirm Flask is installed
+RUN . /usr/src/app/venv/bin/activate && python -m pip show flask
+
 # Expose the port the app runs on
-EXPOSE 3000
+EXPOSE 9600
 
 # Command to run the application
 CMD ["npm", "start"] 

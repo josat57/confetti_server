@@ -1,5 +1,7 @@
 import Event from '../models/event.model.js';
 import { handleError } from '../utils/error.js';
+import { logger } from '../utils/logger.js';
+import pythonService from '../services/python.service.js';
 
 export const createEvent = async (req, res) => {
   try {
@@ -368,4 +370,75 @@ export const updateSchedule = async (req, res) => {
   } catch (error) {
     handleError(res, error);
   }
-}; 
+};
+
+// Export individual controller functions
+export const planEvent = async (req, res) => {
+    try {
+        const { budget, preferences, requirements } = req.body;
+
+        // Step 1: Optimize budget allocation
+        const optimizedBudget = await pythonService.optimizeBudget(budget, preferences);
+
+        // Step 2: Predict prices for required items
+        const pricePredictions = await pythonService.predictPrices(requirements.items);
+
+        // Step 3: Match vendors based on requirements
+        const matchedVendors = await pythonService.matchVendors(requirements);
+
+        // Step 4: Get personalized recommendations
+        const recommendations = await pythonService.getRecommendations(preferences);
+
+        // Step 5: Simulate the event with the gathered information
+        const eventSimulation = await pythonService.simulateEvent({
+            budget: optimizedBudget,
+            vendors: matchedVendors,
+            items: pricePredictions,
+            recommendations
+        });
+
+        // Combine all results into a comprehensive response
+        const response = {
+            success: true,
+            data: {
+                optimizedBudget,
+                pricePredictions,
+                matchedVendors,
+                recommendations,
+                simulation: eventSimulation
+            }
+        };
+
+        res.json(response);
+    } catch (error) {
+        logger.error('Error in planEvent:', error);
+        res.status(500).json({
+            success: false,
+            error: 'Failed to plan event',
+            details: error.message
+        });
+    }
+};
+
+export const analyzeEventFeedback = async (req, res) => {
+    try {
+        const { feedback } = req.body;
+        
+        // Use NLP service to analyze feedback
+        const analysis = await pythonService.analyzeText(feedback);
+
+        res.json({
+            success: true,
+            data: analysis
+        });
+    } catch (error) {
+        logger.error('Error in analyzeEventFeedback:', error);
+        res.status(500).json({
+            success: false,
+            error: 'Failed to analyze feedback',
+            details: error.message
+        });
+    }
+};
+
+export default { planEvent, analyzeEventFeedback }; 

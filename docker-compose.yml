@@ -7,17 +7,19 @@ services:
       context: ./
       dockerfile: Dockerfile
     ports:
-      - "3600:3000"
+      - "9600:9600"
     volumes:
       - ./src/node:/usr/src/app/src/node
       - /usr/src/app/node_modules
     env_file:
       - .env
     environment:
+      - PORT=${PORT:-9600}
       - NODE_ENV=development
-      - MONGODB_URI=mongodb://mongodb:27017/confetti
-      - POSTGRES_URI=postgresql://postgres:postgres@postgres:5432/confetti
-      - REDIS_URI=redis://redis:6379
+      - MONGODB_URI=mongodb://confetti:Ginger_123@confetti-mongodb:27017/confetti?authSource=admin
+      - REDIS_URL=redis://confetti-redis:6379
+      - POSTGRES_URI=${POSTGRES_URI}
+      - PYTHON_API_URL=${PYTHON_API_URL}
       - GOOGLE_CLIENT_ID=${GOOGLE_CLIENT_ID}
       - GOOGLE_CLIENT_SECRET=${GOOGLE_CLIENT_SECRET}
       - FRONTEND_URL=${FRONTEND_URL:-http://localhost:3000}
@@ -41,6 +43,9 @@ services:
       - mongodb
       - postgres
       - redis
+    container_name: confetti-node-api
+    networks:
+      - confetti-network
 
   # Python AI/ML Service
   python-api:
@@ -48,31 +53,38 @@ services:
       context: ./src/python
       dockerfile: Dockerfile
     ports:
-      - "5600:5001"
+      - "5600:5600"
     volumes:
       - ./src/python:/usr/src/app/src/python
     environment:
       - FLASK_ENV=development
-      - MONGODB_URI=mongodb://mongodb:27017/confetti
+      - MONGODB_URI=mongodb://confetti:Ginger_123@confetti-mongodb:27017/confetti?authSource=admin
       - REDIS_URI=redis://redis:6379
     depends_on:
       - mongodb
       - redis
+    container_name: confetti-python-api
+    networks:
+      - confetti-network
 
   # MongoDB Service
   mongodb:
     image: mongo:latest
+    container_name: confetti-mongodb
     ports:
       - "27017:27017"
     volumes:
       - mongodb_data:/data/db
+      - ./mongo-init.js:/docker-entrypoint-initdb.d/mongo-init.js:ro
     environment:
-      - MONGO_INITDB_ROOT_USERNAME=admin
-      - MONGO_INITDB_ROOT_PASSWORD=password
+      - MONGO_INITDB_DATABASE=confetti
+    networks:
+      - confetti-network
 
   # PostgreSQL Service
   postgres:
     image: postgres:latest
+    container_name: confetti-postgres
     ports:
       - "5432:5432"
     volumes:
@@ -81,16 +93,25 @@ services:
       - POSTGRES_USER=postgres
       - POSTGRES_PASSWORD=postgres
       - POSTGRES_DB=confetti
+    networks:
+      - confetti-network
 
   # Redis Service
   redis:
     image: redis:latest
+    container_name: confetti-redis
     ports:
       - "6379:6379"
     volumes:
       - redis_data:/data
+    networks:
+      - confetti-network
 
 volumes:
   mongodb_data:
   postgres_data:
-  redis_data: 
+  redis_data:
+
+networks:
+  confetti-network:
+    driver: bridge 
