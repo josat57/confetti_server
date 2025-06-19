@@ -1,5 +1,4 @@
 import 'dotenv/config';
-// import './models/index.js';  // This will register all models
 import app from './app.js';
 import { connectDB } from './config/database.js';
 import http from 'http';
@@ -16,10 +15,6 @@ console.log('Environment Variables:', {
 });
 
 const PORT = config.port;
-
-// Import models
-// import './models/trip.model.js';
-// import './models/expense.model.js';
 
 // Start server
 const startServer = async () => {

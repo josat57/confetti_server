@@ -1,43 +1,50 @@
-import jwt from 'jsonwebtoken';
-import AppError from '../utils/AppError.js';
+import { verifyAccessToken } from '../utils/auth.js';
+import { AppError } from '../utils/AppError.js';
 import User from '../models/user.model.js';
+import jwt from 'jsonwebtoken';
+import Admin from '../models/Admin.js';
+import { createError } from '../utils/error.js';
+import speakeasy from 'speakeasy';
 
 export const protect = async (req, res, next) => {
   try {
-    // 1) Get token and check if it exists
-    let token;
-    if (
-      req.headers.authorization &&
-      req.headers.authorization.startsWith('Bearer')
-    ) {
-      token = req.headers.authorization.split(' ')[1];
-    } else if (req.cookies && req.cookies.jwt) {
-      token = req.cookies.jwt;
-    }
+    // Get token from cookie
+    const token = req.cookies.accessToken;
 
     if (!token) {
-      return next(new AppError('You are not logged in', 401));
+      return next(new AppError('Not authenticated. Please log in.', 401));
     }
 
-    // 2) Verify token
-    const decoded = jwt.verify(token, process.env.JWT_SECRET);
+    // Verify token
+    const decoded = verifyAccessToken(token);
 
-    // 3) Check if user still exists
+    // Check if user still exists
     const user = await User.findById(decoded.id);
     if (!user) {
-      return next(new AppError('User no longer exists', 401));
+      return next(new AppError('User no longer exists.', 401));
     }
 
-    // 4) Check if user changed password after the token was issued
+    // Check if user is active
+    if (!user.isActive) {
+      return next(new AppError('User account is deactivated.', 401));
+    }
+
+    // Check if user email is verified 
+    if (!user.isEmailVerified) {
+      return next(new AppError('User email is not verified.', 401));
+    }
+
+
+    // Check if user changed password after the token was issued
     if (user.changedPasswordAfter && user.changedPasswordAfter(decoded.iat)) {
-      return next(new AppError('User recently changed password', 401));
+        return next(new AppError('User recently changed password', 401));
     }
 
     // Grant access to protected route
     req.user = user;
     next();
   } catch (error) {
-    next(new AppError('Authentication failed', 401));
+    next(new AppError('Not authenticated. Please log in.', 401));
   }
 };
 
@@ -48,11 +55,144 @@ export const restrictTo = (...roles) => {
     }
     next();
   };
-};
+}; 
 
 export const verifyEmail = async (req, res, next) => {
   if (!req.user.isEmailVerified) {
     return next(new AppError('Please verify your email address', 403));
   }
   next();
+}; 
+
+// Middleware to handle token refresh
+export const handleTokenRefresh = async (req, res, next) => {
+  try {
+    const accessToken = req.cookies.accessToken;
+    const refreshToken = req.cookies.refreshToken;
+
+    if (!accessToken && refreshToken) {
+      // Access token is missing but refresh token exists
+      try {
+        const decoded = jwt.verify(
+          refreshToken,
+          process.env.JWT_REFRESH_SECRET
+        );
+
+        if (decoded.type === 'refreshToken') {
+          const admin = await Admin.findById(decoded.id);
+          if (admin && admin.isActive) {
+            // Set new secure cookies
+            const newAccessToken = jwt.sign(
+              { id: admin._id, role: admin.role, type: 'admin' },
+              process.env.JWT_ACCESS_SECRET,
+              { expiresIn: '15m' }
+            );
+
+            res.cookie('accessToken', newAccessToken, {
+              httpOnly: true,
+              secure: process.env.NODE_ENV === 'production',
+              sameSite: 'strict',
+              maxAge: 15 * 60 * 1000, // 15 minutes
+              path: '/'
+            });
+
+            req.admin = admin;
+            return next();
+          }
+        }
+      } catch (refreshError) {
+        // Refresh token is invalid, clear cookies
+        res.clearCookie('accessToken', { path: '/' });
+        res.clearCookie('refreshToken', { path: '/api/v1/admin/refresh' });
+        return next(createError(401, 'Session expired. Please login again.'));
+      }
+    }
+
+    next();
+  } catch (error) {
+    next(error);
+  }
+};
+
+const authenticateAdmin = async (req, res, next) => {
+  try {
+    // Get token from HTTP-only cookie
+    const token = req.cookies.accessToken;
+    
+    if (!token) {
+      throw createError(401, 'Authentication required');
+    }
+
+    const decoded = jwt.verify(token, process.env.JWT_ACCESS_SECRET);
+    
+    // Verify token type
+    if (decoded.type !== 'admin') {
+      throw createError(401, 'Invalid token type');
+    }
+
+    const admin = await Admin.findById(decoded.id);
+
+    if (!admin) {
+      throw createError(401, 'Admin not found');
+    }
+
+    if (!admin.isActive) {
+      throw createError(403, 'Account is deactivated');
+    }
+
+    if (admin.twoFactorEnabled) {
+      const twoFactorToken = req.header('X-2FA-Token');
+      if (!twoFactorToken) {
+        throw createError(401, 'Two-factor authentication required');
+      }
+
+      const verified = speakeasy.totp.verify({
+        secret: admin.twoFactorSecret,
+        encoding: 'base32',
+        token: twoFactorToken
+      });
+
+      if (!verified) {
+        throw createError(401, 'Invalid two-factor token');
+      }
+    }
+
+    req.admin = admin;
+    next();
+  } catch (error) {
+    if (error.name === 'JsonWebTokenError') {
+      next(createError(401, 'Invalid token'));
+    } else {
+      next(error);
+    }
+  }
+};
+
+const authorizeAdmin = (requiredPermissions) => {
+  return (req, res, next) => {
+    try {
+      const admin = req.admin;
+
+      if (admin.role === 'super_admin') {
+        return next();
+      }
+
+      const hasPermission = requiredPermissions.every(permission =>
+        admin.permissions.includes(permission)
+      );
+
+      if (!hasPermission) {
+        throw createError(403, 'Insufficient permissions');
+      }
+
+      next();
+    } catch (error) {
+      next(error);
+    }
+  };
+};
+
+export {
+  authenticateAdmin,
+  authorizeAdmin
 }; 

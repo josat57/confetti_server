@@ -1,0 +1,119 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Verify Your Email - Confetti</title>
+    <style>
+        body {
+            font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+            line-height: 1.6;
+            color: #333;
+            margin: 0;
+            padding: 0;
+            background-color: #f4f4f4;
+        }
+        .container {
+            max-width: 600px;
+            margin: 0 auto;
+            padding: 20px;
+            background: linear-gradient(135deg, #ffffff 0%, #f8f9fa 100%);
+            border-radius: 10px;
+            box-shadow: 0 4px 6px rgba(0, 0, 0, 0.1);
+        }
+        .header {
+            text-align: center;
+            padding: 20px 0;
+            background: linear-gradient(135deg, #925ae6 0%, #4c1d95 100%);
+            border-radius: 8px 8px 0 0;
+            margin: -20px -20px 20px -20px;
+        }
+        .header h1 {
+            color: white;
+            margin: 0;
+            font-size: 28px;
+            font-weight: 600;
+        }
+        .content {
+            padding: 20px;
+            background: white;
+            border-radius: 8px;
+            margin-bottom: 20px;
+        }
+        .button {
+            display: inline-block;
+            padding: 12px 24px;
+            background: linear-gradient(135deg, #8953db 0%, #4c1d95 100%);
+            color: white;
+            text-decoration: none;
+            border-radius: 25px;
+            font-weight: 600;
+            margin: 20px 0;
+        }
+        a {
+            color: white;
+            text-decoration: none;
+        }
+        
+        .otp-container {
+            background: #f8f9fa;
+            padding: 20px;
+            border-radius: 8px;
+            text-align: center;
+            margin: 20px 0;
+        }
+        .otp-code {
+            font-size: 32px;
+            font-weight: bold;
+            color: #10b981;
+            letter-spacing: 4px;
+        }
+        .footer {
+            text-align: center;
+            padding: 20px;
+            color: #666;
+            font-size: 14px;
+        }
+        .timer {
+            color: #666;
+            font-size: 14px;
+            text-align: center;
+            margin-top: 10px;
+        }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <div class="header">
+            <h1>🔐 Verify Your Email</h1>
+        </div>
+        <div class="content">
+            <h2>Hello {{firstName}},</h2>
+            <p>Thank you for signing up with Confetti! To ensure the security of your account and access all our features, please verify your email address.</p>
+            
+            <div class="otp-container">
+                <p>Your verification code is:</p>
+                <div class="otp-code">{{otp}}</div>
+                <p class="timer">This code will expire in 15 minutes</p>
+            </div>
+
+            <p>If you didn't request this verification, please ignore this email or contact our support team if you have concerns.</p>
+            
+            <div style="text-align: center;">
+                <a href="{{frontendUrl}}/verify-email?token={{token}}&email={{email}}" class="button">Verify Email Address</a>
+            </div>
+
+            <p>Need help? Our support team is here for you 24/7.</p>
+        </div>
+
+        <div class="footer">
+            <p>© 2025 Confetti. All rights reserved.</p>
+            <p>123 Event Street, Celebration City, 12345</p>
+            <p>
+                <a href="{{frontendUrl}}/privacy">Privacy Policy</a> |
+                <a href="{{frontendUrl}}/terms">Terms of Service</a>
+            </p>
+        </div>
+    </div>
+</body>
+</html> 

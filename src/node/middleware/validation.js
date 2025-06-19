@@ -1,27 +1,26 @@
 import Joi from 'joi';
-import { AppError } from './error.js';
+import { AppError } from '../utils/error.js';
 
 // Generic validation middleware
-export const validate = (schema) => {
+const validate = (schema) => {
   return (req, res, next) => {
-    const { error } = schema.validate(req.body, {
+    const { error, value } = schema.validate(req.body, {
       abortEarly: false,
-      stripUnknown: true,
+      stripUnknown: true
     });
 
     if (error) {
-      const errorMessage = error.details
-        .map((detail) => detail.message)
-        .join(', ');
-      return next(new AppError(errorMessage, 400));
+      const errors = error.details.map(detail => detail.message);
+      return next(new AppError(errors.join(', '), 400));
     }
 
+    req.validatedData = value;
     next();
   };
 };
 
 // Validation schemas
-export const schemas = {
+const schemas = {
   // Auth schemas
   register: Joi.object({
     email: Joi.string().email().required().messages({
@@ -32,22 +31,15 @@ export const schemas = {
       'string.min': 'Password must be at least 8 characters long',
       'any.required': 'Password is required'
     }),
-    firstName: Joi.string().required().messages({
-      'any.required': 'First name is required'
+    confirmPassword: Joi.string().min(8).required().messages({
+      'string.min': 'Password must be at least 8 characters long',
+      'any.required': 'Password is required'
     }),
-    lastName: Joi.string().required().messages({
-      'any.required': 'Last name is required'
+    username: Joi.string().optional().messages({
+      'any.required': 'Username is required'
     }),
-    role: Joi.string().valid('user', 'vendor', 'admin').default('user'),
     phone: Joi.string().pattern(/^\+?[\d\s-]{10,}$/).messages({
       'string.pattern.base': 'Please provide a valid phone number'
-    }),
-    address: Joi.object({
-      street: Joi.string(),
-      city: Joi.string(),
-      state: Joi.string(),
-      country: Joi.string(),
-      zipCode: Joi.string()
     })
   }),
 
@@ -61,27 +53,166 @@ export const schemas = {
     })
   }),
 
-  // User schemas
-  updateProfile: Joi.object({
+  forgotPassword: Joi.object({
+    email: Joi.string().email().required().messages({
+      'string.email': 'Please provide a valid email address',
+      'any.required': 'Email is required'
+    })
+  }),
+
+  resetPassword: Joi.object({
+    token: Joi.string().required().messages({
+      'any.required': 'Reset token is required'
+    }),
+    otp: Joi.string().length(6).required().messages({
+      'string.length': 'OTP must be 6 digits',
+      'any.required': 'OTP is required'
+    }),
+    password: Joi.string().min(8).required().messages({
+      'string.min': 'Password must be at least 8 characters long',
+      'any.required': 'Password is required'
+    }),
+    confirmPassword: Joi.string().valid(Joi.ref('password')).required().messages({
+      'any.only': 'Passwords do not match',
+      'any.required': 'Please confirm your password'
+    })
+  }),
+
+  resendOTP: Joi.object({
+    email: Joi.string().email().required().messages({
+      'string.email': 'Please provide a valid email address',
+      'any.required': 'Email is required'
+    })
+  }),
+
+  // Admin schemas
+  createAdmin: Joi.object({
+    email: Joi.string().email().required(),
+    password: Joi.string().min(8).required(),
+    firstName: Joi.string().required(),
+    lastName: Joi.string().required(),
+    role: Joi.string().valid('super_admin', 'admin', 'moderator').default('admin'),
+    permissions: Joi.array().items(
+      Joi.string().valid(
+        'user_management',
+        'content_management',
+        'system_configuration',
+        'moderation',
+        'support_tickets',
+        'audit_logs',
+        'analytics',
+        'vendor_management',
+        'communication_management',
+        'security_compliance',
+        'financial_oversight'
+      )
+    )
+  }),
+
+  updateAdmin: Joi.object({
+    email: Joi.string().email(),
     firstName: Joi.string(),
     lastName: Joi.string(),
-    phone: Joi.string().pattern(/^\+?[\d\s-]{10,}$/),
-    address: Joi.object({
-      street: Joi.string(),
-      city: Joi.string(),
-      state: Joi.string(),
-      country: Joi.string(),
-      zipCode: Joi.string()
+    role: Joi.string().valid('super_admin', 'admin', 'moderator'),
+    permissions: Joi.array().items(
+      Joi.string().valid(
+        'user_management',
+        'content_management',
+        'system_configuration',
+        'moderation',
+        'support_tickets',
+        'audit_logs',
+        'analytics',
+        'vendor_management',
+        'communication_management',
+        'security_compliance',
+        'financial_oversight'
+      )
+    )
+  }),
+
+  updateStatus: Joi.object({
+    status: Joi.string().valid('active', 'inactive', 'suspended').required()
+  }),
+
+  updatePermissions: Joi.object({
+    permissions: Joi.array().items(
+      Joi.string().valid(
+        'user_management',
+        'content_management',
+        'system_configuration',
+        'moderation',
+        'support_tickets',
+        'audit_logs',
+        'analytics',
+        'vendor_management',
+        'communication_management',
+        'security_compliance',
+        'financial_oversight'
+      )
+    ).required()
+  }),
+
+  updateUserStatus: Joi.object({
+    status: Joi.string().valid('active', 'suspended', 'banned').required()
+  }),
+
+  manageContent: Joi.object({
+    action: Joi.string().valid('create', 'update', 'delete').required(),
+    contentId: Joi.string().when('action', {
+      is: 'update',
+      then: Joi.required(),
+      otherwise: Joi.optional()
     }),
-    preferences: Joi.object({
-      notifications: Joi.object({
-        email: Joi.boolean(),
-        push: Joi.boolean(),
-        sms: Joi.boolean()
-      }),
-      theme: Joi.string().valid('light', 'dark'),
-      language: Joi.string()
+    content: Joi.object().when('action', {
+      is: Joi.string().valid('create', 'update'),
+      then: Joi.required(),
+      otherwise: Joi.optional()
     })
+  }),
+
+  updateSystemConfig: Joi.object({
+    config: Joi.object().required()
+  }),
+
+  moderateContent: Joi.object({
+    action: Joi.string().valid('approve', 'reject', 'flag').required(),
+    reason: Joi.string().when('action', {
+      is: 'reject',
+      then: Joi.required(),
+      otherwise: Joi.optional()
+    })
+  }),
+
+  updateTicketStatus: Joi.object({
+    status: Joi.string().valid('open', 'in_progress', 'resolved', 'closed').required(),
+    response: Joi.string().when('status', {
+      is: 'resolved',
+      then: Joi.required(),
+      otherwise: Joi.optional()
+    })
+  }),
+
+  updateVendorStatus: Joi.object({
+    status: Joi.string().valid('active', 'suspended', 'rejected').required(),
+    reason: Joi.string().when('status', {
+      is: 'rejected',
+      then: Joi.required(),
+      otherwise: Joi.optional()
+    })
+  }),
+
+  sendAnnouncement: Joi.object({
+    title: Joi.string().required(),
+    message: Joi.string().required(),
+    targetAudience: Joi.array().items(
+      Joi.string().valid('all', 'users', 'vendors', 'admins')
+    ).required(),
+    priority: Joi.string().valid('low', 'medium', 'high').default('medium')
+  }),
+
+  verifyTwoFactor: Joi.object({
+    token: Joi.string().required()
   }),
 
   // Event schemas
@@ -134,83 +265,139 @@ export const schemas = {
     })
   }),
 
-  // Vendor schemas
-  createVendor: Joi.object({
-    name: Joi.string().required().min(2).max(100).messages({
-      'string.min': 'Name must be at least 2 characters long',
-      'string.max': 'Name cannot exceed 100 characters',
-      'any.required': 'Name is required'
-    }),
-    description: Joi.string().required().min(10).messages({
-      'string.min': 'Description must be at least 10 characters long',
-      'any.required': 'Description is required'
-    }),
-    businessType: Joi.string().required().messages({
-      'any.required': 'Business type is required'
-    }),
-    categories: Joi.array().items(Joi.string()).min(1).required().messages({
-      'array.min': 'At least one category is required',
-      'any.required': 'Categories are required'
-    }),
+  updateEvent: Joi.object({
+    title: Joi.string().min(3).max(100),
+    description: Joi.string().min(10),
+    eventType: Joi.string(),
+    startDate: Joi.date().iso().min('now'),
+    endDate: Joi.date().iso(),
     location: Joi.object({
-      address: Joi.string().required(),
-      city: Joi.string().required(),
-      state: Joi.string().required(),
-      country: Joi.string().required()
-    }).required(),
-    contactInfo: Joi.object({
-      email: Joi.string().email().required(),
-      phone: Joi.string().pattern(/^\+?[\d\s-]{10,}$/).required(),
-      website: Joi.string().uri()
-    }).required(),
-    availability: Joi.object({
-      startDate: Joi.date().iso(),
-      endDate: Joi.date().iso().min(Joi.ref('startDate')),
-      blockedDates: Joi.array().items(Joi.date().iso())
+      address: Joi.string(),
+      city: Joi.string(),
+      state: Joi.string(),
+      country: Joi.string(),
+      coordinates: Joi.object({
+        latitude: Joi.number().min(-90).max(90),
+        longitude: Joi.number().min(-180).max(180)
+      })
     }),
-    pricing: Joi.object({
-      basePrice: Joi.number().min(0).required(),
-      currency: Joi.string().default('NGN'),
-      additionalFees: Joi.array().items(
-        Joi.object({
-          name: Joi.string().required(),
-          amount: Joi.number().min(0).required()
-        })
-      )
-    }).required()
+    budget: Joi.number().min(0),
+    guestCount: Joi.number().integer().min(1),
+    preferences: Joi.object({
+      theme: Joi.string(),
+      catering: Joi.boolean(),
+      music: Joi.boolean(),
+      photography: Joi.boolean()
+    })
   }),
 
-  // Payment schemas
-  createPayment: Joi.object({
-    amount: Joi.number().min(0).required().messages({
-      'number.min': 'Amount must be a positive number',
-      'any.required': 'Amount is required'
-    }),
-    currency: Joi.string().required().messages({
-      'any.required': 'Currency is required'
-    }),
-    paymentType: Joi.string().valid('TRANSFER', 'DEPOSIT', 'WITHDRAWAL', 'REFUND').required(),
-    paymentMethod: Joi.string().valid('BANK_TRANSFER', 'CARD', 'CASH', 'WALLET').required(),
-    recipientId: Joi.string().required(),
-    description: Joi.string().required(),
-    metadata: Joi.object()
+  addVendor: Joi.object({
+    vendorId: Joi.string().required(),
+    service: Joi.string().required(),
+    price: Joi.number().min(0).required()
   }),
 
-  // Notification schemas
-  createNotification: Joi.object({
-    type: Joi.string().required(),
+  addGuest: Joi.object({
+    name: Joi.string().required(),
+    email: Joi.string().email().required(),
+    phone: Joi.string().optional(),
+    rsvpStatus: Joi.string().valid('pending', 'confirmed', 'declined').default('pending')
+  }),
+
+  updateBudget: Joi.object({
+    amount: Joi.number().min(0).required(),
+    category: Joi.string().required(),
+    description: Joi.string().optional()
+  }),
+
+  updateSchedule: Joi.object({
+    items: Joi.array().items(
+      Joi.object({
+        title: Joi.string().required(),
+        startTime: Joi.date().required(),
+        endTime: Joi.date().required(),
+        description: Joi.string().optional()
+      })
+    ).required()
+  }),
+
+  addTimelineItem: Joi.object({
     title: Joi.string().required(),
-    message: Joi.string().required(),
-    priority: Joi.string().valid('LOW', 'MEDIUM', 'HIGH').default('MEDIUM'),
-    data: Joi.object()
+    date: Joi.date().required(),
+    description: Joi.string().optional(),
+    completed: Joi.boolean().default(false)
+  }),
+
+  addChecklistItem: Joi.object({
+    title: Joi.string().required(),
+    description: Joi.string().optional(),
+    dueDate: Joi.date().optional(),
+    priority: Joi.string().valid('low', 'medium', 'high').default('medium')
+  }),
+
+  addDocument: Joi.object({
+    name: Joi.string().required(),
+    type: Joi.string().required(),
+    url: Joi.string().uri().required(),
+    description: Joi.string().optional()
+  }),
+
+  addNote: Joi.object({
+    title: Joi.string().required(),
+    content: Joi.string().required(),
+    category: Joi.string().optional()
+  }),
+
+  planEvent: Joi.object({
+    eventType: Joi.string().required(),
+    budget: Joi.number().min(0).required(),
+    guestCount: Joi.number().integer().min(1).required(),
+    preferences: Joi.object({
+      theme: Joi.string(),
+      location: Joi.string(),
+      catering: Joi.boolean(),
+      music: Joi.boolean(),
+      photography: Joi.boolean()
+    })
+  }),
+
+  analyzeEventFeedback: Joi.object({
+    eventId: Joi.string().required(),
+    feedbackData: Joi.array().items(
+      Joi.object({
+        rating: Joi.number().min(1).max(5).required(),
+        comment: Joi.string().optional(),
+        category: Joi.string().required()
+      })
+    ).required()
   })
 };
 
-// Pre-defined validation middleware for common routes
-export const validateRegistration = validate(schemas.register);
-export const validateLogin = validate(schemas.login);
-export const validateUpdateProfile = validate(schemas.updateProfile);
-export const validateCreateEvent = validate(schemas.createEvent);
-export const validateCreateVendor = validate(schemas.createVendor);
-export const validateCreatePayment = validate(schemas.createPayment);
-export const validateCreateNotification = validate(schemas.createNotification); 
+// Validation middleware using schema names
+const validateRequest = (schemaName) => {
+  return (req, res, next) => {
+    try {
+      const schema = schemas[schemaName];
+      if (!schema) {
+        throw new AppError(`Validation schema '${schemaName}' not found`, 500);
+      }
+
+      const { error, value } = schema.validate(req.body, {
+        abortEarly: false,
+        stripUnknown: true
+      });
+
+      if (error) {
+        const errors = error.details.map(detail => detail.message);
+        throw new AppError(errors.join(', '), 400);
+      }
+
+      req.validatedData = value;
+      next();
+    } catch (error) {
+      next(error);
+    }
+  };
+};
+
+export { validateRequest, schemas, validate }; 

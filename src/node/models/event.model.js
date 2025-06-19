@@ -18,39 +18,28 @@ const eventSchema = new mongoose.Schema({
     },
     startDate: {
         type: Date,
-        required: [true, 'Start date is required'],
+        required: [true, 'Event start date is required'],
     },
     endDate: {
         type: Date,
-        required: [true, 'End date is required'],
+        required: [true, 'Event end date is required'],
     },
     location: {
-        address: {
+        type: {
             type: String,
-            required: [true, 'Address is required'],
-        },
-        city: {
-            type: String,
-            required: [true, 'City is required'],
-        },
-        state: {
-            type: String,
-            required: [true, 'State is required'],
-        },
-        country: {
-            type: String,
-            required: [true, 'Country is required'],
+            enum: ['Point'],
+            default: 'Point',
         },
         coordinates: {
-            type: {
-                type: String,
-                enum: ['Point'],
-                default: 'Point',
-            },
-            coordinates: {
-                type: [Number],
-                required: [true, 'Coordinates are required'],
-            },
+            type: [Number],
+            required: true,
+        },
+        address: {
+            street: String,
+            city: String,
+            state: String,
+            country: String,
+            zipCode: String
         },
     },
     budget: {
@@ -181,14 +170,78 @@ const eventSchema = new mongoose.Schema({
             sms: { type: Boolean, default: false },
         },
     },
+    category: {
+        type: String,
+        required: true
+    },
+    capacity: {
+        type: Number,
+        required: true
+    },
+    price: {
+        amount: {
+            type: Number,
+            required: true
+        },
+        currency: {
+            type: String,
+            default: 'USD'
+        }
+    },
+    registrationDeadline: Date,
+    image: String,
+    tags: [{
+        type: String,
+        trim: true
+    }],
+    attendees: [{
+        user: {
+            type: mongoose.Schema.Types.ObjectId,
+            ref: 'User'
+        },
+        registrationDate: {
+            type: Date,
+            default: Date.now
+        },
+        status: {
+            type: String,
+            enum: ['registered', 'attended', 'cancelled'],
+            default: 'registered'
+        }
+    }],
+    schedule: [{
+        title: String,
+        description: String,
+        startTime: Date,
+        endTime: Date,
+        speaker: String
+    }],
+    feedback: [{
+        user: {
+            type: mongoose.Schema.Types.ObjectId,
+            ref: 'User'
+        },
+        rating: {
+            type: Number,
+            min: 1,
+            max: 5
+        },
+        comment: String,
+        createdAt: {
+            type: Date,
+            default: Date.now
+        }
+    }]
 }, {
     timestamps: true,
     toJSON: { virtuals: true },
     toObject: { virtuals: true },
 });
 
-// Index for geospatial queries
+// Indexes
+eventSchema.index({ startDate: 1, endDate: 1 });
 eventSchema.index({ 'location.coordinates': '2dsphere' });
+eventSchema.index({ status: 1, category: 1 });
 
 // Virtual for event duration in hours
 eventSchema.virtual('duration').get(function() {

@@ -1,84 +1,64 @@
 import mongoose from 'mongoose';
 
 const paymentSchema = new mongoose.Schema({
+  user: {
+    type: mongoose.Schema.Types.ObjectId,
+    ref: 'User',
+    required: true
+  },
+  event: {
+    type: mongoose.Schema.Types.ObjectId,
+    ref: 'Event',
+    required: true
+  },
   amount: {
     type: Number,
-    required: true,
-    min: 0,
+    required: true
   },
   currency: {
     type: String,
-    enum: ['NGN', 'USD', 'EUR', 'GBP'],
-    default: 'NGN',
+    default: 'USD'
   },
-  paymentType: {
+  status: {
     type: String,
-    enum: ['event', 'vendor', 'subscription', 'other'],
-    required: true,
+    enum: ['pending', 'completed', 'failed', 'refunded'],
+    default: 'pending'
   },
   paymentMethod: {
     type: String,
-    enum: ['card', 'bank', 'wallet', 'cash', 'transfer'],
-    required: true,
+    enum: ['credit_card', 'paypal', 'stripe'],
+    required: true
   },
-  sender: {
-    type: mongoose.Schema.Types.ObjectId,
-    ref: 'User',
-    required: true,
-  },
-  recipient: {
-    type: mongoose.Schema.Types.ObjectId,
-    ref: 'User',
-    required: true,
-  },
-  description: String,
-  status: {
+  transactionId: {
     type: String,
-    enum: ['pending', 'processing', 'completed', 'failed', 'refunded', 'cancelled'],
-    default: 'pending',
+    required: true,
+    unique: true
   },
-  exchangeRate: {
-    type: Number,
-    default: 1,
+  paymentDetails: {
+    cardLast4: String,
+    cardBrand: String,
+    paymentIntentId: String,
+    chargeId: String
   },
-  amountInNGN: {
-    type: Number,
-    default: 0,
+  refundDetails: {
+    refundId: String,
+    refundAmount: Number,
+    refundReason: String,
+    refundedAt: Date
   },
   metadata: {
-    type: Object,
-    default: {},
-  },
-  timestamps: {
-    created: { type: Date, default: Date.now },
-    completed: Date,
-    failed: Date,
-    refunded: Date,
-    cancelled: Date,
-  },
+    type: Map,
+    of: String
+  }
 }, {
-  timestamps: true,
+  timestamps: true
 });
 
-paymentSchema.methods.markCompleted = function() {
-  this.status = 'completed';
-  this.timestamps.completed = new Date();
-};
-
-paymentSchema.methods.markFailed = function() {
-  this.status = 'failed';
-  this.timestamps.failed = new Date();
-};
-
-paymentSchema.methods.markRefunded = function() {
-  this.status = 'refunded';
-  this.timestamps.refunded = new Date();
-};
-
-paymentSchema.methods.convertToNGN = function(rate) {
-  this.amountInNGN = this.amount * rate;
-  this.exchangeRate = rate;
-};
+// Indexes
+paymentSchema.index({ user: 1, createdAt: -1 });
+paymentSchema.index({ event: 1, status: 1 });
+paymentSchema.index({ transactionId: 1 }, { unique: true });
 
 const Payment = mongoose.model('Payment', paymentSchema);
+
 export default Payment; 

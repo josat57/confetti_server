@@ -1,5 +1,5 @@
 import Analytics from '../models/analytics.model.js';
-import AppError from '../utils/AppError.js';
+import { AppError } from '../utils/AppError.js';
 
 class AnalyticsService {
   async createAnalytics(analyticsData) {

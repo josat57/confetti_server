@@ -1,4 +1,4 @@
-import AppError from './AppError.js';
+import { AppError } from './AppError.js';
 
 // Development error handler
 const sendErrorDev = (err, res) => {
@@ -111,4 +111,21 @@ export const errorHandler = (err, req, res, next) => {
 // Not found middleware
 export const notFound = (req, res, next) => {
   next(new AppError(`Can't find ${req.originalUrl} on this server!`, 404));
-}; 
+};
+
+// class AppError extends Error {
+//   constructor(message, statusCode) {
+//     super(message);
+//     this.statusCode = statusCode;
+//     this.status = `${statusCode}`.startsWith('4') ? 'fail' : 'error';
+//     this.isOperational = true;
+
+//     Error.captureStackTrace(this, this.constructor);
+//   }
+// }
+
+export const createError = (statusCode, message) => {
+  return new AppError(message, statusCode);
+};
+
+export { AppError }

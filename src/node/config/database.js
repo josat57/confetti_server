@@ -5,7 +5,7 @@ const connectDB = async () => {
   try {
     // Remove deprecated options
     const conn = await mongoose.connect(process.env.MONGODB_URI || "mongodb://confetti:Ginger_123@localhost:27017/confetti?authSource=admin");
-    console.log(conn);
+    // console.log(conn);
     GridFSBucket = new mongoose.mongo.GridFSBucket(conn.connection.db, {
       bucketName: 'uploads'
     });

@@ -1,5 +1,5 @@
 import Notification from '../models/notification.model.js';
-import AppError from '../utils/AppError.js';
+import { AppError } from '../utils/AppError.js';
 
 class NotificationService {
   async createNotification(notificationData) {

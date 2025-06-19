@@ -1,5 +1,5 @@
 import Vendor from '../models/vendor.model.js';
-import AppError from '../utils/AppError.js';
+import { AppError } from '../utils/AppError.js';
 import { logger } from '../utils/logger.js';
 
 // Create a new vendor

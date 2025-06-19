@@ -1,5 +1,5 @@
 import Payment from '../models/payment.model.js';
-import AppError from '../utils/AppError.js';
+import { AppError } from '../utils/AppError.js';
 
 class PaymentService {
   async createPayment(paymentData) {

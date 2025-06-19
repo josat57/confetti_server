@@ -1,5 +1,5 @@
 import analyticsService from '../services/analytics.service.js';
-import AppError from '../utils/AppError.js';
+import { AppError } from '../utils/AppError.js';
 
 export const createAnalytics = async (req, res, next) => {
   try {

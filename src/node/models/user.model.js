@@ -3,6 +3,16 @@ import bcrypt from 'bcryptjs';
 import crypto from 'crypto';
 
 const userSchema = new mongoose.Schema({
+    username: {
+        type: String,
+        required: [true, 'Username is required'],
+        unique: true,
+        lowercase: true,
+        trim: true,
+        default: function() {
+            return this.email.split('@')[0];
+        }
+    },
     email: {
         type: String,
         required: [true, 'Email is required'],
@@ -18,17 +28,17 @@ const userSchema = new mongoose.Schema({
     },
     firstName: {
         type: String,
-        required: [true, 'First name is required'],
+        required: false,
         trim: true,
     },
     lastName: {
         type: String,
-        required: [true, 'Last name is required'],
+        required: false,
         trim: true,
     },
     role: {
         type: String,
-        enum: ['user', 'vendor', 'admin'],
+        enum: ['user', 'vendor', 'admin', 'superadmin', 'event-planner'],
         default: 'user',
     },
     phone: {
@@ -66,6 +76,17 @@ const userSchema = new mongoose.Schema({
     emailVerificationExpires: Date,
     passwordResetToken: String,
     passwordResetExpires: Date,
+    oauthProvider: String,
+    oauthId: String,
+    profilePicture: String,
+    otp: {
+        code: String,
+        expires: Date,
+        attempts: {
+            type: Number,
+            default: 0
+        }
+    },
     isActive: {
         type: Boolean,
         default: true,
@@ -86,6 +107,55 @@ const userSchema = new mongoose.Schema({
 userSchema.virtual('fullName').get(function() {
     return `${this.firstName} ${this.lastName}`;
 });
+
+// Generate OTP
+userSchema.methods.generateOTP = function() {
+    // Generate a 6-digit OTP
+    const otp = Math.floor(100000 + Math.random() * 900000).toString();
+    
+    // Hash the OTP before storing
+    const hashedOTP = crypto
+        .createHash('sha256')
+        .update(otp)
+        .digest('hex');
+    
+    // Set OTP and expiration (15 minutes)
+    this.otp = {
+        code: hashedOTP,
+        expires: Date.now() + 15 * 60 * 1000, // 15 minutes
+        attempts: 0
+    };
+    
+    return otp; // Return the unhashed OTP for sending to user
+};
+
+// Verify OTP
+userSchema.methods.verifyOTP = function(otp) {
+    if (!this.otp || !this.otp.code || !this.otp.expires) {
+        return false;
+    }
+
+    // Check if OTP has expired
+    if (Date.now() > this.otp.expires) {
+        return false;
+    }
+
+    // Check if too many attempts
+    if (this.otp.attempts >= 3) {
+        return false;
+    }
+
+    // Hash the provided OTP and compare
+    const hashedOTP = crypto
+        .createHash('sha256')
+        .update(otp)
+        .digest('hex');
+
+    // Increment attempts
+    this.otp.attempts += 1;
+
+    return hashedOTP === this.otp.code;
+};
 
 // Hash password before saving
 userSchema.pre('save', async function(next) {
@@ -166,6 +236,22 @@ userSchema.methods.resetLoginAttempts = function() {
 userSchema.methods.isLocked = function() {
     return !!(this.lockUntil && this.lockUntil > Date.now());
 };
+
+/**
+ * Generate a unique username (≤ 10 chars) from an email
+ * @param {string} email - The user's email address
+ * @returns {string} - A unique username
+ */
+userSchema.methods.generateUsername = function(email) {
+    const localPart = email.split('@')[0];
+    const cleaned = localPart.replace(/[^a-zA-Z0-9]/g, '').toLowerCase();
+  
+    const randomSuffix = crypto.randomBytes(2).toString('hex').slice(0, 3); // 3 chars
+    const maxBaseLength = 10 - randomSuffix.length - 1; // leave room for underscore
+  
+    const base = cleaned.slice(0, maxBaseLength);
+    return `${base}_${randomSuffix}`;
+}
 
 const User = mongoose.model('User', userSchema);
 

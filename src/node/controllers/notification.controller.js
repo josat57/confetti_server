@@ -1,5 +1,5 @@
 import notificationService from '../services/notification.service.js';
-import AppError from '../utils/AppError.js';
+import { AppError } from '../utils/AppError.js';
 
 export const createNotification = async (req, res, next) => {
   try {

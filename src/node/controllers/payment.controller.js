@@ -1,5 +1,5 @@
 import paymentService from '../services/payment.service.js';
-import AppError from '../utils/AppError.js';
+import { AppError } from '../utils/AppError.js';
 
 export const createPayment = async (req, res, next) => {
   try {
