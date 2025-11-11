@@ -97,7 +97,7 @@ Confetti is a comprehensive event planning platform that leverages AI to help us
 
 1. Clone the repository:
 ```bash
-git clone https://github.com/yourusername/confetti-server.git
+git clone https://github.com/josat57/confetti-server.git
 cd confetti-server
 ```
 
@@ -152,8 +152,8 @@ pytest
 
 ## API Documentation
 API documentation is available at:
-- Node.js API: http://localhost:3000/api-docs
-- Python API: http://localhost:5000/api-docs
+- Node.js API: http://localhost:9600/api-docs
+- Python API: http://localhost:5600/api-docs
 
 ## Contributing
 Please read CONTRIBUTING.md for details on our code of conduct and the process for submitting pull requests.

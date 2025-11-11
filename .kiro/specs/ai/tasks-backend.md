@@ -1,0 +1,506 @@
+# AI Event Planner - Backend Implementation Tasks
+
+- [ ] 1. Set up database schema and models
+
+  - [x] 1.1 Create event_plan_requests table
+    - Add id, session_token, user_id, event_type, event_date, guest_count columns
+    - Add location columns (latitude, longitude, address, city, state, country)
+    - Add event_description, guest_class_data (JSONB), budget_amount, budget_currency columns
+    - Add ip_address, user_agent, status, created_at, expires_at columns
+    - Create indexes on session_token, user_id, location, created_at, expires_at
+    - _Requirements: 1.1, 16.1, 16.2, 16.3, 16.4_
+  - [x] 1.2 Create event_plan_results table
+    - Add id, request_id, analysis_data (JSONB), teaser_data (JSONB), full_plan_data (JSONB) columns
+    - Add feasibility_score, processing_time_ms, created_at columns
+    - Create index on request_id
+    - _Requirements: 5.1, 5.2, 5.3, 5.4, 5.5, 5.6, 5.7, 5.8, 5.9, 5.10_
+  - [x] 1.3 Create vendor_categories table
+    - Add id, name, display_name, description, icon, created_at columns
+    - Seed with initial vendor categories
+    - _Requirements: 7.1, 7.2, 7.3, 7.4, 7.5_
+  - [x] 1.4 Update vendors table with event planning fields
+    - Add event_types array column
+    - Add average_price, price_range_min, price_range_max columns
+    - Add latitude, longitude columns
+    - Add availability_status column
+    - Create geospatial index on location
+    - Create GIN index on event_types
+    - _Requirements: 5.2, 5.3, 7.1, 7.2_
+
+- [ ] 2. Create data models and types
+
+  - [x] 2.1 Define TypeScript interfaces for request/response
+    - Create EventPlanRequest interface
+    - Create LocationData, GuestClassData, BudgetData interfaces
+    - Create EventPlanResult interface
+    - Create EventAnalysis, VendorAggregateData, BudgetAllocation interfaces
+    - Create EventPlanTeaser and EventPlanFull interfaces
+    - Define all enums (EventType, VendorCategory, etc.)
+    - _Requirements: 1.1, 5.1, 9.1, 11.1_
+  - [x] 2.2 Create database entity models
+    - Create EventPlanRequest entity with TypeORM/Prisma
+    - Create EventPlanResult entity
+    - Create VendorCategory entity
+    - Define relationships between entities
+    - _Requirements: 1.1, 5.1_
+
+- [ ] 3. Implement input validation and sanitization
+
+  - [x] 3.1 Create InputSanitizer class
+    - Implement sanitizeEventRequest method
+    - Implement sanitizeText method (remove HTML, trim, validate length)
+    - Implement sanitizeDate method (validate format, check future date)
+    - Implement sanitizeNumber method (validate range)
+    - Implement sanitizeEnum method
+    - Implement sanitizeLocation method
+    - Implement sanitizeGuestClass method
+    - Implement sanitizeBudget method
+    - _Requirements: 1.1, 1.2, 1.3, 1.4, 1.5, 1.6, 1.7, 1.8, 1.9, 1.10, 16.9_
+  - [x] 3.2 Create custom validation errors
+    - Define ValidationError class
+    - Define InsufficientBudgetError class
+    - Define LocationNotSupportedError class
+    - Define ProcessingTimeoutError class
+    - _Requirements: 15.1, 15.2, 15.3, 15.4, 15.5_
+
+- [ ] 4. Implement caching layer
+
+  - [x] 4.1 Set up Redis connection
+    - Configure Redis client
+    - Implement connection pooling
+    - Add error handling and reconnection logic
+    - _Requirements: 12.3_
+  - [x] 4.2 Create CacheService class
+    - Implement get method with JSON parsing
+    - Implement set method with TTL
+    - Implement delete method
+    - Implement increment method for rate limiting
+    - Add error handling
+    - _Requirements: 12.3, 16.1, 16.2_
+  - [x] 4.3 Implement cache strategies
+    - Cache session data (24 hour TTL)
+    - Cache vendor data by location (1 hour TTL)
+    - Cache budget templates (24 hour TTL)
+    - Implement cache invalidation logic
+    - _Requirements: 10.5, 12.3_
+
+- [ ] 5. Implement VendorService
+
+  - [x] 5.1 Create VendorRepository
+    - Implement findByLocation method with geospatial query
+    - Use PostGIS for efficient location-based queries
+    - Implement filtering by event type
+    - Implement pagination
+    - Add query optimization
+    - _Requirements: 5.2, 5.3_
+  - [x] 5.2 Create VendorService class
+    - Implement aggregateVendorData method
+    - Query vendors within radius of location
+    - Filter by event type compatibility
+    - Group vendors by category
+    - Calculate price ranges per category
+    - Calculate average ratings per category
+    - Assess availability (high/medium/low)
+    - Return VendorAggregateData
+    - _Requirements: 5.1, 5.2, 5.3, 7.1, 7.2, 7.3, 7.4, 7.5_
+  - [x] 5.3 Implement caching for vendor queries
+    - Cache vendor data by location and event type
+    - Set 1 hour TTL
+    - Implement cache warming for popular locations
+    - _Requirements: 5.2, 12.3_
+
+- [ ] 6. Implement BudgetService
+
+  - [x] 6.1 Create budget allocation templates
+    - Define base allocation percentages for each event type
+    - Wedding: Venue 30%, Catering 35%, Photography 10%, etc.
+    - Corporate: Venue 35%, Catering 30%, AV 15%, etc.
+    - Birthday: Venue 25%, Catering 40%, Entertainment 15%, etc.
+    - Store templates in database or config
+    - _Requirements: 6.1, 6.2, 6.3, 6.4, 6.5_
+  - [x] 6.2 Create BudgetService class
+    - Implement optimizeBudget method
+    - Get base allocations for event type
+    - Adjust allocations based on guest count
+    - Adjust allocations based on vendor pricing in location
+    - Reserve contingency buffer (5-10%)
+    - Calculate final allocations with dollar amounts
+    - Generate rationale for each allocation
+    - Return BudgetAllocation
+    - _Requirements: 6.1, 6.2, 6.3, 6.4, 6.5, 6.6, 6.7, 6.8_
+  - [x] 6.3 Implement budget validation
+    - Check if budget is sufficient for event type
+    - Calculate minimum budget based on vendor pricing
+    - Throw InsufficientBudgetError if too low
+    - Provide alternative suggestions
+    - _Requirements: 5.10, 15.3_
+
+- [ ] 7. Implement CategoryService
+
+  - [x] 7.1 Create CategoryService class
+    - Implement recommendCategories method
+    - Get required categories for event type
+    - Get recommended categories based on guest class
+    - Get optional categories based on budget
+    - Format categories with descriptions and cost estimates
+    - Mark all as locked for teaser
+    - Return VendorCategoryTeaser array
+    - _Requirements: 7.1, 7.2, 7.3, 7.4, 7.5, 7.6_
+  - [x] 7.2 Implement category recommendation logic
+    - Add entertainment for events with children
+    - Add luxury categories for affluent guests
+    - Add transportation for formal events
+    - Add accessibility services when required
+    - Adjust based on budget availability
+    - _Requirements: 7.1, 7.2, 7.3, 7.4, 7.5_
+
+- [ ] 8. Implement TimelineService
+
+  - [x] 8.1 Create TimelineService class
+    - Implement generateTimeline method
+    - Calculate months until event
+    - Generate planning milestones based on timeframe
+    - Generate event day schedule based on event type
+    - Return TimelineTeaser
+    - _Requirements: 8.1, 8.2, 8.3, 8.4, 8.5, 8.6, 8.7_
+  - [x] 8.2 Create timeline templates
+    - Define planning milestone templates
+    - Define event day schedule templates for each event type
+    - Adjust timelines for accelerated planning (< 3 months)
+    - Include buffer times between activities
+    - _Requirements: 8.1, 8.2, 8.3, 8.4, 8.5, 8.6, 8.7_
+
+- [ ] 9. Implement Python ML Service Integration
+
+  - [x] 9.1 Update PythonService class with AI endpoints
+    - Implement analyzeEventPlan method
+    - Send complete event data + vendor list to Python API
+    - Handle 30-second timeout for AI processing
+    - Parse and return Python ML analysis results
+    - Add comprehensive error handling
+    - _Requirements: 5.1, 5.3, 5.4, 5.9_
+  - [x] 9.2 Implement Python API payload formatting
+    - Format event data for Python consumption
+    - Format vendor data with all required fields
+    - Include vendor statistics and location data
+    - Ensure proper data types and structure
+    - _Requirements: 5.1, 5.2, 5.3_
+  - [x] 9.3 Implement Python response parsing
+    - Parse NLP analysis results (sentiment, keywords)
+    - Parse budget optimization results (allocations, feasibility)
+    - Parse vendor matching results (scored vendors per category)
+    - Parse AI recommendations
+    - Handle missing or malformed data gracefully
+    - _Requirements: 5.4, 5.5, 5.6, 5.7, 5.8_
+  - [x] 9.4 Add Python service health monitoring
+    - Implement checkAIHealth method
+    - Monitor Python ML service availability
+    - Track response times and success rates
+    - Implement circuit breaker pattern for failures
+    - _Requirements: 12.7, 15.6_
+
+- [x] 9.5 Implement CurrencyService class
+
+  - Implement convert method for currency conversion
+  - Implement getExchangeRate method with caching
+  - Support NGN, USD, EUR, GBP currencies
+  - Use exchange rate API (e.g., exchangerate-api.com)
+  - Cache exchange rates for 1 hour
+  - Implement convertBudgetAllocation method
+  - Handle conversion errors gracefully
+  - _Requirements: 5.7, 6.1, 6.2_
+
+- [ ] 10. Implement AIAnalysisService (orchestrator)
+
+  - [x] 10.1 Create AIAnalysisService class
+    - Implement processEventRequest method as main orchestrator
+    - Validate request using InputSanitizer
+    - Convert user budget to NGN using CurrencyService
+    - Call VendorService.aggregateVendorData
+    - Prepare payload for Python ML API
+    - Call PythonService.analyzeEventPlan
+    - Call TimelineService.generateTimeline
+    - Convert budget allocations back to user currency
+    - Synthesize all results into EventPlanResult
+    - Generate session token
+    - Save to cache with 24 hour TTL
+    - Return session token and teaser
+    - _Requirements: 5.1, 5.2, 5.3, 5.4, 5.5, 5.6, 5.7, 5.8, 5.9, 5.10_
+  - [x] 10.2 Implement synthesizePlan method
+    - Combine all analysis results
+    - Calculate feasibility score (0-100)
+    - Generate warnings if needed
+    - Create cohesive event plan
+    - _Requirements: 5.1, 5.10_
+  - [x] 10.3 Implement createTeaser method
+    - Extract public-safe data from full plan
+    - Remove vendor names and contact info
+    - Mark vendor categories as locked
+    - Mark detailed timeline as locked
+    - Return EventPlanTeaser
+    - _Requirements: 9.1, 9.2, 9.3, 9.4, 9.5, 9.6, 9.7, 9.8, 9.9_
+  - [x] 10.4 Implement error handling
+    - Catch and handle service errors
+    - Provide meaningful error messages
+    - Log errors for debugging
+    - Return appropriate error responses
+    - _Requirements: 15.1, 15.2, 15.3, 15.4, 15.5, 15.6, 15.7, 15.8_
+
+- [ ] 11. Implement API endpoints
+
+  - [x] 11.1 Create POST /api/v1/ai-planner/analyze endpoint
+    - Set up route handler
+    - Extract request body
+    - Validate and sanitize input using InputSanitizer
+    - Check rate limit (5 requests per IP per hour)
+    - Call AIAnalysisService.processEventRequest
+    - Handle processing (show progress if possible)
+    - Return session token and teaser on success
+    - Handle errors (insufficient budget, location not supported, timeout)
+    - Log request for analytics
+    - _Requirements: 1.1, 5.1, 12.1, 12.2, 12.7, 14.1, 14.2, 16.9_
+  - [x] 11.2 Create GET /api/v1/ai-planner/result/:sessionToken endpoint
+    - Set up route handler with session token parameter
+    - Retrieve event plan from cache
+    - Check if session has expired
+    - Return teaser data
+    - Handle not found errors
+    - _Requirements: 10.5, 10.6_
+  - [x] 11.3 Create POST /api/v1/ai-planner/save endpoint
+    - Set up route handler with authentication middleware
+    - Extract session token from request body
+    - Retrieve event plan from cache
+    - Associate plan with authenticated user
+    - Save to database
+    - Generate full plan with vendor details
+    - Return full plan
+    - Delete session from cache
+    - _Requirements: 10.6, 10.7, 10.8, 10.9, 11.1, 11.2, 11.3, 11.4, 11.5, 11.6, 11.7, 11.8, 11.9_
+  - [x] 11.4 Create GET /api/v1/ai-planner/full/:eventId endpoint
+    - Set up route handler with authentication middleware
+    - Verify user owns the event
+    - Retrieve full event plan from database
+    - Return full plan with vendor details
+    - _Requirements: 11.1, 11.2, 11.3, 11.4, 11.5, 11.6, 11.7, 11.8, 11.9_
+
+- [ ] 12. Implement rate limiting
+
+  - [x] 12.1 Create RateLimiter class
+    - Implement checkLimit method
+    - Use Redis to track request counts per IP
+    - Set 1 hour window
+    - Limit to 5 requests per IP
+    - Throw error when limit exceeded
+    - _Requirements: 12.1, 16.1_
+  - [x] 12.2 Add rate limiting middleware
+    - Apply to POST /api/v1/ai-planner/analyze endpoint
+    - Extract IP address from request
+    - Call RateLimiter.checkLimit
+    - Return 429 error if limit exceeded
+    - Include retry-after header
+    - _Requirements: 12.1, 16.1_
+
+- [ ] 13. Implement security measures
+
+  - [ ] 13.1 Add CORS configuration
+    - Configure allowed origins
+    - Set allowed methods and headers
+    - Enable credentials if needed
+    - _Requirements: 16.1, 16.2_
+  - [ ] 13.2 Implement request validation middleware
+    - Validate content-type is application/json
+    - Validate request body structure
+    - Sanitize all inputs
+    - Prevent XSS and injection attacks
+    - _Requirements: 16.9_
+  - [ ] 13.3 Implement data privacy measures
+    - Create PrivacyService class
+    - Implement anonymizeRequest method to remove PII
+    - Redact email addresses, phone numbers, names from logs
+    - Schedule automatic data deletion after 24 hours
+    - _Requirements: 16.1, 16.2, 16.3, 16.4, 16.5, 16.6, 16.7, 16.8_
+  - [ ] 13.4 Add HTTPS enforcement
+    - Redirect HTTP to HTTPS
+    - Set secure headers (HSTS, CSP, etc.)
+    - _Requirements: 16.1_
+
+- [ ] 14. Implement error handling middleware
+
+  - [ ] 14.1 Create error handler middleware
+    - Handle InsufficientBudgetError
+    - Handle LocationNotSupportedError
+    - Handle ProcessingTimeoutError
+    - Handle ValidationError
+    - Handle generic errors
+    - Return appropriate HTTP status codes
+    - Return structured error responses
+    - _Requirements: 15.1, 15.2, 15.3, 15.4, 15.5, 15.6, 15.7, 15.8_
+  - [ ] 14.2 Implement error logging
+    - Log all errors with context
+    - Include request details (sanitized)
+    - Include stack traces
+    - Send critical errors to monitoring service (Sentry)
+    - _Requirements: 15.6, 15.7_
+
+- [ ] 15. Implement monitoring and logging
+
+  - [ ] 15.1 Set up logging infrastructure
+    - Configure Winston or similar logger
+    - Implement structured logging (JSON format)
+    - Add log levels (info, warn, error)
+    - Include timestamps and context
+    - _Requirements: 15.6_
+  - [ ] 15.2 Create Logger class
+    - Implement info, warn, error methods
+    - Implement trackAnalysis method for event analysis logging
+    - Include request context in logs
+    - Sanitize sensitive data before logging
+    - _Requirements: 15.6_
+  - [ ] 15.3 Create MetricsService class
+    - Track request counts
+    - Track request duration
+    - Track success/failure rates
+    - Track conversion rates
+    - Track average budget
+    - Track cache hit/miss rates
+    - Export metrics for Prometheus or similar
+    - _Requirements: 14.1, 14.2, 14.3, 14.4, 14.5, 14.6, 14.7, 14.8, 14.9_
+  - [ ] 15.4 Set up monitoring dashboards
+    - Create Grafana dashboards for metrics
+    - Set up alerts for errors and performance issues
+    - Monitor API response times
+    - Monitor cache performance
+    - Monitor database query performance
+    - _Requirements: 14.1-14.9_
+
+- [ ] 16. Implement async processing (optional optimization)
+
+  - [ ] 16.1 Set up job queue with Bull
+    - Configure Redis-backed queue
+    - Create 'event-analysis' queue
+    - Set up worker processes
+    - Configure retry logic and timeouts
+    - _Requirements: 12.1, 12.2_
+  - [ ] 16.2 Create AsyncProcessor class
+    - Implement enqueueAnalysis method
+    - Implement worker to process jobs
+    - Handle job failures and retries
+    - Update session with progress
+    - _Requirements: 12.1, 12.2, 12.4_
+  - [ ] 16.3 Update API endpoint for async processing
+    - Enqueue analysis job instead of processing synchronously
+    - Return job ID immediately
+    - Provide endpoint to check job status
+    - Update frontend to poll for results
+    - _Requirements: 12.1, 12.2, 12.4_
+
+- [ ] 17. Optimize database queries
+
+  - [ ] 17.1 Add database indexes
+    - Index on vendors(latitude, longitude) for geospatial queries
+    - Index on vendors(event_types) for filtering
+    - Index on event_plan_requests(session_token) for lookups
+    - Index on event_plan_requests(expires_at) for cleanup
+    - _Requirements: 5.2, 10.5, 12.3_
+  - [ ] 17.2 Implement query optimization
+    - Use EXPLAIN ANALYZE to identify slow queries
+    - Optimize vendor location queries with PostGIS
+    - Implement connection pooling
+    - Add query result caching
+    - _Requirements: 5.2, 12.3_
+  - [ ] 17.3 Implement database cleanup job
+    - Create cron job to delete expired sessions
+    - Run daily to clean up old data
+    - Log cleanup statistics
+    - _Requirements: 10.5, 16.4_
+
+- [ ] 18. Seed database with vendor data
+
+  - [x] 18.1 Create vendor category seeding script
+    - Seed all 18 vendor categories
+    - Include display names, descriptions, icons
+    - _Requirements: 7.1, 7.2_
+  - [x] 18.2 Create vendor seeding script for Lagos
+    - Generate minimum 5 vendors per category (90+ total)
+    - Include realistic Nigerian business names
+    - Set locations in Victoria Island, Lekki, Ikeja areas
+    - Use realistic pricing in NGN (₦50k - ₦5M range)
+    - Include ratings (3.5-5.0), review counts (10-500)
+    - Set event types compatibility
+    - Include capacity ranges and features
+    - _Requirements: 5.2, 5.3_
+  - [x] 18.3 Create vendor seeding script for Abuja
+    - Generate minimum 5 vendors per category (90+ total)
+    - Set locations in Maitama, Wuse, Asokoro areas
+    - Follow same structure as Lagos seed data
+    - _Requirements: 5.2, 5.3_
+  - [ ] 18.4 Create vendor seeding script for other cities
+    - Generate vendors for Port Harcourt, Ibadan, Kano
+    - Minimum 3 vendors per category per city
+    - Adjust pricing based on city (Lagos/Abuja higher)
+    - _Requirements: 5.2, 5.3_
+  - [x] 18.5 Create master seed script
+    - Run all seeding scripts in order
+    - Add error handling and rollback
+    - Log seeding progress and statistics
+    - Verify data integrity after seeding
+    - _Requirements: 5.2, 5.3_
+
+- [ ] 19. Write tests
+
+  - [ ] 19.1 Write unit tests for services
+    - Test VendorService.aggregateVendorData
+    - Test BudgetService.optimizeBudget
+    - Test CategoryService.recommendCategories
+    - Test TimelineService.generateTimeline
+    - Test AIService.generateInsights
+    - Test InputSanitizer methods
+    - Test validation logic
+    - _Requirements: All_
+  - [ ] 19.2 Write integration tests for API endpoints
+    - Test POST /api/v1/ai-planner/analyze
+    - Test GET /api/v1/ai-planner/result/:token
+    - Test POST /api/v1/ai-planner/save
+    - Test error responses
+    - Test rate limiting
+    - _Requirements: All_
+  - [ ] 19.3 Write database tests
+    - Test vendor queries
+    - Test geospatial queries
+    - Test session storage and retrieval
+    - Test data cleanup
+    - _Requirements: All_
+  - [ ] 19.4 Write load tests
+    - Test concurrent request handling
+    - Test rate limiting under load
+    - Test cache performance
+    - Test database performance
+    - Identify bottlenecks
+    - _Requirements: 12.1, 12.2, 12.3_
+
+- [ ] 20. Documentation and deployment
+  - [ ] 20.1 Write API documentation
+    - Document all endpoints with request/response examples
+    - Document error codes and messages
+    - Document rate limits
+    - Use Swagger/OpenAPI format
+    - _Requirements: All_
+  - [ ] 20.2 Create deployment scripts
+    - Set up environment variables
+    - Create database migration scripts
+    - Create Docker configuration
+    - Set up CI/CD pipeline
+    - _Requirements: All_
+  - [ ] 20.3 Set up monitoring and alerting
+    - Configure Sentry for error tracking
+    - Set up log aggregation (ELK stack or similar)
+    - Configure alerts for critical errors
+    - Set up uptime monitoring
+    - _Requirements: 15.6, 15.7_
+  - [ ] 20.4 Performance testing and optimization
+    - Run load tests
+    - Identify and fix bottlenecks
+    - Optimize slow queries
+    - Tune cache settings
+    - Verify response times meet requirements (< 10 seconds)
+    - _Requirements: 12.1, 12.2, 12.3, 12.6_

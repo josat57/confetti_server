@@ -1,0 +1,547 @@
+import mongoose from "mongoose";
+import dotenv from "dotenv";
+import Vendor from "../models/vendor.model.js";
+
+dotenv.config();
+
+// Lagos coordinates: Victoria Island, Lekki, Ikeja
+const lagosLocations = {
+  victoriaIsland: { lat: 6.4281, lng: 3.4219, area: "Victoria Island" },
+  lekki: { lat: 6.4474, lng: 3.5423, area: "Lekki" },
+  ikeja: { lat: 6.6018, lng: 3.3515, area: "Ikeja" },
+};
+
+const vendors = [
+  // VENUES
+  {
+    name: "The Landmark Event Centre",
+    email: "info@landmarkeventcentre.com",
+    phone: "+234 803 123 4567",
+    businessType: "venue",
+    category: "venue",
+    subcategory: "Conference Hall",
+    eventTypes: ["wedding", "corporate", "conference"],
+    averagePrice: 2500000,
+    priceRange: { min: 2000000, max: 3000000 },
+    capacity: 1000,
+    availabilityStatus: "high",
+    description:
+      "Premier event venue in Victoria Island with state-of-the-art facilities",
+    address: {
+      street: "1 Water Corporation Drive",
+      city: "Lagos",
+      state: "Lagos",
+      country: "Nigeria",
+    },
+    location: {
+      type: "Point",
+      coordinates: [
+        lagosLocations.victoriaIsland.lng,
+        lagosLocations.victoriaIsland.lat,
+      ],
+    },
+    status: "approved",
+    isVerified: true,
+    rating: 4.8,
+    reviewCount: 156,
+    features: ["AC", "Parking", "Catering Kitchen", "AV Equipment", "WiFi"],
+    images: ["https://example.com/landmark1.jpg"],
+  },
+  {
+    name: "Eko Hotel Convention Centre",
+    email: "events@ekohotels.com",
+    phone: "+234 803 234 5678",
+    businessType: "venue",
+    category: "venue",
+    subcategory: "Hotel Ballroom",
+    eventTypes: ["wedding", "corporate", "conference", "graduation"],
+    averagePrice: 3500000,
+    priceRange: { min: 3000000, max: 4000000 },
+    capacity: 1500,
+    availabilityStatus: "medium",
+    description:
+      "Luxury hotel with multiple event spaces and world-class amenities",
+    address: {
+      street: "1415 Adetokunbo Ademola Street",
+      city: "Lagos",
+      state: "Lagos",
+      country: "Nigeria",
+    },
+    location: {
+      type: "Point",
+      coordinates: [
+        lagosLocations.victoriaIsland.lng,
+        lagosLocations.victoriaIsland.lat,
+      ],
+    },
+    status: "approved",
+    isVerified: true,
+    rating: 4.9,
+    reviewCount: 243,
+    features: [
+      "AC",
+      "Parking",
+      "Hotel Rooms",
+      "Multiple Halls",
+      "Catering",
+      "WiFi",
+    ],
+    images: ["https://example.com/eko1.jpg"],
+  },
+  {
+    name: "Lekki Coliseum",
+    email: "bookings@lekkicoliseum.com",
+    phone: "+234 803 345 6789",
+    businessType: "venue",
+    category: "venue",
+    subcategory: "Outdoor Venue",
+    eventTypes: ["wedding", "birthday", "corporate"],
+    averagePrice: 1500000,
+    priceRange: { min: 1200000, max: 1800000 },
+    capacity: 800,
+    availabilityStatus: "high",
+    description: "Beautiful outdoor venue with garden setting in Lekki",
+    address: {
+      street: "23 Admiralty Way",
+      city: "Lagos",
+      state: "Lagos",
+      country: "Nigeria",
+    },
+    location: {
+      type: "Point",
+      coordinates: [lagosLocations.lekki.lng, lagosLocations.lekki.lat],
+    },
+    status: "approved",
+    isVerified: true,
+    rating: 4.6,
+    reviewCount: 98,
+    features: ["Outdoor Space", "Parking", "Garden", "Tent Setup"],
+    images: ["https://example.com/lekki1.jpg"],
+  },
+  {
+    name: "Ikeja City Mall Events Hall",
+    email: "events@ikejacitymall.com",
+    phone: "+234 803 456 7890",
+    businessType: "venue",
+    category: "venue",
+    subcategory: "Mall Event Space",
+    eventTypes: ["corporate", "birthday", "other"],
+    averagePrice: 800000,
+    priceRange: { min: 600000, max: 1000000 },
+    capacity: 400,
+    availabilityStatus: "high",
+    description: "Modern event space in the heart of Ikeja shopping district",
+    address: {
+      street: "Obafemi Awolowo Way",
+      city: "Lagos",
+      state: "Lagos",
+      country: "Nigeria",
+    },
+    location: {
+      type: "Point",
+      coordinates: [lagosLocations.ikeja.lng, lagosLocations.ikeja.lat],
+    },
+    status: "approved",
+    isVerified: true,
+    rating: 4.4,
+    reviewCount: 67,
+    features: ["AC", "Parking", "Mall Access", "WiFi"],
+    images: ["https://example.com/ikeja1.jpg"],
+  },
+  {
+    name: "The Civic Centre",
+    email: "info@civiccentrelagos.com",
+    phone: "+234 803 567 8901",
+    businessType: "venue",
+    category: "venue",
+    subcategory: "Government Facility",
+    eventTypes: ["corporate", "conference", "graduation"],
+    averagePrice: 2000000,
+    priceRange: { min: 1500000, max: 2500000 },
+    capacity: 2000,
+    availabilityStatus: "medium",
+    description: "Large government-owned venue suitable for major events",
+    address: {
+      street: "Ozumba Mbadiwe Avenue",
+      city: "Lagos",
+      state: "Lagos",
+      country: "Nigeria",
+    },
+    location: {
+      type: "Point",
+      coordinates: [
+        lagosLocations.victoriaIsland.lng,
+        lagosLocations.victoriaIsland.lat,
+      ],
+    },
+    status: "approved",
+    isVerified: true,
+    rating: 4.3,
+    reviewCount: 134,
+    features: ["Large Capacity", "Parking", "AC", "Stage"],
+    images: ["https://example.com/civic1.jpg"],
+  },
+
+  // CATERING
+  {
+    name: "Delicious Affairs Catering",
+    email: "info@deliciousaffairs.com",
+    phone: "+234 803 678 9012",
+    businessType: "catering",
+    category: "catering",
+    subcategory: "Full Service Catering",
+    eventTypes: ["wedding", "corporate", "birthday", "graduation"],
+    averagePrice: 8000,
+    priceRange: { min: 5000, max: 15000 },
+    capacity: 1000,
+    availabilityStatus: "high",
+    description: "Premium catering service with diverse menu options",
+    address: {
+      street: "45 Akin Adesola Street",
+      city: "Lagos",
+      state: "Lagos",
+      country: "Nigeria",
+    },
+    location: {
+      type: "Point",
+      coordinates: [
+        lagosLocations.victoriaIsland.lng,
+        lagosLocations.victoriaIsland.lat,
+      ],
+    },
+    status: "approved",
+    isVerified: true,
+    rating: 4.7,
+    reviewCount: 189,
+    features: [
+      "Continental",
+      "Nigerian Cuisine",
+      "Buffet",
+      "Plated Service",
+      "Waiters",
+    ],
+    images: ["https://example.com/delicious1.jpg"],
+  },
+  {
+    name: "Tastee Fried Chicken Events",
+    email: "events@tasteefc.com",
+    phone: "+234 803 789 0123",
+    businessType: "catering",
+    category: "catering",
+    subcategory: "Fast Food Catering",
+    eventTypes: ["birthday", "corporate", "other"],
+    averagePrice: 3500,
+    priceRange: { min: 2500, max: 5000 },
+    capacity: 500,
+    availabilityStatus: "high",
+    description: "Popular fast food catering for casual events",
+    address: {
+      street: "Multiple Locations",
+      city: "Lagos",
+      state: "Lagos",
+      country: "Nigeria",
+    },
+    location: {
+      type: "Point",
+      coordinates: [lagosLocations.ikeja.lng, lagosLocations.ikeja.lat],
+    },
+    status: "approved",
+    isVerified: true,
+    rating: 4.2,
+    reviewCount: 234,
+    features: ["Fast Food", "Delivery", "Packaging"],
+    images: ["https://example.com/tastee1.jpg"],
+  },
+  {
+    name: "Royal Feast Catering",
+    email: "bookings@royalfeast.ng",
+    phone: "+234 803 890 1234",
+    businessType: "catering",
+    category: "catering",
+    subcategory: "Luxury Catering",
+    eventTypes: ["wedding", "corporate"],
+    averagePrice: 12000,
+    priceRange: { min: 10000, max: 20000 },
+    capacity: 800,
+    availabilityStatus: "medium",
+    description: "High-end catering service for luxury events",
+    address: {
+      street: "12 Banana Island Road",
+      city: "Lagos",
+      state: "Lagos",
+      country: "Nigeria",
+    },
+    location: {
+      type: "Point",
+      coordinates: [
+        lagosLocations.victoriaIsland.lng,
+        lagosLocations.victoriaIsland.lat,
+      ],
+    },
+    status: "approved",
+    isVerified: true,
+    rating: 4.9,
+    reviewCount: 87,
+    features: [
+      "Gourmet",
+      "International Cuisine",
+      "Wine Pairing",
+      "Chef Service",
+    ],
+    images: ["https://example.com/royal1.jpg"],
+  },
+  {
+    name: "Mama Put Catering Services",
+    email: "info@mamaputcatering.com",
+    phone: "+234 803 901 2345",
+    businessType: "catering",
+    category: "catering",
+    subcategory: "Local Cuisine",
+    eventTypes: ["birthday", "graduation", "other"],
+    averagePrice: 4000,
+    priceRange: { min: 3000, max: 6000 },
+    capacity: 300,
+    availabilityStatus: "high",
+    description: "Authentic Nigerian cuisine for traditional events",
+    address: {
+      street: "78 Allen Avenue",
+      city: "Lagos",
+      state: "Lagos",
+      country: "Nigeria",
+    },
+    location: {
+      type: "Point",
+      coordinates: [lagosLocations.ikeja.lng, lagosLocations.ikeja.lat],
+    },
+    status: "approved",
+    isVerified: true,
+    rating: 4.5,
+    reviewCount: 156,
+    features: ["Nigerian Food", "Traditional", "Affordable"],
+    images: ["https://example.com/mamaput1.jpg"],
+  },
+  {
+    name: "The Catering Company Lagos",
+    email: "hello@cateringcompanylagos.com",
+    phone: "+234 803 012 3456",
+    businessType: "catering",
+    category: "catering",
+    subcategory: "Corporate Catering",
+    eventTypes: ["corporate", "conference"],
+    averagePrice: 6000,
+    priceRange: { min: 4500, max: 8000 },
+    capacity: 600,
+    availabilityStatus: "high",
+    description: "Specialized in corporate events and conferences",
+    address: {
+      street: "34 Adeola Odeku Street",
+      city: "Lagos",
+      state: "Lagos",
+      country: "Nigeria",
+    },
+    location: {
+      type: "Point",
+      coordinates: [
+        lagosLocations.victoriaIsland.lng,
+        lagosLocations.victoriaIsland.lat,
+      ],
+    },
+    status: "approved",
+    isVerified: true,
+    rating: 4.6,
+    reviewCount: 112,
+    features: ["Corporate Packages", "Coffee Breaks", "Lunch Boxes"],
+    images: ["https://example.com/catering1.jpg"],
+  },
+
+  // PHOTOGRAPHY
+  {
+    name: "Kelechi Photography",
+    email: "book@kelechiphotography.com",
+    phone: "+234 803 123 4568",
+    businessType: "photography",
+    category: "photography",
+    subcategory: "Wedding Photography",
+    eventTypes: ["wedding", "birthday", "graduation"],
+    averagePrice: 350000,
+    priceRange: { min: 250000, max: 500000 },
+    capacity: 0,
+    availabilityStatus: "medium",
+    description: "Award-winning wedding and event photographer",
+    address: {
+      street: "56 Admiralty Way",
+      city: "Lagos",
+      state: "Lagos",
+      country: "Nigeria",
+    },
+    location: {
+      type: "Point",
+      coordinates: [lagosLocations.lekki.lng, lagosLocations.lekki.lat],
+    },
+    status: "approved",
+    isVerified: true,
+    rating: 4.9,
+    reviewCount: 178,
+    features: ["Digital Photos", "Album", "Drone", "Same Day Edit"],
+    images: ["https://example.com/kelechi1.jpg"],
+  },
+  {
+    name: "Snap Masters Studio",
+    email: "info@snapmasters.ng",
+    phone: "+234 803 234 5679",
+    businessType: "photography",
+    category: "photography",
+    subcategory: "Event Photography",
+    eventTypes: ["corporate", "conference", "birthday"],
+    averagePrice: 200000,
+    priceRange: { min: 150000, max: 300000 },
+    capacity: 0,
+    availabilityStatus: "high",
+    description: "Professional event photography for all occasions",
+    address: {
+      street: "23 Opebi Road",
+      city: "Lagos",
+      state: "Lagos",
+      country: "Nigeria",
+    },
+    location: {
+      type: "Point",
+      coordinates: [lagosLocations.ikeja.lng, lagosLocations.ikeja.lat],
+    },
+    status: "approved",
+    isVerified: true,
+    rating: 4.6,
+    reviewCount: 134,
+    features: ["Digital Photos", "Prints", "Photo Booth"],
+    images: ["https://example.com/snap1.jpg"],
+  },
+  {
+    name: "Moments by Tunde",
+    email: "tunde@momentsbytunde.com",
+    phone: "+234 803 345 6780",
+    businessType: "photography",
+    category: "photography",
+    subcategory: "Portrait Photography",
+    eventTypes: ["wedding", "birthday", "graduation"],
+    averagePrice: 280000,
+    priceRange: { min: 200000, max: 400000 },
+    capacity: 0,
+    availabilityStatus: "medium",
+    description: "Creative photographer specializing in candid moments",
+    address: {
+      street: "89 Ajose Adeogun Street",
+      city: "Lagos",
+      state: "Lagos",
+      country: "Nigeria",
+    },
+    location: {
+      type: "Point",
+      coordinates: [
+        lagosLocations.victoriaIsland.lng,
+        lagosLocations.victoriaIsland.lat,
+      ],
+    },
+    status: "approved",
+    isVerified: true,
+    rating: 4.8,
+    reviewCount: 156,
+    features: ["Candid", "Portrait", "Album", "USB"],
+    images: ["https://example.com/tunde1.jpg"],
+  },
+  {
+    name: "Lagos Photo Studio",
+    email: "bookings@lagosphotostudio.com",
+    phone: "+234 803 456 7891",
+    businessType: "photography",
+    category: "photography",
+    subcategory: "Studio Photography",
+    eventTypes: ["birthday", "graduation", "other"],
+    averagePrice: 150000,
+    priceRange: { min: 100000, max: 250000 },
+    capacity: 0,
+    availabilityStatus: "high",
+    description: "Affordable photography services with studio options",
+    address: {
+      street: "45 Toyin Street",
+      city: "Lagos",
+      state: "Lagos",
+      country: "Nigeria",
+    },
+    location: {
+      type: "Point",
+      coordinates: [lagosLocations.ikeja.lng, lagosLocations.ikeja.lat],
+    },
+    status: "approved",
+    isVerified: true,
+    rating: 4.4,
+    reviewCount: 89,
+    features: ["Studio", "Digital Photos", "Prints"],
+    images: ["https://example.com/lagos1.jpg"],
+  },
+  {
+    name: "Elite Lens Photography",
+    email: "info@elitelens.ng",
+    phone: "+234 803 567 8902",
+    businessType: "photography",
+    category: "photography",
+    subcategory: "Luxury Photography",
+    eventTypes: ["wedding", "corporate"],
+    averagePrice: 600000,
+    priceRange: { min: 500000, max: 800000 },
+    capacity: 0,
+    availabilityStatus: "low",
+    description: "Premium photography service for high-end events",
+    address: {
+      street: "15 Banana Island",
+      city: "Lagos",
+      state: "Lagos",
+      country: "Nigeria",
+    },
+    location: {
+      type: "Point",
+      coordinates: [
+        lagosLocations.victoriaIsland.lng,
+        lagosLocations.victoriaIsland.lat,
+      ],
+    },
+    status: "approved",
+    isVerified: true,
+    rating: 5.0,
+    reviewCount: 45,
+    features: ["Luxury Package", "Drone", "Album", "Same Day Edit", "Prints"],
+    images: ["https://example.com/elite1.jpg"],
+  },
+];
+
+async function seedLagosVendors() {
+  try {
+    await mongoose.connect(process.env.MONGODB_URI);
+    console.log("Connected to MongoDB");
+
+    // Clear existing Lagos vendors
+    await Vendor.deleteMany({ "address.city": "Lagos" });
+    console.log("Cleared existing Lagos vendors");
+
+    // Insert vendors
+    const result = await Vendor.insertMany(vendors);
+    console.log(`✅ Successfully seeded ${result.length} Lagos vendors`);
+
+    // Display summary
+    const summary = {};
+    result.forEach((vendor) => {
+      summary[vendor.category] = (summary[vendor.category] || 0) + 1;
+    });
+
+    console.log("\nVendors by Category:");
+    Object.entries(summary).forEach(([category, count]) => {
+      console.log(`  - ${category}: ${count} vendors`);
+    });
+
+    process.exit(0);
+  } catch (error) {
+    console.error("❌ Error seeding Lagos vendors:", error);
+    process.exit(1);
+  }
+}
+
+seedLagosVendors();

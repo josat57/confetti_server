@@ -13,8 +13,17 @@ RUN apt-get update && apt-get install -y \
 # Copy requirements file
 COPY requirements.txt .
 
-# Install dependencies
-RUN pip install --no-cache-dir -r requirements.txt
+# Install dependencies (add higher timeout and retries to avoid network flakiness)
+ENV PIP_DEFAULT_TIMEOUT=120
+RUN pip install --no-cache-dir --retries=5 -r requirements.txt
+
+# Pre-download required NLTK data to avoid runtime failures
+ENV NLTK_DATA=/usr/local/share/nltk_data
+RUN python - <<'PY'
+import nltk
+for pkg in ["punkt", "stopwords"]:
+    nltk.download(pkg)
+PY
 
 # Copy the Python application
 COPY . .

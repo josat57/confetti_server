@@ -1,81 +1,115 @@
-import 'dotenv/config';
-import app from './app.js';
-import { connectDB } from './config/database.js';
-import http from 'http';
-import NotificationManagerService from './services/notification/manager.service.js';
-import MessageService from './services/messaging/message.service.js';
-import config from './config/index.js';
-import logger from './services/logging/advanced.service.js';
+import "dotenv/config";
+import app from "./app.js";
+import { connectDB } from "./config/database.js";
+import http from "http";
+import NotificationManagerService from "./services/notification/manager.service.js";
+import MessageService from "./services/messaging/message.service.js";
+import config from "./config/index.js";
+import logger from "./services/logging/advanced.service.js";
+import { validateEmailConfig } from "./utils/validateEmailConfig.js";
 
 // Debug environment variables
-console.log('Environment Variables:', {
-    MONGODB_URI: process.env.MONGODB_URI,
-    NODE_ENV: process.env.NODE_ENV,
-    PORT: process.env.PORT
+console.log("Environment Variables:", {
+  MONGODB_URI: process.env.MONGODB_URI,
+  NODE_ENV: process.env.NODE_ENV,
+  PORT: process.env.PORT,
 });
 
 const PORT = config.port;
 
 // Start server
 const startServer = async () => {
+  try {
+    // Validate email configuration before starting services
     try {
-        // Connect to database
-        await connectDB();
-        logger.info('Database connected successfully');
+      validateEmailConfig();
+      logger.info("Email configuration validation completed successfully");
+    } catch (error) {
+      logger.error("Email configuration validation failed:", error.message);
+      logger.warn(
+        "Server will continue startup, but email functionality may not work properly"
+      );
+      // Don't exit - allow server to start even if email config is invalid
+      // This allows for graceful degradation of email functionality
+    }
 
-        // Start server
-        const server = http.createServer(app);
+    // Initialize email queue service
+    try {
+      const emailQueueService = (
+        await import("./services/email-queue.service.js")
+      ).default;
+      await emailQueueService.initialize();
+      logger.info("Email queue service initialized successfully");
+    } catch (error) {
+      logger.error("Email queue service initialization failed:", error.message);
+      logger.warn(
+        "Server will continue startup, but email queue functionality may not work properly"
+      );
+    }
 
-        // Attach WebSocket upgrade handler
-        // server.js
-        server.on('upgrade', (request, socket, head) => {
-        // Log the upgrade request for debugging
-            console.log('WebSocket upgrade request:', {
-                url: request.url,
-                headers: request.headers,
-                pathname: new URL(request.url, `http://${request.headers.host}`).pathname        
-            });
+    // Connect to database
+    await connectDB();
+    logger.info("Database connected successfully");
 
-            const pathname = new URL(request.url, `http://${request.headers.host}`).pathname;
+    // Start server
+    const server = http.createServer(app);
 
-            if (pathname === '/ws/notifications') {
-                NotificationManagerService.wss.handleUpgrade(request, socket, head, (ws) => {
-                    NotificationManagerService.wss.emit('connection', ws, request);
-                });
-            } else if (pathname === '/ws/messages') {
-                MessageService.wss.handleUpgrade(request, socket, head, (ws) => {
-                    MessageService.wss.emit('connection', ws, request);
-                });
-            } else {
-                console.log('Invalid WebSocket path:', pathname);
-                socket.destroy();
-            }
+    // Attach WebSocket upgrade handler
+    // server.js
+    server.on("upgrade", (request, socket, head) => {
+      // Log the upgrade request for debugging
+      console.log("WebSocket upgrade request:", {
+        url: request.url,
+        headers: request.headers,
+        pathname: new URL(request.url, `http://${request.headers.host}`)
+          .pathname,
+      });
+
+      const pathname = new URL(request.url, `http://${request.headers.host}`)
+        .pathname;
+
+      if (pathname === "/ws/notifications") {
+        NotificationManagerService.wss.handleUpgrade(
+          request,
+          socket,
+          head,
+          (ws) => {
+            NotificationManagerService.wss.emit("connection", ws, request);
+          }
+        );
+      } else if (pathname === "/ws/messages") {
+        MessageService.wss.handleUpgrade(request, socket, head, (ws) => {
+          MessageService.wss.emit("connection", ws, request);
         });
+      } else {
+        console.log("Invalid WebSocket path:", pathname);
+        socket.destroy();
+      }
+    });
 
-        const serverListening = server.listen(PORT, () => {
-            console.log(`
+    const serverListening = server.listen(PORT, () => {
+      console.log(`
                 🚀 Server running on port ${PORT}
                 🌐 Health check: http://localhost:${PORT}/health
                 ⏰ Time: ${new Date().toISOString()}
             `);
-        });
+    });
 
-        // Handle unhandled rejections
-        process.on('unhandledRejection', (error) => {
-          logger.error('Unhandled Rejection:', error);
-        });
+    // Handle unhandled rejections
+    process.on("unhandledRejection", (error) => {
+      logger.error("Unhandled Rejection:", error);
+    });
 
-        // Handle uncaught exceptions
-        process.on('uncaughtException', (error) => {
-          logger.error('Uncaught Exception:', error);
-        });
+    // Handle uncaught exceptions
+    process.on("uncaughtException", (error) => {
+      logger.error("Uncaught Exception:", error);
+    });
 
-        return serverListening;
-
-    } catch (error) {
-        logger.error('Server startup error:', error);
-        process.exit(1);
-    }
+    return serverListening;
+  } catch (error) {
+    logger.error("Server startup error:", error);
+    process.exit(1);
+  }
 };
 console.log("Start a sign here...", startServer);
 startServer();

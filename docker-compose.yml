@@ -1,4 +1,4 @@
-version: '3.8'
+version: "3.8"
 
 services:
   # Node.js API Service
@@ -11,34 +11,28 @@ services:
     volumes:
       - ./src/node:/usr/src/app/src/node
       - /usr/src/app/node_modules
-    env_file:
-      - .env
     environment:
-      - PORT=${PORT:-9600}
+      - PORT=9600
       - NODE_ENV=development
-      - MONGODB_URI=mongodb://confetti:Ginger_123@confetti-mongodb:27017/confetti?authSource=admin
-      - REDIS_URL=redis://confetti-redis:6379
-      - POSTGRES_URI=${POSTGRES_URI}
-      - PYTHON_API_URL=${PYTHON_API_URL}
-      - GOOGLE_CLIENT_ID=${GOOGLE_CLIENT_ID}
-      - GOOGLE_CLIENT_SECRET=${GOOGLE_CLIENT_SECRET}
-      - FRONTEND_URL=${FRONTEND_URL:-http://localhost:3000}
-      - JWT_ACCESS_SECRET=${JWT_ACCESS_SECRET}
-      - JWT_REFRESH_SECRET=${JWT_REFRESH_SECRET}
-      - JWT_ACCESS_EXPIRES_IN=${JWT_ACCESS_EXPIRES_IN}
-      - JWT_REFRESH_EXPIRES_IN=${JWT_REFRESH_EXPIRES_IN}
-      - SMTP_HOST=${SMTP_HOST}
-      - SMTP_PORT=${SMTP_PORT}
-      - SMTP_SECURE=${SMTP_SECURE}
-      - SMTP_USER=${SMTP_USER}
-      - SMTP_PASSWORD=${SMTP_PASSWORD}
-      - SMTP_FROM=${SMTP_FROM}
-      - FACEBOOK_APP_ID=${FACEBOOK_APP_ID}
-      - FACEBOOK_APP_SECRET=${FACEBOOK_APP_SECRET}
-      - FACEBOOK_CALLBACK_URL=${FACEBOOK_CALLBACK_URL}
-      - TWITTER_CONSUMER_KEY=${TWITTER_CONSUMER_KEY}
-      - TWITTER_CONSUMER_SECRET=${TWITTER_CONSUMER_SECRET}
-      - TWITTER_CALLBACK_URL=${TWITTER_CALLBACK_URL}
+      - MONGODB_URI=mongodb://mongodb:27017/confetti
+      - REDIS_URL=redis://redis:6379
+      - POSTGRES_URI=postgres://postgres:postgres@postgres:5432/confetti
+      - PYTHON_API_URL=http://python-api:5600
+      - FRONTEND_URL=http://localhost:3000
+      - JWT_ACCESS_EXPIRES_IN=15m
+      - JWT_REFRESH_EXPIRES_IN=7d
+      - JWT_ACCESS_SECRET=2fa88006305c434c8457012bb6ddfc27a6118475e8c07616c69067011583de7c0fe560d5ba565256682b446bc85705b9c62bfe5b6e87f336d86d4816942fff2b
+      - JWT_REFRESH_SECRET=7c89a8dfc691825da63c2b90a352af373894905f6fd03a45fa45239f9ff81a8c7d9143069f44f6e6d8299b1b948f1d36f9f0424571c5b9ff577dc8978f2c7f5c
+      - SMTP_HOST=smtp.hostinger.com
+      - SMTP_PORT=465
+      - SMTP_SECURE=true
+      - SMTP_USER=hello@tripmatch.io
+      - SMTP_PASSWORD=Ginger@1232025*
+      - FROM_EMAIL=hello@tripmatch.io
+      - FROM_NAME=Confetti
+      - FLUTTERWAVE_PUBLIC_KEY=FLWPUBK_TEST-ed6b4efe39238d2007c9ff6ed99636a1-X
+      - FLUTTERWAVE_SECRET_KEY=FLWSECK_TEST-2658b0a47561dad46f281804f909ab18-X
+      - FLUTTERWAVE_ENCRYPTION_KEY=FLWSECK_TEST682ea6a0fa12
     depends_on:
       - mongodb
       - postgres
@@ -58,7 +52,7 @@ services:
       - ./src/python:/usr/src/app/src/python
     environment:
       - FLASK_ENV=development
-      - MONGODB_URI=mongodb://confetti:Ginger_123@confetti-mongodb:27017/confetti?authSource=admin
+      - MONGODB_URI=mongodb://mongodb:27017/confetti
       - REDIS_URI=redis://redis:6379
     depends_on:
       - mongodb
@@ -72,7 +66,7 @@ services:
     image: mongo:latest
     container_name: confetti-mongodb
     ports:
-      - "27017:27017"
+      - "27018:27017"
     volumes:
       - mongodb_data:/data/db
       - ./mongo-init.js:/docker-entrypoint-initdb.d/mongo-init.js:ro
@@ -109,9 +103,9 @@ services:
 
 volumes:
   mongodb_data:
-  postgres_data:
   redis_data:
+  postgres_data:
 
 networks:
   confetti-network:
-    driver: bridge 
+    driver: bridge
