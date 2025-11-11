@@ -16,6 +16,8 @@ services:
       - NODE_ENV=development
       - MONGODB_URI=mongodb://mongodb:27017/confetti
       - REDIS_URL=redis://redis:6379
+      - REDIS_HOST=redis
+      - REDIS_PORT=6379
       - POSTGRES_URI=postgres://postgres:postgres@postgres:5432/confetti
       - PYTHON_API_URL=http://python-api:5600
       - FRONTEND_URL=http://localhost:3000

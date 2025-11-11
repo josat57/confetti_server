@@ -1,7 +1,7 @@
 import express from "express";
 import AIEventPlannerController from "../controllers/ai-planner.controller.js";
 import { rateLimiter } from "../middleware/rateLimiter.js";
-import { authenticate } from "../middleware/auth.js";
+import { protect as authenticate } from "../middleware/auth.js";
 
 const router = express.Router();
 
