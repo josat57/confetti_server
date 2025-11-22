@@ -1,7 +1,8 @@
 # Use Node.js 18 with Python 3.9 as the base image
-FROM node:18-bullseye
+# Use linux/amd64 platform for better compatibility
+FROM --platform=linux/amd64 node:18-bullseye
 
-# Install Python3 and required build dependencies
+# Install Python3 and required build dependencies including sharp dependencies
 RUN apt-get update && apt-get install -y \
     python3.9 \
     python3.9-dev \
@@ -11,6 +12,7 @@ RUN apt-get update && apt-get install -y \
     libopenblas-dev \
     gfortran \
     liblapack-dev \
+    libvips-dev \
     && rm -rf /var/lib/apt/lists/*
 
 # Set the working directory
@@ -22,6 +24,9 @@ RUN npm install
 
 # Copy the rest of the application
 COPY . .
+
+# Rebuild sharp for the correct platform after copying files
+RUN npm rebuild sharp
 
 # Create and activate Python virtual environment
 RUN python3.9 -m venv /usr/src/app/venv
