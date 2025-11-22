@@ -1,163 +1,212 @@
-const express = require("express"); const mobileController = require("../controllers/mobile.controller"); const { protect } = require("../middleware/auth"); const { validate } = require("../middleware/validate"); const {
-  checkDeviceSecurity,
-  validateDeviceSession,
-  checkDevicePermissions,
-  deviceRateLimit,
-  logDeviceActivity
-} = require('../middleware/deviceSecurity');
-const {
-  deviceRegistrationLimiter,
-  pushNotificationLimiter,
-  locationUpdateLimiter,
-  apiLimiter
-} = require('../middleware/rateLimit');
-const Joi = require("joi"); const router = express.Router();
+import express from "express";
+import { protect } from "../middleware/auth.js";
+import multer from "multer";
+import {
+  getManifest,
+  getOfflineData,
+  syncOfflineChanges,
+  uploadImage,
+  getMobileConfig,
+  subscribePush,
+  checkCapabilities,
+} from "../controllers/mobile.controller.js";
 
-// Validation schemas
-const registerDeviceSchema = Joi.object({
-  deviceId: Joi.string().required(),
-  name: Joi.string().required(),
-  model: Joi.string().required(),
-  platform: Joi.string().valid('ios', 'android').required(),
-  osVersion: Joi.string().required(),
-  appVersion: Joi.string().required(),
-  pushToken: Joi.string(),
-  pushType: Joi.string().valid('fcm', 'apns'),
-  preferences: Joi.object({
-    notifications: Joi.boolean(),
-    location: Joi.boolean(),
-    theme: Joi.string().valid('light', 'dark', 'system')
-  })
+const router = express.Router();
+
+// Configure multer for image uploads
+const upload = multer({
+  storage: multer.memoryStorage(),
+  limits: {
+    fileSize: 10 * 1024 * 1024, // 10MB
+  },
+  fileFilter: (req, file, cb) => {
+    const allowedMimes = ["image/jpeg", "image/jpg", "image/png", "image/webp"];
+    if (allowedMimes.includes(file.mimetype)) {
+      cb(null, true);
+    } else {
+      cb(new Error("Invalid file type. Only JPEG, PNG, and WebP are allowed."));
+    }
+  },
 });
 
-const updateDeviceSchema = Joi.object({
-  name: Joi.string(),
-  preferences: Joi.object({
-    notifications: Joi.boolean(),
-    location: Joi.boolean(),
-    theme: Joi.string().valid('light', 'dark', 'system')
-  })
-});
+/**
+ * @swagger
+ * /api/v1/mobile/manifest:
+ *   get:
+ *     summary: Get PWA manifest
+ *     tags: [Mobile]
+ *     responses:
+ *       200:
+ *         description: PWA manifest retrieved successfully
+ */
+router.get("/manifest", getManifest);
 
-const updateLocationSchema = Joi.object({
-  coordinates: Joi.array().items(Joi.number()).length(2).required()
-});
+/**
+ * @swagger
+ * /api/v1/mobile/config:
+ *   get:
+ *     summary: Get mobile app configuration
+ *     tags: [Mobile]
+ *     security:
+ *       - bearerAuth: []
+ *     responses:
+ *       200:
+ *         description: Mobile configuration retrieved successfully
+ *       401:
+ *         description: Unauthorized
+ */
+router.get("/config", protect, getMobileConfig);
 
-const updatePushTokenSchema = Joi.object({
-  token: Joi.string().required(),
-  type: Joi.string().valid('fcm', 'apns').required()
-});
+/**
+ * @swagger
+ * /api/v1/mobile/offline-data:
+ *   get:
+ *     summary: Get data for offline caching
+ *     tags: [Mobile]
+ *     security:
+ *       - bearerAuth: []
+ *     parameters:
+ *       - in: query
+ *         name: types
+ *         schema:
+ *           type: string
+ *           default: events,clients,tasks
+ *         description: Comma-separated list of data types to cache
+ *     responses:
+ *       200:
+ *         description: Offline data retrieved successfully
+ *       401:
+ *         description: Unauthorized
+ */
+router.get("/offline-data", protect, getOfflineData);
 
-const pushNotificationSchema = Joi.object({
-  title: Joi.string().required(),
-  body: Joi.string().required(),
-  data: Joi.object(),
-  sound: Joi.string(),
-  badge: Joi.number().integer().min(0),
-  channelId: Joi.string(),
-  clickAction: Joi.string()
-});
+/**
+ * @swagger
+ * /api/v1/mobile/sync:
+ *   post:
+ *     summary: Sync offline changes
+ *     tags: [Mobile]
+ *     security:
+ *       - bearerAuth: []
+ *     requestBody:
+ *       required: true
+ *       content:
+ *         application/json:
+ *           schema:
+ *             type: object
+ *             properties:
+ *               changes:
+ *                 type: array
+ *                 items:
+ *                   type: object
+ *                   properties:
+ *                     type:
+ *                       type: string
+ *                       enum: [event, client, task]
+ *                     action:
+ *                       type: string
+ *                       enum: [create, update, delete]
+ *                     data:
+ *                       type: object
+ *                     localId:
+ *                       type: string
+ *     responses:
+ *       200:
+ *         description: Changes synced successfully
+ *       400:
+ *         description: Invalid input
+ *       401:
+ *         description: Unauthorized
+ */
+router.post("/sync", protect, syncOfflineChanges);
 
-// Apply rate limiting to all routes
-router.use(apiLimiter);
+/**
+ * @swagger
+ * /api/v1/mobile/upload-image:
+ *   post:
+ *     summary: Upload image from mobile camera
+ *     tags: [Mobile]
+ *     security:
+ *       - bearerAuth: []
+ *     requestBody:
+ *       required: true
+ *       content:
+ *         multipart/form-data:
+ *           schema:
+ *             type: object
+ *             properties:
+ *               image:
+ *                 type: string
+ *                 format: binary
+ *               optimize:
+ *                 type: string
+ *                 enum: [true, false]
+ *                 default: true
+ *               quality:
+ *                 type: string
+ *                 enum: [low, medium, high]
+ *                 default: medium
+ *     responses:
+ *       200:
+ *         description: Image uploaded successfully
+ *       400:
+ *         description: Invalid image file
+ *       401:
+ *         description: Unauthorized
+ */
+router.post("/upload-image", protect, upload.single("image"), uploadImage);
 
-// All routes require authentication
-router.use(protect);
+/**
+ * @swagger
+ * /api/v1/mobile/push-subscribe:
+ *   post:
+ *     summary: Register push notification subscription
+ *     tags: [Mobile]
+ *     security:
+ *       - bearerAuth: []
+ *     requestBody:
+ *       required: true
+ *       content:
+ *         application/json:
+ *           schema:
+ *             type: object
+ *             required:
+ *               - subscription
+ *             properties:
+ *               subscription:
+ *                 type: object
+ *                 description: Push subscription object
+ *     responses:
+ *       200:
+ *         description: Subscription registered successfully
+ *       400:
+ *         description: Invalid subscription data
+ *       401:
+ *         description: Unauthorized
+ */
+router.post("/push-subscribe", protect, subscribePush);
 
-// Device registration route with specific rate limiting
-router.post(
-  '/devices',
-  deviceRegistrationLimiter,
-  validate(registerDeviceSchema),
-  mobileController.registerDevice
-);
+/**
+ * @swagger
+ * /api/v1/mobile/capabilities:
+ *   post:
+ *     summary: Check mobile device capabilities
+ *     tags: [Mobile]
+ *     requestBody:
+ *       required: true
+ *       content:
+ *         application/json:
+ *           schema:
+ *             type: object
+ *             properties:
+ *               userAgent:
+ *                 type: string
+ *               features:
+ *                 type: object
+ *     responses:
+ *       200:
+ *         description: Capabilities checked successfully
+ */
+router.post("/capabilities", checkCapabilities);
 
-// Device management routes with security checks
-router.get(
-  '/devices',
-  checkDeviceSecurity,
-  validateDeviceSession,
-  mobileController.getUserDevices
-);
-
-router.get(
-  '/devices/:deviceId',
-  checkDeviceSecurity,
-  validateDeviceSession,
-  mobileController.getDevice
-);
-
-router.patch(
-  '/devices/:deviceId',
-  checkDeviceSecurity,
-  validateDeviceSession,
-  validate(updateDeviceSchema),
-  mobileController.updateDevice
-);
-
-router.delete(
-  '/devices/:deviceId',
-  checkDeviceSecurity,
-  validateDeviceSession,
-  mobileController.deleteDevice
-);
-
-// Location routes with specific rate limiting and permission checks
-router.patch(
-  '/devices/:deviceId/location',
-  checkDeviceSecurity,
-  validateDeviceSession,
-  checkDevicePermissions(['location']),
-  locationUpdateLimiter,
-  validate(updateLocationSchema),
-  logDeviceActivity,
-  mobileController.updateLocation
-);
-
-router.patch(
-  '/devices/:deviceId/metadata',
-  checkDeviceSecurity,
-  validateDeviceSession,
-  logDeviceActivity,
-  mobileController.updateMetadata
-);
-
-// Push notification routes with specific rate limiting and permission checks
-router.patch(
-  '/devices/:deviceId/push-token',
-  checkDeviceSecurity,
-  validateDeviceSession,
-  checkDevicePermissions(['notifications']),
-  validate(updatePushTokenSchema),
-  mobileController.updatePushToken
-);
-
-router.post(
-  '/notifications',
-  checkDeviceSecurity,
-  validateDeviceSession,
-  checkDevicePermissions(['notifications']),
-  pushNotificationLimiter,
-  validate(pushNotificationSchema),
-  mobileController.sendPushNotification
-);
-
-// Analytics and discovery routes with security checks
-router.get(
-  '/devices/nearby',
-  checkDeviceSecurity,
-  validateDeviceSession,
-  checkDevicePermissions(['location']),
-  deviceRateLimit({ max: 30 }), // Limit nearby device queries
-  mobileController.getNearbyDevices
-);
-
-router.get(
-  '/analytics',
-  checkDeviceSecurity,
-  validateDeviceSession,
-  deviceRateLimit({ max: 10 }), // Limit analytics queries
-  mobileController.getDeviceAnalytics
-);
-
-module.exports = router;
+export default router;

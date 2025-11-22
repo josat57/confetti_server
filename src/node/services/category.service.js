@@ -1,4 +1,4 @@
-import { getCategoryInfo } from "../config/budget-templates.js";
+import { budgetTemplates } from "../config/budget-templates.js";
 import { logger } from "../utils/logger.js";
 
 /**

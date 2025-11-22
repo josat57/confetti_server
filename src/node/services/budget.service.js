@@ -1,7 +1,6 @@
 import {
-  getBudgetTemplate,
-  getMinimumBudget,
-  getCategoryInfo,
+  applyBudgetTemplate,
+  budgetTemplates,
 } from "../config/budget-templates.js";
 import { InsufficientBudgetError } from "../utils/ai-planner-errors.js";
 import { logger } from "../utils/logger.js";
@@ -27,7 +26,7 @@ class BudgetService {
       const startTime = Date.now();
 
       // Get base allocation template
-      let baseAllocations = getBudgetTemplate(eventType);
+      let baseAllocations = applyBudgetTemplate(eventType, totalBudget);
 
       // Adjust for guest count
       baseAllocations = this.adjustForGuestCount(

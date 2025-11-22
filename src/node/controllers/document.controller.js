@@ -1,215 +1,226 @@
-import documentService from '../services/document.service.js';
-import { AppError } from '../utils/error.js';
-import { logger } from '../utils/logger.js';
+import Event from "../models/event.model.js";
+import { AppError } from "../utils/AppError.js";
+import {
+  uploadToGridFS,
+  deleteFromGridFS,
+  fileToBase64,
+} from "../utils/gridfs.js";
 
-// Upload document
+/**
+ * List documents for an event
+ * GET /api/v1/events/:eventId/documents
+ */
+export const listEventDocuments = async (req, res, next) => {
+  try {
+    const { type, search } = req.query;
+
+    const event = await Event.findById(req.params.eventId).select("documents");
+
+    if (!event) {
+      return next(new AppError("Event not found", 404));
+    }
+
+    let documents = event.documents || [];
+
+    // Filter by type
+    if (type) {
+      documents = documents.filter((doc) => doc.type === type);
+    }
+
+    // Search by name
+    if (search) {
+      documents = documents.filter((doc) =>
+        doc.name.toLowerCase().includes(search.toLowerCase())
+      );
+    }
+
+    // Sort by upload date (newest first)
+    documents.sort((a, b) => b.uploadedAt - a.uploadedAt);
+
+    res.status(200).json({
+      status: "success",
+      data: {
+        documents,
+        total: documents.length,
+      },
+    });
+  } catch (error) {
+    next(error);
+  }
+};
+
+/**
+ * Upload document to event
+ * POST /api/v1/events/:eventId/documents
+ */
 export const uploadDocument = async (req, res, next) => {
   try {
-    if (!req.file) {
-      throw new AppError('No file uploaded', 400);
+    const event = await Event.findById(req.params.eventId);
+
+    if (!event) {
+      return next(new AppError("Event not found", 404));
     }
 
-    const document = await documentService.uploadDocument(
-      req.file,
-      req.user._id,
-      req.body.metadata
+    // Check access
+    if (event.planner.toString() !== req.user._id.toString()) {
+      return next(new AppError("Access denied", 403));
+    }
+
+    // Check if file was uploaded
+    if (!req.file) {
+      return next(new AppError("File is required", 400));
+    }
+
+    const { type, description } = req.body;
+
+    // Upload to GridFS
+    const uploadResult = await uploadToGridFS(
+      req.file.buffer,
+      `event-doc-${event._id}-${Date.now()}-${req.file.originalname}`,
+      req.file.mimetype,
+      {
+        eventId: event._id,
+        type: type || "other",
+        uploadedBy: req.user._id,
+      }
     );
+
+    // Add document to event
+    const document = {
+      name: req.file.originalname,
+      type: type || "other",
+      fileId: uploadResult.fileId,
+      size: req.file.size,
+      mimeType: req.file.mimetype,
+      description: description || "",
+      uploadedBy: req.user._id,
+      uploadedAt: new Date(),
+    };
+
+    event.documents = event.documents || [];
+    event.documents.push(document);
+    await event.save();
 
     res.status(201).json({
-      status: 'success',
-      data: document
+      status: "success",
+      message: "Document uploaded successfully",
+      data: { document },
     });
   } catch (error) {
     next(error);
   }
 };
 
-// Get document by ID
-export const getDocument = async (req, res, next) => {
+/**
+ * Download document
+ * GET /api/v1/documents/:eventId/:documentId
+ */
+export const downloadDocument = async (req, res, next) => {
   try {
-    const document = await documentService.getDocument(
-      req.params.documentId,
-      req.user
-    );
+    const event = await Event.findById(req.params.eventId);
 
-    res.status(200).json({
-      status: 'success',
-      data: document
-    });
-  } catch (error) {
-    next(error);
-  }
-};
-
-// Get documents by owner
-export const getDocumentsByOwner = async (req, res, next) => {
-  try {
-    const documents = await documentService.getDocumentsByOwner(
-      req.user._id,
-      {
-        type: req.query.type,
-        status: req.query.status,
-        limit: parseInt(req.query.limit) || 50,
-        skip: parseInt(req.query.skip) || 0
-      }
-    );
-
-    res.status(200).json({
-      status: 'success',
-      data: documents
-    });
-  } catch (error) {
-    next(error);
-  }
-};
-
-// Get documents by event
-export const getDocumentsByEvent = async (req, res, next) => {
-  try {
-    const documents = await documentService.getDocumentsByEvent(
-      req.params.eventId,
-      {
-        type: req.query.type,
-        status: req.query.status,
-        limit: parseInt(req.query.limit) || 50,
-        skip: parseInt(req.query.skip) || 0
-      }
-    );
-
-    res.status(200).json({
-      status: 'success',
-      data: documents
-    });
-  } catch (error) {
-    next(error);
-  }
-};
-
-// Get documents by vendor
-export const getDocumentsByVendor = async (req, res, next) => {
-  try {
-    const documents = await documentService.getDocumentsByVendor(
-      req.params.vendorId,
-      {
-        type: req.query.type,
-        status: req.query.status,
-        limit: parseInt(req.query.limit) || 50,
-        skip: parseInt(req.query.skip) || 0
-      }
-    );
-
-    res.status(200).json({
-      status: 'success',
-      data: documents
-    });
-  } catch (error) {
-    next(error);
-  }
-};
-
-// Update document
-export const updateDocument = async (req, res, next) => {
-  try {
-    const document = await documentService.updateDocument(
-      req.params.documentId,
-      req.user._id,
-      req.body
-    );
-
-    res.status(200).json({
-      status: 'success',
-      data: document
-    });
-  } catch (error) {
-    next(error);
-  }
-};
-
-// Delete document
-export const deleteDocument = async (req, res, next) => {
-  try {
-    const document = await documentService.deleteDocument(
-      req.params.documentId,
-      req.user._id
-    );
-
-    res.status(200).json({
-      status: 'success',
-      data: document
-    });
-  } catch (error) {
-    next(error);
-  }
-};
-
-// Archive document
-export const archiveDocument = async (req, res, next) => {
-  try {
-    const document = await documentService.archiveDocument(
-      req.params.documentId,
-      req.user._id
-    );
-
-    res.status(200).json({
-      status: 'success',
-      data: document
-    });
-  } catch (error) {
-    next(error);
-  }
-};
-
-// Add document version
-export const addVersion = async (req, res, next) => {
-  try {
-    if (!req.file) {
-      throw new AppError('No file uploaded', 400);
+    if (!event) {
+      return next(new AppError("Event not found", 404));
     }
 
-    const document = await documentService.addVersion(
-      req.params.documentId,
-      req.user._id,
-      req.file,
-      req.body.changes
-    );
+    const document = event.documents.id(req.params.documentId);
+
+    if (!document) {
+      return next(new AppError("Document not found", 404));
+    }
+
+    // Get file as base64
+    const fileData = await fileToBase64(document.fileId);
 
     res.status(200).json({
-      status: 'success',
-      data: document
+      status: "success",
+      data: {
+        name: document.name,
+        type: document.type,
+        mimeType: document.mimeType,
+        data: fileData,
+      },
     });
   } catch (error) {
     next(error);
   }
 };
 
-// Update document permissions
-export const updatePermissions = async (req, res, next) => {
+/**
+ * Delete document
+ * DELETE /api/v1/documents/:eventId/:documentId
+ */
+export const deleteDocument = async (req, res, next) => {
   try {
-    const document = await documentService.updatePermissions(
-      req.params.documentId,
-      req.user._id,
-      req.body.permissions
-    );
+    const event = await Event.findById(req.params.eventId);
+
+    if (!event) {
+      return next(new AppError("Event not found", 404));
+    }
+
+    // Check access
+    if (event.planner.toString() !== req.user._id.toString()) {
+      return next(new AppError("Access denied", 403));
+    }
+
+    const document = event.documents.id(req.params.documentId);
+
+    if (!document) {
+      return next(new AppError("Document not found", 404));
+    }
+
+    // Delete from GridFS
+    try {
+      await deleteFromGridFS(document.fileId);
+    } catch (error) {
+      console.error("Error deleting document from GridFS:", error);
+    }
+
+    // Remove from event
+    document.remove();
+    await event.save();
 
     res.status(200).json({
-      status: 'success',
-      data: document
+      status: "success",
+      message: "Document deleted successfully",
     });
   } catch (error) {
     next(error);
   }
 };
 
-// Get document statistics
-export const getDocumentStats = async (req, res, next) => {
+/**
+ * Update document metadata
+ * PATCH /api/v1/documents/:eventId/:documentId
+ */
+export const updateDocument = async (req, res, next) => {
   try {
-    const stats = await documentService.getDocumentStats(req.user._id);
+    const { name, type, description } = req.body;
+
+    const event = await Event.findById(req.params.eventId);
+
+    if (!event) {
+      return next(new AppError("Event not found", 404));
+    }
+
+    const document = event.documents.id(req.params.documentId);
+
+    if (!document) {
+      return next(new AppError("Document not found", 404));
+    }
+
+    // Update fields
+    if (name) document.name = name;
+    if (type) document.type = type;
+    if (description !== undefined) document.description = description;
+
+    await event.save();
 
     res.status(200).json({
-      status: 'success',
-      data: stats
+      status: "success",
+      data: { document },
     });
   } catch (error) {
     next(error);
   }
-}; 
+};

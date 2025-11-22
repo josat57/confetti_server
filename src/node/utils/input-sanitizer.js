@@ -169,8 +169,9 @@ class InputSanitizer {
     }
 
     const normalized = value.toLowerCase().trim();
+    const allowedValuesLower = allowedValues.map((v) => v.toLowerCase());
 
-    if (!allowedValues.includes(normalized)) {
+    if (!allowedValuesLower.includes(normalized)) {
       throw new AppError(
         `${fieldName} must be one of: ${allowedValues.join(", ")}`,
         400

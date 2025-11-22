@@ -12,6 +12,7 @@ import MongoStore from "connect-mongo";
 import { AppError } from "./utils/error.js";
 import adminRoutes from "./routes/admin.routes.js";
 import { checkEmailConfig } from "./utils/validateEmailConfig.js";
+import { setupSwagger } from "./config/swagger.config.js";
 // import authRoutes from './routes/auth.routes.js';
 // import oauthService from './services/oauth.service.js';
 
@@ -56,6 +57,9 @@ app.use(cors(corsOptions));
 
 // Cookie parser middleware (before routes)
 app.use(cookieParser());
+
+// Serve static files from uploads directory
+app.use("/uploads", express.static("uploads"));
 
 // Session middleware
 app.use(
@@ -115,8 +119,8 @@ app.use("/api/v1", routes);
 // app.use('/api/v1/auth', authRoutes);
 // app.use('/api/search', searchRoutes);
 
-// Add Swagger documentation
-// swaggerDocs(app);
+// Setup Swagger API documentation
+setupSwagger(app);
 
 // 404 handler
 app.use((req, res, next) => {

@@ -1,316 +1,365 @@
-import mongoose from 'mongoose';
+import mongoose from "mongoose";
 
-const eventSchema = new mongoose.Schema({
+const eventSchema = new mongoose.Schema(
+  {
     title: {
-        type: String,
-        required: [true, 'Event title is required'],
-        trim: true,
+      type: String,
+      required: [true, "Event title is required"],
+      trim: true,
     },
     description: {
-        type: String,
-        required: [true, 'Event description is required'],
-        trim: true,
+      type: String,
+      required: [true, "Event description is required"],
+      trim: true,
     },
     eventType: {
-        type: String,
-        required: [true, 'Event type is required'],
-        enum: ['wedding', 'birthday', 'corporate', 'social', 'other'],
+      type: String,
+      required: [true, "Event type is required"],
+      enum: ["wedding", "birthday", "corporate", "social", "other"],
     },
     startDate: {
-        type: Date,
-        required: [true, 'Event start date is required'],
+      type: Date,
+      required: [true, "Event start date is required"],
     },
     endDate: {
-        type: Date,
-        required: [true, 'Event end date is required'],
+      type: Date,
+      required: [true, "Event end date is required"],
     },
     location: {
-        type: {
-            type: String,
-            enum: ['Point'],
-            default: 'Point',
-        },
-        coordinates: {
-            type: [Number],
-            required: true,
-        },
-        address: {
-            street: String,
-            city: String,
-            state: String,
-            country: String,
-            zipCode: String
-        },
+      type: {
+        type: String,
+        enum: ["Point"],
+        default: "Point",
+      },
+      coordinates: {
+        type: [Number],
+        required: false, // Made optional
+      },
+      address: {
+        street: String,
+        city: String,
+        state: String,
+        country: String,
+        zipCode: String,
+      },
     },
     budget: {
-        amount: {
-            type: Number,
-            required: [true, 'Budget amount is required'],
-            min: [0, 'Budget cannot be negative'],
-        },
-        currency: {
-            type: String,
-            default: 'NGN',
-            enum: ['NGN', 'USD', 'EUR', 'GBP'],
-        },
+      amount: {
+        type: Number,
+        required: false, // Made optional
+        min: [0, "Budget cannot be negative"],
+      },
+      currency: {
+        type: String,
+        default: "NGN",
+        enum: ["NGN", "USD", "EUR", "GBP"],
+      },
     },
     guestCount: {
-        type: Number,
-        required: [true, 'Guest count is required'],
-        min: [1, 'Guest count must be at least 1'],
+      type: Number,
+      required: false, // Made optional
+      min: [1, "Guest count must be at least 1"],
     },
     status: {
-        type: String,
-        enum: ['draft', 'published', 'cancelled', 'completed'],
-        default: 'draft',
+      type: String,
+      enum: ["draft", "published", "cancelled", "completed"],
+      default: "draft",
+    },
+    createdBy: {
+      type: mongoose.Schema.Types.ObjectId,
+      ref: "User",
+      required: true,
     },
     organizer: {
-        type: mongoose.Schema.Types.ObjectId,
-        ref: 'User',
-        required: [true, 'Organizer is required'],
+      type: mongoose.Schema.Types.ObjectId,
+      ref: "User",
+      required: false, // Made optional - will use createdBy if not provided
     },
-    vendors: [{
+    planner: {
+      type: mongoose.Schema.Types.ObjectId,
+      ref: "User",
+      required: false, // Optional event planner
+    },
+    client: {
+      type: mongoose.Schema.Types.ObjectId,
+      ref: "Client",
+      required: false, // Optional client reference
+    },
+    vendors: [
+      {
         vendor: {
-            type: mongoose.Schema.Types.ObjectId,
-            ref: 'Vendor',
+          type: mongoose.Schema.Types.ObjectId,
+          ref: "Vendor",
         },
         role: {
-            type: String,
-            required: true,
+          type: String,
+          required: true,
         },
         status: {
-            type: String,
-            enum: ['pending', 'accepted', 'rejected', 'completed'],
-            default: 'pending',
+          type: String,
+          enum: ["pending", "accepted", "rejected", "completed"],
+          default: "pending",
         },
         contract: {
-            amount: Number,
-            currency: {
-                type: String,
-                default: 'NGN',
-                enum: ['NGN', 'USD', 'EUR', 'GBP'],
-            },
-            status: {
-                type: String,
-                enum: ['pending', 'paid', 'refunded'],
-                default: 'pending',
-            },
+          amount: Number,
+          currency: {
+            type: String,
+            default: "NGN",
+            enum: ["NGN", "USD", "EUR", "GBP"],
+          },
+          status: {
+            type: String,
+            enum: ["pending", "paid", "refunded"],
+            default: "pending",
+          },
         },
-    }],
-    guests: [{
+      },
+    ],
+    guests: [
+      {
         user: {
-            type: mongoose.Schema.Types.ObjectId,
-            ref: 'User',
+          type: mongoose.Schema.Types.ObjectId,
+          ref: "User",
         },
         status: {
-            type: String,
-            enum: ['invited', 'confirmed', 'declined'],
-            default: 'invited',
+          type: String,
+          enum: ["invited", "confirmed", "declined"],
+          default: "invited",
         },
         plusOne: {
-            type: Boolean,
-            default: false,
+          type: Boolean,
+          default: false,
         },
-    }],
-    tasks: [{
+      },
+    ],
+    tasks: [
+      {
         title: {
-            type: String,
-            required: true,
+          type: String,
+          required: true,
         },
         description: String,
         dueDate: Date,
         status: {
-            type: String,
-            enum: ['pending', 'in_progress', 'completed'],
-            default: 'pending',
+          type: String,
+          enum: ["pending", "in_progress", "completed"],
+          default: "pending",
         },
         assignedTo: {
-            type: mongoose.Schema.Types.ObjectId,
-            ref: 'User',
+          type: mongoose.Schema.Types.ObjectId,
+          ref: "User",
         },
-    }],
-    timeline: [{
+      },
+    ],
+    timeline: [
+      {
         title: {
-            type: String,
-            required: true,
+          type: String,
+          required: true,
         },
         description: String,
         startTime: Date,
         endTime: Date,
         location: String,
-    }],
-    media: [{
+      },
+    ],
+    media: [
+      {
         type: {
-            type: String,
-            enum: ['image', 'video'],
-            required: true,
+          type: String,
+          enum: ["image", "video"],
+          required: true,
         },
         url: {
-            type: String,
-            required: true,
+          type: String,
+        },
+        fileId: {
+          type: mongoose.Schema.Types.ObjectId,
+          ref: "uploads.files",
         },
         caption: String,
         uploadedBy: {
-            type: mongoose.Schema.Types.ObjectId,
-            ref: 'User',
+          type: mongoose.Schema.Types.ObjectId,
+          ref: "User",
         },
-    }],
+        uploadedAt: {
+          type: Date,
+          default: Date.now,
+        },
+      },
+    ],
     settings: {
-        isPrivate: {
-            type: Boolean,
-            default: false,
-        },
-        allowGuestInvites: {
-            type: Boolean,
-            default: false,
-        },
-        notifications: {
-            email: { type: Boolean, default: true },
-            push: { type: Boolean, default: true },
-            sms: { type: Boolean, default: false },
-        },
+      isPrivate: {
+        type: Boolean,
+        default: false,
+      },
+      allowGuestInvites: {
+        type: Boolean,
+        default: false,
+      },
+      notifications: {
+        email: { type: Boolean, default: true },
+        push: { type: Boolean, default: true },
+        sms: { type: Boolean, default: false },
+      },
     },
     category: {
-        type: String,
-        required: true
+      type: String,
+      required: false, // Made optional
     },
     capacity: {
-        type: Number,
-        required: true
+      type: Number,
+      required: false, // Made optional
     },
     price: {
-        amount: {
-            type: Number,
-            required: true
-        },
-        currency: {
-            type: String,
-            default: 'USD'
-        }
+      amount: {
+        type: Number,
+        required: false, // Made optional
+      },
+      currency: {
+        type: String,
+        default: "USD",
+      },
     },
     registrationDeadline: Date,
     image: String,
-    tags: [{
+    imageFileId: {
+      type: mongoose.Schema.Types.ObjectId,
+      ref: "uploads.files",
+    },
+    tags: [
+      {
         type: String,
-        trim: true
-    }],
-    attendees: [{
+        trim: true,
+      },
+    ],
+    attendees: [
+      {
         user: {
-            type: mongoose.Schema.Types.ObjectId,
-            ref: 'User'
+          type: mongoose.Schema.Types.ObjectId,
+          ref: "User",
         },
         registrationDate: {
-            type: Date,
-            default: Date.now
+          type: Date,
+          default: Date.now,
         },
         status: {
-            type: String,
-            enum: ['registered', 'attended', 'cancelled'],
-            default: 'registered'
-        }
-    }],
-    schedule: [{
+          type: String,
+          enum: ["registered", "attended", "cancelled"],
+          default: "registered",
+        },
+      },
+    ],
+    schedule: [
+      {
         title: String,
         description: String,
         startTime: Date,
         endTime: Date,
-        speaker: String
-    }],
-    feedback: [{
+        speaker: String,
+      },
+    ],
+    feedback: [
+      {
         user: {
-            type: mongoose.Schema.Types.ObjectId,
-            ref: 'User'
+          type: mongoose.Schema.Types.ObjectId,
+          ref: "User",
         },
         rating: {
-            type: Number,
-            min: 1,
-            max: 5
+          type: Number,
+          min: 1,
+          max: 5,
         },
         comment: String,
         createdAt: {
-            type: Date,
-            default: Date.now
-        }
-    }]
-}, {
+          type: Date,
+          default: Date.now,
+        },
+      },
+    ],
+  },
+  {
     timestamps: true,
     toJSON: { virtuals: true },
     toObject: { virtuals: true },
-});
+  }
+);
 
 // Indexes
 eventSchema.index({ startDate: 1, endDate: 1 });
-eventSchema.index({ 'location.coordinates': '2dsphere' });
+eventSchema.index({ "location.coordinates": "2dsphere" });
 eventSchema.index({ status: 1, category: 1 });
 
 // Virtual for event duration in hours
-eventSchema.virtual('duration').get(function() {
-    return (this.endDate - this.startDate) / (1000 * 60 * 60);
+eventSchema.virtual("duration").get(function () {
+  return (this.endDate - this.startDate) / (1000 * 60 * 60);
 });
 
 // Virtual for days until event
-eventSchema.virtual('daysUntil').get(function() {
-    return Math.ceil((this.startDate - new Date()) / (1000 * 60 * 60 * 24));
+eventSchema.virtual("daysUntil").get(function () {
+  return Math.ceil((this.startDate - new Date()) / (1000 * 60 * 60 * 24));
 });
 
 // Virtual for confirmed guest count
-eventSchema.virtual('confirmedGuestCount').get(function() {
-    return this.guests.filter(guest => guest.status === 'confirmed').length;
+eventSchema.virtual("confirmedGuestCount").get(function () {
+  return this.guests.filter((guest) => guest.status === "confirmed").length;
 });
 
 // Method to check if event is in the past
-eventSchema.methods.isPast = function() {
-    return this.endDate < new Date();
+eventSchema.methods.isPast = function () {
+  return this.endDate < new Date();
 };
 
 // Method to check if event is upcoming
-eventSchema.methods.isUpcoming = function() {
-    return this.startDate > new Date();
+eventSchema.methods.isUpcoming = function () {
+  return this.startDate > new Date();
 };
 
 // Method to check if event is ongoing
-eventSchema.methods.isOngoing = function() {
-    const now = new Date();
-    return this.startDate <= now && this.endDate >= now;
+eventSchema.methods.isOngoing = function () {
+  const now = new Date();
+  return this.startDate <= now && this.endDate >= now;
 };
 
 // Method to get event status
-eventSchema.methods.getStatus = function() {
-    if (this.status === 'cancelled') return 'cancelled';
-    if (this.isPast()) return 'completed';
-    if (this.isUpcoming()) return 'upcoming';
-    if (this.isOngoing()) return 'ongoing';
-    return this.status;
+eventSchema.methods.getStatus = function () {
+  if (this.status === "cancelled") return "cancelled";
+  if (this.isPast()) return "completed";
+  if (this.isUpcoming()) return "upcoming";
+  if (this.isOngoing()) return "ongoing";
+  return this.status;
 };
 
 // Method to remove a vendor from the event
-eventSchema.methods.removeVendor = async function(vendorId) {
-    this.vendors = this.vendors.filter(vendor => !vendor.vendor.equals(vendorId));
-    return this.save();
+eventSchema.methods.removeVendor = async function (vendorId) {
+  this.vendors = this.vendors.filter(
+    (vendor) => !vendor.vendor.equals(vendorId)
+  );
+  return this.save();
 };
 
 // Method to remove a guest from the event
-eventSchema.methods.removeGuest = async function(guestId) {
-    this.guests = this.guests.filter(guest => !guest.user.equals(guestId));
-    return this.save();
+eventSchema.methods.removeGuest = async function (guestId) {
+  this.guests = this.guests.filter((guest) => !guest.user.equals(guestId));
+  return this.save();
 };
 
 // Method to add a guest to the event
-eventSchema.methods.addGuest = async function(userId, plusOne = false) {
-    // Check if guest already exists
-    const existingGuest = this.guests.find(guest => guest.user.equals(userId));
-    if (existingGuest) {
-        throw new Error('Guest already exists');
-    }
+eventSchema.methods.addGuest = async function (userId, plusOne = false) {
+  // Check if guest already exists
+  const existingGuest = this.guests.find((guest) => guest.user.equals(userId));
+  if (existingGuest) {
+    throw new Error("Guest already exists");
+  }
 
-    this.guests.push({
-        user: userId,
-        status: 'invited',
-        plusOne
-    });
-    return this.save();
+  this.guests.push({
+    user: userId,
+    status: "invited",
+    plusOne,
+  });
+  return this.save();
 };
 
-const Event = mongoose.model('Event', eventSchema);
+const Event = mongoose.model("Event", eventSchema);
 
-export default Event; 
+export default Event;

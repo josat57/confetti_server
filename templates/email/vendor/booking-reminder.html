@@ -1,0 +1,99 @@
+<!DOCTYPE html>
+<html>
+  <head>
+    <meta charset="UTF-8" />
+    <title>Upcoming Event Reminder</title>
+    <style>
+      body {
+        font-family: Arial, sans-serif;
+        line-height: 1.6;
+        color: #333;
+      }
+      .container {
+        max-width: 600px;
+        margin: 0 auto;
+        padding: 20px;
+      }
+      .header {
+        background: #ef4444;
+        color: white;
+        padding: 20px;
+        text-align: center;
+      }
+      .content {
+        background: #f9f9f9;
+        padding: 20px;
+        margin: 20px 0;
+      }
+      .button {
+        display: inline-block;
+        padding: 12px 24px;
+        background: #ef4444;
+        color: white;
+        text-decoration: none;
+        border-radius: 5px;
+      }
+      .countdown {
+        background: #fee2e2;
+        padding: 20px;
+        text-align: center;
+        border-radius: 8px;
+        margin: 20px 0;
+      }
+      .countdown h2 {
+        color: #ef4444;
+        margin: 0;
+        font-size: 48px;
+      }
+      .checklist {
+        background: white;
+        padding: 20px;
+        margin: 15px 0;
+      }
+    </style>
+  </head>
+  <body>
+    <div class="container">
+      <div class="header">
+        <h1>⏰ Upcoming Event Reminder</h1>
+      </div>
+
+      <div class="content">
+        <p>Hi {{vendorName}},</p>
+        <p>This is a reminder about your upcoming event.</p>
+
+        <div class="countdown">
+          <p style="margin: 0; color: #666">Event in</p>
+          <h2>{{daysUntilEvent}} Days</h2>
+        </div>
+
+        <div class="checklist">
+          <h3>Event Details</h3>
+          <p><strong>Event:</strong> {{eventType}}</p>
+          <p><strong>Date:</strong> {{eventDate}}</p>
+          <p><strong>Time:</strong> {{eventTime}}</p>
+          <p><strong>Location:</strong> {{eventLocation}}</p>
+          <p><strong>Customer:</strong> {{customerName}}</p>
+          <p><strong>Contact:</strong> {{customerPhone}}</p>
+        </div>
+
+        <div class="checklist">
+          <h3>Pre-Event Checklist</h3>
+          <ul>
+            <li>Confirm all equipment and materials</li>
+            <li>Review event requirements</li>
+            <li>Contact customer if needed</li>
+            <li>Check weather forecast (if outdoor)</li>
+            <li>Prepare team assignments</li>
+          </ul>
+        </div>
+
+        <p style="text-align: center; margin: 30px 0">
+          <a href="{{dashboardUrl}}/bookings/{{bookingId}}" class="button"
+            >View Event Details</a
+          >
+        </p>
+      </div>
+    </div>
+  </body>
+</html>

@@ -1,0 +1,231 @@
+<!DOCTYPE html>
+<html>
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Subscription Expiring Soon - Confetti</title>
+    <style>
+      body {
+        font-family: "Segoe UI", Tahoma, Geneva, Verdana, sans-serif;
+        line-height: 1.6;
+        color: #333;
+        margin: 0;
+        padding: 0;
+        background-color: #f4f4f4;
+      }
+      .container {
+        max-width: 600px;
+        margin: 0 auto;
+        padding: 20px;
+        background: linear-gradient(135deg, #ffffff 0%, #f8f9fa 100%);
+        border-radius: 10px;
+        box-shadow: 0 4px 6px rgba(0, 0, 0, 0.1);
+      }
+      .header {
+        text-align: center;
+        padding: 20px 0;
+        background: linear-gradient(135deg, #f59e0b 0%, #d97706 100%);
+        border-radius: 8px 8px 0 0;
+        margin: -20px -20px 20px -20px;
+      }
+      .header h1 {
+        color: white;
+        margin: 0;
+        font-size: 28px;
+        font-weight: 600;
+      }
+      .content {
+        padding: 20px;
+        background: white;
+        border-radius: 8px;
+        margin-bottom: 20px;
+      }
+      .reminder-icon {
+        text-align: center;
+        font-size: 64px;
+        margin: 20px 0;
+      }
+      .expiration-notice {
+        background: #fffbeb;
+        padding: 20px;
+        border-radius: 8px;
+        margin: 20px 0;
+        border-left: 4px solid #f59e0b;
+        text-align: center;
+      }
+      .days-remaining {
+        font-size: 48px;
+        font-weight: bold;
+        color: #d97706;
+        margin: 10px 0;
+      }
+      .days-label {
+        font-size: 18px;
+        color: #92400e;
+        font-weight: 600;
+      }
+      .subscription-details {
+        background: #f8f9fa;
+        padding: 20px;
+        border-radius: 8px;
+        margin: 20px 0;
+      }
+      .detail-row {
+        display: flex;
+        justify-content: space-between;
+        padding: 10px 0;
+        border-bottom: 1px solid #e5e7eb;
+      }
+      .detail-row:last-child {
+        border-bottom: none;
+      }
+      .detail-label {
+        font-weight: 600;
+        color: #6b7280;
+      }
+      .detail-value {
+        color: #111827;
+        font-weight: 500;
+      }
+      .button {
+        display: inline-block;
+        padding: 12px 24px;
+        background: linear-gradient(135deg, #f59e0b 0%, #d97706 100%);
+        color: white;
+        text-decoration: none;
+        border-radius: 25px;
+        font-weight: 600;
+        margin: 20px 0;
+      }
+      a {
+        color: white;
+        text-decoration: none;
+      }
+      .footer {
+        text-align: center;
+        padding: 20px;
+        color: #666;
+        font-size: 14px;
+      }
+      .benefits-reminder {
+        background: #f0f9ff;
+        padding: 15px 20px;
+        border-radius: 8px;
+        margin: 20px 0;
+        border-left: 4px solid #3b82f6;
+      }
+      .benefits-reminder ul {
+        margin: 10px 0;
+        padding-left: 20px;
+      }
+      .benefits-reminder li {
+        margin: 8px 0;
+        color: #1e40af;
+      }
+      .urgency-high {
+        background: #fef2f2;
+        border-left-color: #ef4444;
+      }
+      .urgency-high .days-remaining {
+        color: #dc2626;
+      }
+      .urgency-high .days-label {
+        color: #991b1b;
+      }
+    </style>
+  </head>
+  <body>
+    <div class="container">
+      <div class="header">
+        <h1>⏰ Subscription Expiring Soon</h1>
+      </div>
+      <div class="content">
+        <div class="reminder-icon">⚡</div>
+
+        <h2>Hello {{firstName}},</h2>
+        <p>
+          This is a friendly reminder that your Confetti subscription is
+          expiring soon. Don't lose access to all the amazing features you've
+          been enjoying!
+        </p>
+
+        <div class="expiration-notice {{urgencyClass}}">
+          <div class="days-remaining">{{daysRemaining}}</div>
+          <div class="days-label">DAYS REMAINING</div>
+          <p style="margin: 15px 0 5px 0; color: #92400e">
+            Your subscription expires on <strong>{{expirationDate}}</strong>
+          </p>
+        </div>
+
+        <div class="subscription-details">
+          <h3 style="margin-top: 0; color: #d97706">Current Subscription</h3>
+          <div class="detail-row">
+            <span class="detail-label">Plan:</span>
+            <span class="detail-value">{{planName}} ({{planType}})</span>
+          </div>
+          <div class="detail-row">
+            <span class="detail-label">Monthly Rate:</span>
+            <span class="detail-value">₦{{amount}}</span>
+          </div>
+          <div class="detail-row">
+            <span class="detail-label">Expiration Date:</span>
+            <span class="detail-value">{{expirationDate}}</span>
+          </div>
+          <div class="detail-row">
+            <span class="detail-label">Auto-Renew:</span>
+            <span class="detail-value">{{autoRenewStatus}}</span>
+          </div>
+        </div>
+
+        <div class="benefits-reminder">
+          <h3 style="margin-top: 0; color: #1e40af">
+            💎 Don't Lose Access To:
+          </h3>
+          <ul>
+            <li>Unlimited event planning and management</li>
+            <li>AI-powered vendor recommendations</li>
+            <li>Advanced analytics and insights</li>
+            <li>Priority customer support</li>
+            <li>Premium templates and designs</li>
+            <li>All your saved events and data</li>
+          </ul>
+        </div>
+
+        <p>
+          <strong>Renew now</strong> to continue enjoying uninterrupted access
+          to all premium features. It only takes a minute!
+        </p>
+
+        <div style="text-align: center">
+          <a href="{{renewalLink}}" class="button">Renew Subscription</a>
+        </div>
+
+        <p style="text-align: center; margin-top: 20px">
+          <a href="{{frontendUrl}}/subscription/manage" style="color: #3b82f6"
+            >Manage Subscription Settings</a
+          >
+        </p>
+
+        <p style="font-size: 14px; color: #6b7280; margin-top: 30px">
+          If you don't wish to renew, your subscription will automatically
+          expire on {{expirationDate}}, and you'll be downgraded to our free
+          plan. You can always upgrade again later!
+        </p>
+      </div>
+
+      <div class="footer">
+        <p>© 2025 Confetti. All rights reserved.</p>
+        <p>123 Event Street, Celebration City, 12345</p>
+        <p>
+          <a href="{{frontendUrl}}/privacy" style="color: #8b5cf6"
+            >Privacy Policy</a
+          >
+          |
+          <a href="{{frontendUrl}}/terms" style="color: #8b5cf6"
+            >Terms of Service</a
+          >
+        </p>
+      </div>
+    </div>
+  </body>
+</html>

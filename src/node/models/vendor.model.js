@@ -2,9 +2,31 @@ import mongoose from "mongoose";
 
 const vendorSchema = new mongoose.Schema(
   {
+    // Owner reference (links to User model)
+    owner: {
+      type: mongoose.Schema.Types.ObjectId,
+      ref: "User",
+      required: true,
+      index: true,
+    },
+    subscription: {
+      type: mongoose.Schema.Types.ObjectId,
+      ref: "Subscription",
+      index: true,
+    },
+
+    // Basic Info
     name: {
       type: String,
       required: [true, "Vendor name is required"],
+      trim: true,
+    },
+    businessName: {
+      type: String,
+      trim: true,
+    },
+    displayName: {
+      type: String,
       trim: true,
     },
     email: {
@@ -17,6 +39,10 @@ const vendorSchema = new mongoose.Schema(
     phone: {
       type: String,
       required: [true, "Phone number is required"],
+    },
+    tagline: {
+      type: String,
+      maxlength: 150,
     },
     businessType: {
       type: String,
@@ -119,6 +145,19 @@ const vendorSchema = new mongoose.Schema(
       enum: ["pending", "approved", "suspended", "rejected"],
       default: "pending",
     },
+
+    // Featured Status
+    isFeatured: {
+      type: Boolean,
+      default: false,
+    },
+    featuredUntil: Date,
+
+    // Active Status
+    isActive: {
+      type: Boolean,
+      default: true,
+    },
     documents: [
       {
         type: {
@@ -160,10 +199,110 @@ const vendorSchema = new mongoose.Schema(
     },
     features: [String],
     images: [String],
+
+    // Media (Enhanced)
+    logo: {
+      type: String,
+    },
+    logoFileId: {
+      type: mongoose.Schema.Types.ObjectId,
+      ref: "uploads.files",
+    },
+    coverImage: {
+      type: String,
+    },
+    coverImageFileId: {
+      type: mongoose.Schema.Types.ObjectId,
+      ref: "uploads.files",
+    },
+    photos: [
+      {
+        url: String,
+        fileId: {
+          type: mongoose.Schema.Types.ObjectId,
+          ref: "uploads.files",
+        },
+        caption: String,
+        order: { type: Number, default: 0 },
+        uploadedAt: { type: Date, default: Date.now },
+      },
+    ],
+    videos: [
+      {
+        url: String,
+        fileId: {
+          type: mongoose.Schema.Types.ObjectId,
+          ref: "uploads.files",
+        },
+        thumbnail: String,
+        title: String,
+        duration: Number,
+        uploadedAt: { type: Date, default: Date.now },
+      },
+    ],
+
+    // Branding (Professional+)
+    branding: {
+      primaryColor: { type: String, default: "#6366F1" },
+      secondaryColor: { type: String, default: "#10B981" },
+      font: { type: String, default: "Inter" },
+      customCSS: String,
+    },
+
+    // Business Hours
+    businessHours: [
+      {
+        day: {
+          type: String,
+          enum: [
+            "monday",
+            "tuesday",
+            "wednesday",
+            "thursday",
+            "friday",
+            "saturday",
+            "sunday",
+          ],
+        },
+        open: String,
+        close: String,
+        closed: { type: Boolean, default: false },
+      },
+    ],
+
+    // Service Area
+    serviceArea: {
+      cities: [String],
+      states: [String],
+      radius: Number, // in kilometers
+    },
+
+    // Social Media
+    socialMedia: {
+      facebook: String,
+      instagram: String,
+      twitter: String,
+      linkedin: String,
+      website: String,
+    },
+
+    // Stats
+    stats: {
+      profileViews: { type: Number, default: 0 },
+      totalBookings: { type: Number, default: 0 },
+      totalReviews: { type: Number, default: 0 },
+      averageRating: { type: Number, default: 0 },
+      responseTime: { type: Number, default: 0 }, // in hours
+      responseRate: { type: Number, default: 0 }, // percentage
+      totalRevenue: { type: Number, default: 0 },
+    },
+
+    // Verification
     isVerified: {
       type: Boolean,
       default: false,
     },
+    verifiedAt: Date,
     reviews: [
       {
         user: {
@@ -212,6 +351,73 @@ vendorSchema.index({ category: 1, status: 1 });
 vendorSchema.index({ eventTypes: 1 });
 vendorSchema.index({ isVerified: 1, status: 1 });
 vendorSchema.index({ rating: -1, reviewCount: -1 });
+vendorSchema.index({ owner: 1 });
+vendorSchema.index({ subscription: 1 });
+vendorSchema.index({ isFeatured: 1, status: 1 });
+
+// Virtual for full display name
+vendorSchema.virtual("fullDisplayName").get(function () {
+  return this.displayName || this.businessName || this.name;
+});
+
+// Method to check if vendor can access feature based on subscription
+vendorSchema.methods.canAccessFeature = function (feature) {
+  if (!this.subscription) return false;
+
+  const featureMap = {
+    unlimited_listings: ["professional", "business", "enterprise"],
+    booking_calendar: ["professional", "business", "enterprise"],
+    lead_management: ["professional", "business", "enterprise"],
+    team_collaboration: ["business", "enterprise"],
+    payment_processing: ["business", "enterprise"],
+    api_access: ["enterprise"],
+    white_label: ["enterprise"],
+  };
+
+  const allowedPlans = featureMap[feature] || [];
+  return allowedPlans.includes(this.subscription.planName?.toLowerCase());
+};
+
+// Method to increment profile views
+vendorSchema.methods.incrementViews = async function () {
+  this.stats.profileViews += 1;
+  await this.save();
+};
+
+// Method to update average rating
+vendorSchema.methods.updateRating = async function () {
+  const Review = mongoose.model("Review");
+  const stats = await Review.aggregate([
+    { $match: { vendor: this._id } },
+    {
+      $group: {
+        _id: null,
+        avgRating: { $avg: "$rating" },
+        count: { $sum: 1 },
+      },
+    },
+  ]);
+
+  if (stats.length > 0) {
+    this.stats.averageRating = Math.round(stats[0].avgRating * 10) / 10;
+    this.stats.totalReviews = stats[0].count;
+    this.rating = this.stats.averageRating;
+    this.reviewCount = this.stats.totalReviews;
+  }
+
+  await this.save();
+};
+
+// Method to check if vendor is featured
+vendorSchema.methods.isFeaturedNow = function () {
+  if (!this.isFeatured) return false;
+  if (!this.featuredUntil) return true;
+  return new Date() < this.featuredUntil;
+};
+
+// Ensure virtuals are included in JSON
+vendorSchema.set("toJSON", { virtuals: true });
+vendorSchema.set("toObject", { virtuals: true });
 
 const Vendor = mongoose.model("Vendor", vendorSchema);
 

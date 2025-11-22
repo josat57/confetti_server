@@ -1,10 +1,10 @@
-import { verifyAccessToken } from '../utils/auth.js';
-import { AppError } from '../utils/AppError.js';
-import User from '../models/user.model.js';
-import jwt from 'jsonwebtoken';
-import Admin from '../models/Admin.js';
-import { createError } from '../utils/error.js';
-import speakeasy from 'speakeasy';
+import { verifyAccessToken } from "../utils/auth.js";
+import { AppError } from "../utils/AppError.js";
+import User from "../models/user.model.js";
+import jwt from "jsonwebtoken";
+import Admin from "../models/Admin.js";
+import { createError } from "../utils/error.js";
+import speakeasy from "speakeasy";
 
 export const protect = async (req, res, next) => {
   try {
@@ -12,7 +12,7 @@ export const protect = async (req, res, next) => {
     const token = req.cookies.accessToken;
 
     if (!token) {
-      return next(new AppError('Not authenticated. Please log in.', 401));
+      return next(new AppError("Not authenticated. Please log in.", 401));
     }
 
     // Verify token
@@ -21,48 +21,77 @@ export const protect = async (req, res, next) => {
     // Check if user still exists
     const user = await User.findById(decoded.id);
     if (!user) {
-      return next(new AppError('User no longer exists.', 401));
+      return next(new AppError("User no longer exists.", 401));
     }
 
     // Check if user is active
     if (!user.isActive) {
-      return next(new AppError('User account is deactivated.', 401));
+      return next(new AppError("User account is deactivated.", 401));
     }
 
-    // Check if user email is verified 
+    // Check if user email is verified
     if (!user.isEmailVerified) {
-      return next(new AppError('User email is not verified.', 401));
+      return next(new AppError("User email is not verified.", 401));
     }
-
 
     // Check if user changed password after the token was issued
     if (user.changedPasswordAfter && user.changedPasswordAfter(decoded.iat)) {
-        return next(new AppError('User recently changed password', 401));
+      return next(new AppError("User recently changed password", 401));
     }
 
     // Grant access to protected route
     req.user = user;
     next();
   } catch (error) {
-    next(new AppError('Not authenticated. Please log in.', 401));
+    next(new AppError("Not authenticated. Please log in.", 401));
   }
 };
 
 export const restrictTo = (...roles) => {
   return (req, res, next) => {
     if (!roles.includes(req.user.role)) {
-      return next(new AppError('You do not have permission to perform this action', 403));
+      return next(
+        new AppError("You do not have permission to perform this action", 403)
+      );
     }
     next();
   };
-}; 
+};
 
 export const verifyEmail = async (req, res, next) => {
   if (!req.user.isEmailVerified) {
-    return next(new AppError('Please verify your email address', 403));
+    return next(new AppError("Please verify your email address", 403));
   }
   next();
-}; 
+};
+
+// Optional authentication - doesn't fail if no token
+export const optionalAuth = async (req, res, next) => {
+  try {
+    // Get token from cookie
+    const token = req.cookies.accessToken;
+
+    if (!token) {
+      // No token, but that's okay - continue without user
+      return next();
+    }
+
+    // Verify token
+    const decoded = verifyAccessToken(token);
+
+    // Check if user still exists
+    const user = await User.findById(decoded.id);
+    if (user && user.isActive) {
+      // User exists and is active, attach to request
+      req.user = user;
+    }
+
+    next();
+  } catch (error) {
+    // Token verification failed, but that's okay - continue without user
+    next();
+  }
+};
 
 // Middleware to handle token refresh
 export const handleTokenRefresh = async (req, res, next) => {
@@ -78,22 +107,22 @@ export const handleTokenRefresh = async (req, res, next) => {
           process.env.JWT_REFRESH_SECRET
         );
 
-        if (decoded.type === 'refreshToken') {
+        if (decoded.type === "refreshToken") {
           const admin = await Admin.findById(decoded.id);
           if (admin && admin.isActive) {
             // Set new secure cookies
             const newAccessToken = jwt.sign(
-              { id: admin._id, role: admin.role, type: 'admin' },
+              { id: admin._id, role: admin.role, type: "admin" },
               process.env.JWT_ACCESS_SECRET,
-              { expiresIn: '15m' }
+              { expiresIn: "15m" }
             );
 
-            res.cookie('accessToken', newAccessToken, {
+            res.cookie("accessToken", newAccessToken, {
               httpOnly: true,
-              secure: process.env.NODE_ENV === 'production',
-              sameSite: 'strict',
+              secure: process.env.NODE_ENV === "production",
+              sameSite: "strict",
               maxAge: 15 * 60 * 1000, // 15 minutes
-              path: '/'
+              path: "/",
             });
 
             req.admin = admin;
@@ -102,9 +131,9 @@ export const handleTokenRefresh = async (req, res, next) => {
         }
       } catch (refreshError) {
         // Refresh token is invalid, clear cookies
-        res.clearCookie('accessToken', { path: '/' });
-        res.clearCookie('refreshToken', { path: '/api/v1/admin/refresh' });
-        return next(createError(401, 'Session expired. Please login again.'));
+        res.clearCookie("accessToken", { path: "/" });
+        res.clearCookie("refreshToken", { path: "/api/v1/admin/refresh" });
+        return next(createError(401, "Session expired. Please login again."));
       }
     }
 
@@ -118,50 +147,50 @@ const authenticateAdmin = async (req, res, next) => {
   try {
     // Get token from HTTP-only cookie
     const token = req.cookies.accessToken;
-    
+
     if (!token) {
-      throw createError(401, 'Authentication required');
+      throw createError(401, "Authentication required");
     }
 
     const decoded = jwt.verify(token, process.env.JWT_ACCESS_SECRET);
-    
+
     // Verify token type
-    if (decoded.type !== 'admin') {
-      throw createError(401, 'Invalid token type');
+    if (decoded.type !== "admin") {
+      throw createError(401, "Invalid token type");
     }
 
     const admin = await Admin.findById(decoded.id);
 
     if (!admin) {
-      throw createError(401, 'Admin not found');
+      throw createError(401, "Admin not found");
     }
 
     if (!admin.isActive) {
-      throw createError(403, 'Account is deactivated');
+      throw createError(403, "Account is deactivated");
     }
 
     if (admin.twoFactorEnabled) {
-      const twoFactorToken = req.header('X-2FA-Token');
+      const twoFactorToken = req.header("X-2FA-Token");
       if (!twoFactorToken) {
-        throw createError(401, 'Two-factor authentication required');
+        throw createError(401, "Two-factor authentication required");
       }
 
       const verified = speakeasy.totp.verify({
         secret: admin.twoFactorSecret,
-        encoding: 'base32',
-        token: twoFactorToken
+        encoding: "base32",
+        token: twoFactorToken,
       });
 
       if (!verified) {
-        throw createError(401, 'Invalid two-factor token');
+        throw createError(401, "Invalid two-factor token");
       }
     }
 
     req.admin = admin;
     next();
   } catch (error) {
-    if (error.name === 'JsonWebTokenError') {
-      next(createError(401, 'Invalid token'));
+    if (error.name === "JsonWebTokenError") {
+      next(createError(401, "Invalid token"));
     } else {
       next(error);
     }
@@ -173,16 +202,16 @@ const authorizeAdmin = (requiredPermissions) => {
     try {
       const admin = req.admin;
 
-      if (admin.role === 'super_admin') {
+      if (admin.role === "super_admin") {
         return next();
       }
 
-      const hasPermission = requiredPermissions.every(permission =>
+      const hasPermission = requiredPermissions.every((permission) =>
         admin.permissions.includes(permission)
       );
 
       if (!hasPermission) {
-        throw createError(403, 'Insufficient permissions');
+        throw createError(403, "Insufficient permissions");
       }
 
       next();
@@ -192,7 +221,4 @@ const authorizeAdmin = (requiredPermissions) => {
   };
 };
 
-export {
-  authenticateAdmin,
-  authorizeAdmin
-}; 
+export { authenticateAdmin, authorizeAdmin };

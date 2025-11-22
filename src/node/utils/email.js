@@ -727,6 +727,360 @@ export const sendSubscriptionEmail = async (user, type, data) => {
   }
 };
 
+/**
+ * Send payment success email with subscription details and verification link
+ * Task 10.1: Payment success email
+ * Requirements: 10.1, 10.2, 10.4
+ */
+export const sendPaymentSuccessEmail = async (
+  user,
+  subscription,
+  verificationToken
+) => {
+  const context = {
+    operation: "sendPaymentSuccessEmail",
+    recipient: user.email,
+    userId: user._id || user.id,
+    subscriptionId: subscription._id || subscription.id,
+  };
+
+  const emailData = {
+    to: user.email,
+    subject: "Payment Successful - Welcome to Confetti!",
+    template: "payment-success",
+    variables: {
+      firstName: user.firstName || user.username || "there",
+      planType:
+        subscription.planType.charAt(0).toUpperCase() +
+        subscription.planType.slice(1),
+      planName: subscription.planName,
+      amount: subscription.amount.toLocaleString(),
+      endDate: new Date(subscription.endDate).toLocaleDateString("en-US", {
+        year: "numeric",
+        month: "long",
+        day: "numeric",
+      }),
+      verificationLink: `${process.env.FRONTEND_URL}/verify-email?token=${verificationToken}&email=${user.email}`,
+      email: user.email,
+    },
+  };
+
+  try {
+    return await withRetry(
+      async () => {
+        // Ensure transporter is initialized
+        if (!transporter) {
+          initializeTransporter();
+        }
+
+        // Load and process template
+        let html = await loadTemplate(emailData.template);
+        html = replaceTemplateVariables(html, {
+          ...emailData.variables,
+          frontendUrl: process.env.FRONTEND_URL,
+        });
+
+        const fromAddress = EmailConfig.getFromAddress();
+
+        const info = await transporter.sendMail({
+          from: fromAddress,
+          to: emailData.to,
+          subject: emailData.subject,
+          html,
+        });
+
+        logger.info("Payment success email sent successfully:", {
+          messageId: info.messageId,
+          recipient: user.email,
+          subscriptionId: subscription._id || subscription.id,
+          fromAddress: fromAddress,
+        });
+
+        return info;
+      },
+      `payment success email to ${user.email}`,
+      emailData
+    );
+  } catch (error) {
+    const errorInfo = logEmailError(error, context);
+    logger.error(
+      `Failed to send payment success email to ${user.email}:`,
+      errorInfo
+    );
+    throw new Error(
+      `Failed to send payment success email: ${errorInfo.details}`
+    );
+  }
+};
+
+/**
+ * Send payment failed email with failure reason and retry link
+ * Task 10.2: Payment failed email
+ * Requirements: 13.2, 13.5
+ */
+export const sendPaymentFailedEmail = async (user, payment) => {
+  const context = {
+    operation: "sendPaymentFailedEmail",
+    recipient: user.email,
+    userId: user._id || user.id,
+    paymentId: payment._id || payment.id,
+  };
+
+  const emailData = {
+    to: user.email,
+    subject: "Payment Failed - Action Required",
+    template: "payment-failed",
+    variables: {
+      firstName: user.firstName || user.username || "there",
+      planType: payment.subscriptionDetails?.planType
+        ? payment.subscriptionDetails.planType.charAt(0).toUpperCase() +
+          payment.subscriptionDetails.planType.slice(1)
+        : "Subscription",
+      planName: payment.subscriptionDetails?.planName || "Plan",
+      amount: payment.amount.toLocaleString(),
+      failureReason:
+        payment.webhookData?.data?.processor_response ||
+        payment.webhookData?.data?.gateway_response ||
+        "Payment could not be processed",
+      reference: payment.reference,
+      retryPaymentLink: `${process.env.FRONTEND_URL}/subscription/payment?reference=${payment.reference}`,
+    },
+  };
+
+  try {
+    return await withRetry(
+      async () => {
+        // Ensure transporter is initialized
+        if (!transporter) {
+          initializeTransporter();
+        }
+
+        // Load and process template
+        let html = await loadTemplate(emailData.template);
+        html = replaceTemplateVariables(html, {
+          ...emailData.variables,
+          frontendUrl: process.env.FRONTEND_URL,
+        });
+
+        const fromAddress = EmailConfig.getFromAddress();
+
+        const info = await transporter.sendMail({
+          from: fromAddress,
+          to: emailData.to,
+          subject: emailData.subject,
+          html,
+        });
+
+        logger.info("Payment failed email sent successfully:", {
+          messageId: info.messageId,
+          recipient: user.email,
+          paymentId: payment._id || payment.id,
+          fromAddress: fromAddress,
+        });
+
+        return info;
+      },
+      `payment failed email to ${user.email}`,
+      emailData
+    );
+  } catch (error) {
+    const errorInfo = logEmailError(error, context);
+    logger.error(
+      `Failed to send payment failed email to ${user.email}:`,
+      errorInfo
+    );
+    throw new Error(
+      `Failed to send payment failed email: ${errorInfo.details}`
+    );
+  }
+};
+
+/**
+ * Send upgrade confirmation email with new plan details and prorated amount
+ * Task 10.3: Upgrade confirmation email
+ * Requirements: 6.5
+ */
+export const sendUpgradeConfirmationEmail = async (
+  user,
+  subscription,
+  upgradeDetails
+) => {
+  const context = {
+    operation: "sendUpgradeConfirmationEmail",
+    recipient: user.email,
+    userId: user._id || user.id,
+    subscriptionId: subscription._id || subscription.id,
+  };
+
+  const emailData = {
+    to: user.email,
+    subject: "Subscription Upgraded Successfully!",
+    template: "upgrade-confirmation",
+    variables: {
+      firstName: user.firstName || user.username || "there",
+      planType:
+        subscription.planType.charAt(0).toUpperCase() +
+        subscription.planType.slice(1),
+      planName: subscription.planName,
+      previousPlan: upgradeDetails.previousPlan || "Previous Plan",
+      proratedAmount: (upgradeDetails.proratedAmount || 0).toLocaleString(),
+      newMonthlyAmount: subscription.amount.toLocaleString(),
+      endDate: new Date(subscription.endDate).toLocaleDateString("en-US", {
+        year: "numeric",
+        month: "long",
+        day: "numeric",
+      }),
+    },
+  };
+
+  try {
+    return await withRetry(
+      async () => {
+        // Ensure transporter is initialized
+        if (!transporter) {
+          initializeTransporter();
+        }
+
+        // Load and process template
+        let html = await loadTemplate(emailData.template);
+        html = replaceTemplateVariables(html, {
+          ...emailData.variables,
+          frontendUrl: process.env.FRONTEND_URL,
+        });
+
+        const fromAddress = EmailConfig.getFromAddress();
+
+        const info = await transporter.sendMail({
+          from: fromAddress,
+          to: emailData.to,
+          subject: emailData.subject,
+          html,
+        });
+
+        logger.info("Upgrade confirmation email sent successfully:", {
+          messageId: info.messageId,
+          recipient: user.email,
+          subscriptionId: subscription._id || subscription.id,
+          fromAddress: fromAddress,
+        });
+
+        return info;
+      },
+      `upgrade confirmation email to ${user.email}`,
+      emailData
+    );
+  } catch (error) {
+    const errorInfo = logEmailError(error, context);
+    logger.error(
+      `Failed to send upgrade confirmation email to ${user.email}:`,
+      errorInfo
+    );
+    throw new Error(
+      `Failed to send upgrade confirmation email: ${errorInfo.details}`
+    );
+  }
+};
+
+/**
+ * Send subscription expiration reminder email
+ * Task 10.4: Subscription expiration reminders
+ * Requirements: 5.4
+ */
+export const sendSubscriptionExpiringEmail = async (
+  user,
+  subscription,
+  daysRemaining
+) => {
+  const context = {
+    operation: "sendSubscriptionExpiringEmail",
+    recipient: user.email,
+    userId: user._id || user.id,
+    subscriptionId: subscription._id || subscription.id,
+    daysRemaining,
+  };
+
+  // Determine urgency class based on days remaining
+  const urgencyClass = daysRemaining <= 1 ? "urgency-high" : "";
+
+  const emailData = {
+    to: user.email,
+    subject: `Subscription Expiring in ${daysRemaining} Day${
+      daysRemaining !== 1 ? "s" : ""
+    }`,
+    template: "subscription-expiring",
+    variables: {
+      firstName: user.firstName || user.username || "there",
+      planType:
+        subscription.planType.charAt(0).toUpperCase() +
+        subscription.planType.slice(1),
+      planName: subscription.planName,
+      amount: subscription.amount.toLocaleString(),
+      daysRemaining: daysRemaining.toString(),
+      expirationDate: new Date(subscription.endDate).toLocaleDateString(
+        "en-US",
+        {
+          year: "numeric",
+          month: "long",
+          day: "numeric",
+        }
+      ),
+      autoRenewStatus: subscription.autoRenew ? "Enabled" : "Disabled",
+      urgencyClass,
+      renewalLink: `${process.env.FRONTEND_URL}/subscription/renew?id=${
+        subscription._id || subscription.id
+      }`,
+    },
+  };
+
+  try {
+    return await withRetry(
+      async () => {
+        // Ensure transporter is initialized
+        if (!transporter) {
+          initializeTransporter();
+        }
+
+        // Load and process template
+        let html = await loadTemplate(emailData.template);
+        html = replaceTemplateVariables(html, {
+          ...emailData.variables,
+          frontendUrl: process.env.FRONTEND_URL,
+        });
+
+        const fromAddress = EmailConfig.getFromAddress();
+
+        const info = await transporter.sendMail({
+          from: fromAddress,
+          to: emailData.to,
+          subject: emailData.subject,
+          html,
+        });
+
+        logger.info("Subscription expiring email sent successfully:", {
+          messageId: info.messageId,
+          recipient: user.email,
+          subscriptionId: subscription._id || subscription.id,
+          daysRemaining,
+          fromAddress: fromAddress,
+        });
+
+        return info;
+      },
+      `subscription expiring email to ${user.email}`,
+      emailData
+    );
+  } catch (error) {
+    const errorInfo = logEmailError(error, context);
+    logger.error(
+      `Failed to send subscription expiring email to ${user.email}:`,
+      errorInfo
+    );
+    throw new Error(
+      `Failed to send subscription expiring email: ${errorInfo.details}`
+    );
+  }
+};
+
 // Email service testing and health check functions
 
 /**

@@ -1,0 +1,231 @@
+<!DOCTYPE html>
+<html>
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Subscription Upgraded - Confetti</title>
+    <style>
+      body {
+        font-family: "Segoe UI", Tahoma, Geneva, Verdana, sans-serif;
+        line-height: 1.6;
+        color: #333;
+        margin: 0;
+        padding: 0;
+        background-color: #f4f4f4;
+      }
+      .container {
+        max-width: 600px;
+        margin: 0 auto;
+        padding: 20px;
+        background: linear-gradient(135deg, #ffffff 0%, #f8f9fa 100%);
+        border-radius: 10px;
+        box-shadow: 0 4px 6px rgba(0, 0, 0, 0.1);
+      }
+      .header {
+        text-align: center;
+        padding: 20px 0;
+        background: linear-gradient(135deg, #8b5cf6 0%, #7c3aed 100%);
+        border-radius: 8px 8px 0 0;
+        margin: -20px -20px 20px -20px;
+      }
+      .header h1 {
+        color: white;
+        margin: 0;
+        font-size: 28px;
+        font-weight: 600;
+      }
+      .content {
+        padding: 20px;
+        background: white;
+        border-radius: 8px;
+        margin-bottom: 20px;
+      }
+      .upgrade-icon {
+        text-align: center;
+        font-size: 64px;
+        margin: 20px 0;
+      }
+      .upgrade-details {
+        background: #f5f3ff;
+        padding: 20px;
+        border-radius: 8px;
+        margin: 20px 0;
+        border-left: 4px solid #8b5cf6;
+      }
+      .plan-comparison {
+        display: flex;
+        justify-content: space-around;
+        align-items: center;
+        margin: 20px 0;
+        padding: 15px;
+        background: #faf5ff;
+        border-radius: 8px;
+      }
+      .plan-box {
+        text-align: center;
+        padding: 15px;
+      }
+      .plan-name {
+        font-weight: 600;
+        font-size: 18px;
+        margin-bottom: 5px;
+      }
+      .old-plan {
+        color: #9ca3af;
+        text-decoration: line-through;
+      }
+      .new-plan {
+        color: #8b5cf6;
+      }
+      .arrow {
+        font-size: 32px;
+        color: #8b5cf6;
+      }
+      .detail-row {
+        display: flex;
+        justify-content: space-between;
+        padding: 10px 0;
+        border-bottom: 1px solid #e9d5ff;
+      }
+      .detail-row:last-child {
+        border-bottom: none;
+      }
+      .detail-label {
+        font-weight: 600;
+        color: #6b21a8;
+      }
+      .detail-value {
+        color: #5b21b6;
+        font-weight: 500;
+      }
+      .button {
+        display: inline-block;
+        padding: 12px 24px;
+        background: linear-gradient(135deg, #8b5cf6 0%, #7c3aed 100%);
+        color: white;
+        text-decoration: none;
+        border-radius: 25px;
+        font-weight: 600;
+        margin: 20px 0;
+      }
+      a {
+        color: white;
+        text-decoration: none;
+      }
+      .footer {
+        text-align: center;
+        padding: 20px;
+        color: #666;
+        font-size: 14px;
+      }
+      .features-highlight {
+        background: #ecfdf5;
+        padding: 15px 20px;
+        border-radius: 8px;
+        margin: 20px 0;
+        border-left: 4px solid #10b981;
+      }
+      .features-highlight ul {
+        margin: 10px 0;
+        padding-left: 20px;
+      }
+      .features-highlight li {
+        margin: 8px 0;
+        color: #065f46;
+      }
+    </style>
+  </head>
+  <body>
+    <div class="container">
+      <div class="header">
+        <h1>🚀 Subscription Upgraded!</h1>
+      </div>
+      <div class="content">
+        <div class="upgrade-icon">⬆️</div>
+
+        <h2>Hello {{firstName}},</h2>
+        <p>
+          Congratulations! Your subscription has been successfully upgraded. You
+          now have access to even more powerful features to help you create
+          amazing events.
+        </p>
+
+        <div class="plan-comparison">
+          <div class="plan-box">
+            <div class="plan-name old-plan">{{previousPlan}}</div>
+            <div style="color: #9ca3af; font-size: 14px">Previous Plan</div>
+          </div>
+          <div class="arrow">→</div>
+          <div class="plan-box">
+            <div class="plan-name new-plan">{{planName}}</div>
+            <div style="color: #8b5cf6; font-size: 14px">New Plan</div>
+          </div>
+        </div>
+
+        <div class="upgrade-details">
+          <h3 style="margin-top: 0; color: #6b21a8">Upgrade Summary</h3>
+          <div class="detail-row">
+            <span class="detail-label">Plan Type:</span>
+            <span class="detail-value">{{planType}}</span>
+          </div>
+          <div class="detail-row">
+            <span class="detail-label">Prorated Amount Charged:</span>
+            <span class="detail-value">₦{{proratedAmount}}</span>
+          </div>
+          <div class="detail-row">
+            <span class="detail-label">New Monthly Rate:</span>
+            <span class="detail-value">₦{{newMonthlyAmount}}</span>
+          </div>
+          <div class="detail-row">
+            <span class="detail-label">Next Billing Date:</span>
+            <span class="detail-value">{{endDate}}</span>
+          </div>
+        </div>
+
+        <div class="features-highlight">
+          <h3 style="margin-top: 0; color: #065f46">
+            ✨ New Features Unlocked
+          </h3>
+          <ul>
+            <li>Access to premium templates and designs</li>
+            <li>Advanced analytics and reporting</li>
+            <li>Priority customer support</li>
+            <li>Enhanced vendor collaboration tools</li>
+            <li>Increased storage and event limits</li>
+          </ul>
+        </div>
+
+        <p>
+          Your upgrade is effective immediately, and all new features are now
+          available in your dashboard.
+        </p>
+
+        <div style="text-align: center">
+          <a href="{{frontendUrl}}/dashboard" class="button"
+            >Explore New Features</a
+          >
+        </div>
+
+        <p>
+          Thank you for choosing to upgrade! If you have any questions about
+          your new plan or need help getting started with the new features, our
+          support team is here to assist you.
+        </p>
+      </div>
+
+      <div class="footer">
+        <p>© 2025 Confetti. All rights reserved.</p>
+        <p>123 Event Street, Celebration City, 12345</p>
+        <p>
+          <a href="{{frontendUrl}}/privacy" style="color: #8b5cf6"
+            >Privacy Policy</a
+          >
+          |
+          <a href="{{frontendUrl}}/terms" style="color: #8b5cf6"
+            >Terms of Service</a
+          >
+        </p>
+      </div>
+    </div>
+  </body>
+</html>

@@ -1,0 +1,75 @@
+<!DOCTYPE html>
+<html>
+  <head>
+    <meta charset="UTF-8" />
+    <title>Quote Viewed</title>
+    <style>
+      body {
+        font-family: Arial, sans-serif;
+        line-height: 1.6;
+        color: #333;
+      }
+      .container {
+        max-width: 600px;
+        margin: 0 auto;
+        padding: 20px;
+      }
+      .header {
+        background: #10b981;
+        color: white;
+        padding: 20px;
+        text-align: center;
+      }
+      .content {
+        background: #f9f9f9;
+        padding: 20px;
+        margin: 20px 0;
+      }
+      .button {
+        display: inline-block;
+        padding: 12px 24px;
+        background: #10b981;
+        color: white;
+        text-decoration: none;
+        border-radius: 5px;
+      }
+      .details {
+        background: white;
+        padding: 15px;
+        margin: 10px 0;
+      }
+    </style>
+  </head>
+  <body>
+    <div class="container">
+      <div class="header">
+        <h1>👀 Your Quote Was Viewed!</h1>
+      </div>
+
+      <div class="content">
+        <p>Hi {{vendorName}},</p>
+        <p>Great news! {{customerName}} has viewed your quote.</p>
+
+        <div class="details">
+          <p><strong>Quote Number:</strong> {{quoteNumber}}</p>
+          <p><strong>Amount:</strong> {{quoteAmount}}</p>
+          <p><strong>Viewed At:</strong> {{viewedAt}}</p>
+          <p><strong>Valid Until:</strong> {{validUntil}}</p>
+        </div>
+
+        <p><strong>Next Steps:</strong></p>
+        <ul>
+          <li>Follow up with the customer within 24-48 hours</li>
+          <li>Be ready to answer questions</li>
+          <li>Consider offering a limited-time incentive</li>
+        </ul>
+
+        <p style="text-align: center; margin: 30px 0">
+          <a href="{{dashboardUrl}}/quotes/{{quoteId}}" class="button"
+            >View Quote Details</a
+          >
+        </p>
+      </div>
+    </div>
+  </body>
+</html>

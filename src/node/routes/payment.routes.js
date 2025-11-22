@@ -1,23 +1,26 @@
-import express from 'express';
-import { protect } from '../middleware/auth.js';
+import express from "express";
+import { protect } from "../middleware/auth.js";
 import {
-  createPayment,
-  getPayment,
-  updatePayment,
-  listPayments,
-  convertToNGN
-} from '../controllers/payment.controller.js';
+  getInvoices,
+  getInvoice,
+  createInvoice,
+  sendInvoice,
+  recordPayment,
+  getPaymentHistory,
+  getPendingPayments,
+} from "../controllers/payment.controller.js";
 
 const router = express.Router();
 
-// Public routes
-router.get('/', listPayments);
-router.get('/:id', getPayment);
-
-// Protected routes (require authentication)
+// All payment routes require authentication
 router.use(protect);
-router.post('/', createPayment);
-router.patch('/:id', updatePayment);
-router.post('/:id/convert', convertToNGN);
 
-export default router; 
+router.get("/invoices", getInvoices);
+router.post("/invoices", createInvoice);
+router.get("/invoices/:id", getInvoice);
+router.post("/invoices/:id/send", sendInvoice);
+router.post("/invoices/:id/payment", recordPayment);
+router.get("/payments", getPaymentHistory);
+router.get("/payments/pending", getPendingPayments);
+
+export default router;

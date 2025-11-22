@@ -1,5 +1,3 @@
-version: "3.8"
-
 services:
   # Node.js API Service
   node-api:
@@ -10,7 +8,7 @@ services:
       - "9600:9600"
     volumes:
       - ./src/node:/usr/src/app/src/node
-      - /usr/src/app/node_modules
+      - node_modules:/usr/src/app/node_modules
     environment:
       - PORT=9600
       - NODE_ENV=development
@@ -32,9 +30,13 @@ services:
       - SMTP_PASSWORD=Ginger@1232025*
       - FROM_EMAIL=hello@tripmatch.io
       - FROM_NAME=Confetti
-      - FLUTTERWAVE_PUBLIC_KEY=FLWPUBK_TEST-ed6b4efe39238d2007c9ff6ed99636a1-X
-      - FLUTTERWAVE_SECRET_KEY=FLWSECK_TEST-2658b0a47561dad46f281804f909ab18-X
-      - FLUTTERWAVE_ENCRYPTION_KEY=FLWSECK_TEST682ea6a0fa12
+      - FLUTTERWAVE_PUBLIC_KEY=FLWPUBK_TEST-2dd0b38eb0a986ba3a9d30c0651be09b-X
+      - FLUTTERWAVE_SECRET_KEY=FLWSECK_TEST-e2b0311ff7778eaf1dd37550a6a800b6-X
+      - FLUTTERWAVE_ENCRYPTION_KEY=FFFLWSECK_TESTae9f5f14707d
+      - FLUTTERWAVE_BASE_URL=https://api.flutterwave.com/v3
+      - FLUTTERWAVE_WEBHOOK_SECRET=confetti_flw_webhook_2025_secure_key_789xyz
+      - PAYSTACK_PUBLIC_KEY=pk_test_ab0b48aa0c06bbe9188cfc107557d2eee65e3224
+      - PAYSTACK_SECRET_KEY=sk_test_964477162e79fba8e13fa380993757b1b4ce6661
     depends_on:
       - mongodb
       - postgres
@@ -107,6 +109,7 @@ volumes:
   mongodb_data:
   redis_data:
   postgres_data:
+  node_modules:
 
 networks:
   confetti-network:

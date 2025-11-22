@@ -1,19 +1,29 @@
-import Document from '../models/document.model.js';
-import { AppError } from '../utils/error.js';
-import { logger } from '../utils/logger.js';
-import { v4 as uuidv4 } from 'uuid';
-import path from 'path';
-import fs from 'fs/promises';
-import sharp from 'sharp';
-import { createClient } from 'redis';
+import Document from "../models/document.model.js";
+import { AppError } from "../utils/error.js";
+import { logger } from "../utils/logger.js";
+import { v4 as uuidv4 } from "uuid";
+import path from "path";
+import fs from "fs/promises";
+import { createClient } from "redis";
+
+// Try to import sharp, but make it optional
+let sharp;
+try {
+  sharp = (await import("sharp")).default;
+} catch (error) {
+  console.warn(
+    "Sharp module not available. Image processing will be disabled."
+  );
+  sharp = null;
+}
 
 class DocumentService {
   constructor() {
     this.redis = createClient({
-      url: process.env.REDIS_URI
+      url: process.env.REDIS_URI,
     });
-    this.redis.connect().catch(err => {
-      logger.error('Redis connection error:', err);
+    this.redis.connect().catch((err) => {
+      logger.error("Redis connection error:", err);
     });
   }
 
@@ -30,8 +40,8 @@ class DocumentService {
         metadata: {
           ...metadata,
           originalName: file.originalname,
-          encoding: file.encoding
-        }
+          encoding: file.encoding,
+        },
       });
 
       // Process document based on type
@@ -39,8 +49,8 @@ class DocumentService {
 
       return document;
     } catch (error) {
-      logger.error('Error uploading document:', error);
-      throw new AppError('Failed to upload document', 500);
+      logger.error("Error uploading document:", error);
+      throw new AppError("Failed to upload document", 500);
     }
   }
 
@@ -49,16 +59,16 @@ class DocumentService {
     try {
       const document = await Document.findById(documentId);
       if (!document) {
-        throw new AppError('Document not found', 404);
+        throw new AppError("Document not found", 404);
       }
 
       if (!document.hasPermission(user)) {
-        throw new AppError('Not authorized to access this document', 403);
+        throw new AppError("Not authorized to access this document", 403);
       }
 
       return document;
     } catch (error) {
-      logger.error('Error fetching document:', error);
+      logger.error("Error fetching document:", error);
       throw error;
     }
   }
@@ -73,14 +83,14 @@ class DocumentService {
       if (status) query.status = status;
 
       const documents = await Document.find(query)
-        .sort({ 'timestamps.uploaded': -1 })
+        .sort({ "timestamps.uploaded": -1 })
         .skip(skip)
         .limit(limit);
 
       return documents;
     } catch (error) {
-      logger.error('Error fetching documents:', error);
-      throw new AppError('Failed to fetch documents', 500);
+      logger.error("Error fetching documents:", error);
+      throw new AppError("Failed to fetch documents", 500);
     }
   }
 
@@ -94,14 +104,14 @@ class DocumentService {
       if (status) query.status = status;
 
       const documents = await Document.find(query)
-        .sort({ 'timestamps.uploaded': -1 })
+        .sort({ "timestamps.uploaded": -1 })
         .skip(skip)
         .limit(limit);
 
       return documents;
     } catch (error) {
-      logger.error('Error fetching event documents:', error);
-      throw new AppError('Failed to fetch event documents', 500);
+      logger.error("Error fetching event documents:", error);
+      throw new AppError("Failed to fetch event documents", 500);
     }
   }
 
@@ -115,14 +125,14 @@ class DocumentService {
       if (status) query.status = status;
 
       const documents = await Document.find(query)
-        .sort({ 'timestamps.uploaded': -1 })
+        .sort({ "timestamps.uploaded": -1 })
         .skip(skip)
         .limit(limit);
 
       return documents;
     } catch (error) {
-      logger.error('Error fetching vendor documents:', error);
-      throw new AppError('Failed to fetch vendor documents', 500);
+      logger.error("Error fetching vendor documents:", error);
+      throw new AppError("Failed to fetch vendor documents", 500);
     }
   }
 
@@ -131,11 +141,11 @@ class DocumentService {
     try {
       const document = await Document.findById(documentId);
       if (!document) {
-        throw new AppError('Document not found', 404);
+        throw new AppError("Document not found", 404);
       }
 
       if (document.owner.toString() !== userId.toString()) {
-        throw new AppError('Not authorized to update this document', 403);
+        throw new AppError("Not authorized to update this document", 403);
       }
 
       Object.assign(document, updates);
@@ -143,7 +153,7 @@ class DocumentService {
 
       return document;
     } catch (error) {
-      logger.error('Error updating document:', error);
+      logger.error("Error updating document:", error);
       throw error;
     }
   }
@@ -153,11 +163,11 @@ class DocumentService {
     try {
       const document = await Document.findById(documentId);
       if (!document) {
-        throw new AppError('Document not found', 404);
+        throw new AppError("Document not found", 404);
       }
 
       if (document.owner.toString() !== userId.toString()) {
-        throw new AppError('Not authorized to delete this document', 403);
+        throw new AppError("Not authorized to delete this document", 403);
       }
 
       await document.delete();
@@ -165,7 +175,7 @@ class DocumentService {
 
       return document;
     } catch (error) {
-      logger.error('Error deleting document:', error);
+      logger.error("Error deleting document:", error);
       throw error;
     }
   }
@@ -175,17 +185,17 @@ class DocumentService {
     try {
       const document = await Document.findById(documentId);
       if (!document) {
-        throw new AppError('Document not found', 404);
+        throw new AppError("Document not found", 404);
       }
 
       if (document.owner.toString() !== userId.toString()) {
-        throw new AppError('Not authorized to archive this document', 403);
+        throw new AppError("Not authorized to archive this document", 403);
       }
 
       await document.archive();
       return document;
     } catch (error) {
-      logger.error('Error archiving document:', error);
+      logger.error("Error archiving document:", error);
       throw error;
     }
   }
@@ -195,11 +205,11 @@ class DocumentService {
     try {
       const document = await Document.findById(documentId);
       if (!document) {
-        throw new AppError('Document not found', 404);
+        throw new AppError("Document not found", 404);
       }
 
       if (document.owner.toString() !== userId.toString()) {
-        throw new AppError('Not authorized to update this document', 403);
+        throw new AppError("Not authorized to update this document", 403);
       }
 
       const versionData = {
@@ -207,7 +217,7 @@ class DocumentService {
         size: file.size,
         mimeType: file.mimetype,
         userId,
-        changes
+        changes,
       };
 
       await document.addVersion(versionData);
@@ -215,7 +225,7 @@ class DocumentService {
 
       return document;
     } catch (error) {
-      logger.error('Error adding document version:', error);
+      logger.error("Error adding document version:", error);
       throw error;
     }
   }
@@ -225,11 +235,11 @@ class DocumentService {
     try {
       const document = await Document.findById(documentId);
       if (!document) {
-        throw new AppError('Document not found', 404);
+        throw new AppError("Document not found", 404);
       }
 
       if (document.owner.toString() !== userId.toString()) {
-        throw new AppError('Not authorized to update permissions', 403);
+        throw new AppError("Not authorized to update permissions", 403);
       }
 
       document.permissions = permissions;
@@ -237,7 +247,7 @@ class DocumentService {
 
       return document;
     } catch (error) {
-      logger.error('Error updating document permissions:', error);
+      logger.error("Error updating document permissions:", error);
       throw error;
     }
   }
@@ -249,40 +259,42 @@ class DocumentService {
         {
           $match: {
             owner: userId,
-            status: { $ne: 'deleted' }
-          }
+            status: { $ne: "deleted" },
+          },
         },
         {
           $group: {
             _id: null,
             total: { $sum: 1 },
-            totalSize: { $sum: '$size' },
+            totalSize: { $sum: "$size" },
             byType: {
               $push: {
-                type: '$type',
+                type: "$type",
                 count: 1,
-                size: '$size'
-              }
+                size: "$size",
+              },
             },
             byStatus: {
               $push: {
-                status: '$status',
-                count: 1
-              }
-            }
-          }
-        }
+                status: "$status",
+                count: 1,
+              },
+            },
+          },
+        },
       ]);
 
-      return stats[0] || {
-        total: 0,
-        totalSize: 0,
-        byType: [],
-        byStatus: []
-      };
+      return (
+        stats[0] || {
+          total: 0,
+          totalSize: 0,
+          byType: [],
+          byStatus: [],
+        }
+      );
     } catch (error) {
-      logger.error('Error getting document stats:', error);
-      throw new AppError('Failed to get document statistics', 500);
+      logger.error("Error getting document stats:", error);
+      throw new AppError("Failed to get document statistics", 500);
     }
   }
 
@@ -290,37 +302,42 @@ class DocumentService {
 
   // Get document type from MIME type
   getDocumentType(mimeType) {
-    if (mimeType.startsWith('image/')) return 'image';
-    if (mimeType.startsWith('video/')) return 'video';
-    if (mimeType.startsWith('audio/')) return 'audio';
-    if (mimeType.startsWith('application/')) return 'document';
-    return 'other';
+    if (mimeType.startsWith("image/")) return "image";
+    if (mimeType.startsWith("video/")) return "video";
+    if (mimeType.startsWith("audio/")) return "audio";
+    if (mimeType.startsWith("application/")) return "document";
+    return "other";
   }
 
   // Process document based on type
   async processDocument(document) {
     try {
       switch (document.type) {
-        case 'image':
+        case "image":
           await this.processImage(document);
           break;
-        case 'video':
+        case "video":
           await this.processVideo(document);
           break;
-        case 'document':
+        case "document":
           await this.processDocument(document);
           break;
       }
 
       await document.markAsProcessed();
     } catch (error) {
-      logger.error('Error processing document:', error);
-      throw new AppError('Failed to process document', 500);
+      logger.error("Error processing document:", error);
+      throw new AppError("Failed to process document", 500);
     }
   }
 
   // Process image document
   async processImage(document) {
+    if (!sharp) {
+      logger.warn("Sharp not available, skipping image processing");
+      return;
+    }
+
     try {
       const image = sharp(document.url);
       const metadata = await image.metadata();
@@ -337,8 +354,8 @@ class DocumentService {
 
       await image
         .resize(200, 200, {
-          fit: 'inside',
-          withoutEnlargement: true
+          fit: "inside",
+          withoutEnlargement: true,
         })
         .jpeg({ quality: 80 })
         .toFile(thumbnailPath);
@@ -346,7 +363,7 @@ class DocumentService {
       document.thumbnail = thumbnailPath;
       await document.save();
     } catch (error) {
-      logger.error('Error processing image:', error);
+      logger.error("Error processing image:", error);
       throw error;
     }
   }
@@ -354,13 +371,13 @@ class DocumentService {
   // Process video document
   async processVideo(document) {
     // TODO: Implement video processing (generate thumbnail, extract metadata)
-    logger.info('Video processing not implemented yet');
+    logger.info("Video processing not implemented yet");
   }
 
   // Process document file
   async processDocument(document) {
     // TODO: Implement document processing (extract text, generate preview)
-    logger.info('Document processing not implemented yet');
+    logger.info("Document processing not implemented yet");
   }
 
   // Delete file from storage
@@ -368,10 +385,10 @@ class DocumentService {
     try {
       await fs.unlink(filePath);
     } catch (error) {
-      logger.error('Error deleting file:', error);
+      logger.error("Error deleting file:", error);
       // Don't throw error as this is a non-critical operation
     }
   }
 }
 
-export default new DocumentService(); 
+export default new DocumentService();

@@ -1,0 +1,183 @@
+<!DOCTYPE html>
+<html>
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Payment Successful - Confetti</title>
+    <style>
+      body {
+        font-family: "Segoe UI", Tahoma, Geneva, Verdana, sans-serif;
+        line-height: 1.6;
+        color: #333;
+        margin: 0;
+        padding: 0;
+        background-color: #f4f4f4;
+      }
+      .container {
+        max-width: 600px;
+        margin: 0 auto;
+        padding: 20px;
+        background: linear-gradient(135deg, #ffffff 0%, #f8f9fa 100%);
+        border-radius: 10px;
+        box-shadow: 0 4px 6px rgba(0, 0, 0, 0.1);
+      }
+      .header {
+        text-align: center;
+        padding: 20px 0;
+        background: linear-gradient(135deg, #10b981 0%, #059669 100%);
+        border-radius: 8px 8px 0 0;
+        margin: -20px -20px 20px -20px;
+      }
+      .header h1 {
+        color: white;
+        margin: 0;
+        font-size: 28px;
+        font-weight: 600;
+      }
+      .content {
+        padding: 20px;
+        background: white;
+        border-radius: 8px;
+        margin-bottom: 20px;
+      }
+      .success-icon {
+        text-align: center;
+        font-size: 64px;
+        margin: 20px 0;
+      }
+      .subscription-details {
+        background: #f8f9fa;
+        padding: 20px;
+        border-radius: 8px;
+        margin: 20px 0;
+      }
+      .detail-row {
+        display: flex;
+        justify-content: space-between;
+        padding: 10px 0;
+        border-bottom: 1px solid #e5e7eb;
+      }
+      .detail-row:last-child {
+        border-bottom: none;
+      }
+      .detail-label {
+        font-weight: 600;
+        color: #6b7280;
+      }
+      .detail-value {
+        color: #111827;
+        font-weight: 500;
+      }
+      .button {
+        display: inline-block;
+        padding: 12px 24px;
+        background: linear-gradient(135deg, #10b981 0%, #059669 100%);
+        color: white;
+        text-decoration: none;
+        border-radius: 25px;
+        font-weight: 600;
+        margin: 20px 0;
+      }
+      a {
+        color: white;
+        text-decoration: none;
+      }
+      .footer {
+        text-align: center;
+        padding: 20px;
+        color: #666;
+        font-size: 14px;
+      }
+      .features-list {
+        background: #f0fdf4;
+        padding: 15px 20px;
+        border-radius: 8px;
+        margin: 20px 0;
+        border-left: 4px solid #10b981;
+      }
+      .features-list ul {
+        margin: 10px 0;
+        padding-left: 20px;
+      }
+      .features-list li {
+        margin: 8px 0;
+        color: #065f46;
+      }
+    </style>
+  </head>
+  <body>
+    <div class="container">
+      <div class="header">
+        <h1>✅ Payment Successful!</h1>
+      </div>
+      <div class="content">
+        <div class="success-icon">🎉</div>
+
+        <h2>Hello {{firstName}},</h2>
+        <p>
+          Great news! Your payment has been processed successfully, and your
+          subscription is now active.
+        </p>
+
+        <div class="subscription-details">
+          <h3 style="margin-top: 0; color: #10b981">Subscription Details</h3>
+          <div class="detail-row">
+            <span class="detail-label">Plan Type:</span>
+            <span class="detail-value">{{planType}}</span>
+          </div>
+          <div class="detail-row">
+            <span class="detail-label">Plan Name:</span>
+            <span class="detail-value">{{planName}}</span>
+          </div>
+          <div class="detail-row">
+            <span class="detail-label">Amount Paid:</span>
+            <span class="detail-value">₦{{amount}}</span>
+          </div>
+          <div class="detail-row">
+            <span class="detail-label">Next Billing Date:</span>
+            <span class="detail-value">{{endDate}}</span>
+          </div>
+        </div>
+
+        <div class="features-list">
+          <h3 style="margin-top: 0; color: #065f46">🎯 What's Next?</h3>
+          <ul>
+            <li>Verify your email address to activate your account</li>
+            <li>Complete your profile setup</li>
+            <li>Start exploring all premium features</li>
+            <li>Connect with vendors and planners</li>
+          </ul>
+        </div>
+
+        <p>
+          <strong>Important:</strong> To complete your account setup and access
+          all features, please verify your email address using the verification
+          link sent in a separate email.
+        </p>
+
+        <div style="text-align: center">
+          <a href="{{verificationLink}}" class="button">Verify Email Address</a>
+        </div>
+
+        <p>
+          If you have any questions or need assistance, our support team is here
+          to help 24/7.
+        </p>
+      </div>
+
+      <div class="footer">
+        <p>© 2025 Confetti. All rights reserved.</p>
+        <p>123 Event Street, Celebration City, 12345</p>
+        <p>
+          <a href="{{frontendUrl}}/privacy" style="color: #8b5cf6"
+            >Privacy Policy</a
+          >
+          |
+          <a href="{{frontendUrl}}/terms" style="color: #8b5cf6"
+            >Terms of Service</a
+          >
+        </p>
+      </div>
+    </div>
+  </body>
+</html>

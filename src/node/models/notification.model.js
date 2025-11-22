@@ -1,230 +1,178 @@
-import mongoose from 'mongoose';
+import mongoose from "mongoose";
 
-const notificationSchema = new mongoose.Schema({
-  recipient: {
-    type: mongoose.Schema.Types.ObjectId,
-    ref: 'User',
-    required: [true, 'Recipient is required'],
-  },
-  type: {
-    type: String,
-    required: [true, 'Notification type is required'],
-    enum: [
-      'event_update',
-      'vendor_message',
-      'payment_status',
-      'system_update',
-      'booking_status',
-      'review',
-      'reminder',
-      'other',
-    ],
-  },
-  title: {
-    type: String,
-    required: [true, 'Title is required'],
-    trim: true,
-  },
-  message: {
-    type: String,
-    required: [true, 'Message is required'],
-    trim: true,
-  },
-  priority: {
-    type: String,
-    enum: ['low', 'medium', 'high', 'urgent'],
-    default: 'medium',
-  },
-  data: {
-    event: {
+const notificationSchema = new mongoose.Schema(
+  {
+    user: {
       type: mongoose.Schema.Types.ObjectId,
-      ref: 'Event',
+      ref: "User",
+      required: true,
+      index: true,
     },
-    vendor: {
-      type: mongoose.Schema.Types.ObjectId,
-      ref: 'Vendor',
+    type: {
+      type: String,
+      enum: [
+        "vendor_response",
+        "client_approval",
+        "task_deadline",
+        "payment_due",
+        "new_message",
+        "team_invitation",
+        "event_update",
+        "budget_alert",
+        "guest_rsvp",
+        "system",
+      ],
+      required: true,
     },
-    payment: {
-      type: mongoose.Schema.Types.ObjectId,
-      ref: 'Payment',
+    title: {
+      type: String,
+      required: true,
+      trim: true,
     },
-    booking: {
-      type: mongoose.Schema.Types.ObjectId,
-      ref: 'Booking',
+    message: {
+      type: String,
+      required: true,
+      trim: true,
     },
-    review: {
-      type: mongoose.Schema.Types.ObjectId,
-      ref: 'Review',
+    priority: {
+      type: String,
+      enum: ["low", "medium", "high", "urgent"],
+      default: "medium",
     },
-    metadata: mongoose.Schema.Types.Mixed,
+    isRead: {
+      type: Boolean,
+      default: false,
+      index: true,
+    },
+    readAt: Date,
+    actionUrl: {
+      type: String,
+      trim: true,
+    },
+    actionText: {
+      type: String,
+      trim: true,
+    },
+    relatedEntity: {
+      entityType: {
+        type: String,
+        enum: [
+          "event",
+          "task",
+          "vendor",
+          "client",
+          "payment",
+          "message",
+          "team",
+        ],
+      },
+      entityId: mongoose.Schema.Types.ObjectId,
+    },
+    metadata: {
+      type: mongoose.Schema.Types.Mixed,
+    },
+    channels: {
+      inApp: {
+        type: Boolean,
+        default: true,
+      },
+      email: {
+        type: Boolean,
+        default: false,
+      },
+      sms: {
+        type: Boolean,
+        default: false,
+      },
+      push: {
+        type: Boolean,
+        default: false,
+      },
+    },
+    emailSentAt: Date,
+    smsSentAt: Date,
+    pushSentAt: Date,
+    expiresAt: Date,
   },
-  status: {
-    type: String,
-    enum: ['pending', 'sent', 'delivered', 'read', 'failed'],
-    default: 'pending',
-  },
-  channels: {
-    email: {
-      sent: {
-        type: Boolean,
-        default: false,
-      },
-      delivered: {
-        type: Boolean,
-        default: false,
-      },
-      failed: {
-        type: Boolean,
-        default: false,
-      },
-      error: String,
-    },
-    push: {
-      sent: {
-        type: Boolean,
-        default: false,
-      },
-      delivered: {
-        type: Boolean,
-        default: false,
-      },
-      failed: {
-        type: Boolean,
-        default: false,
-      },
-      error: String,
-    },
-    sms: {
-      sent: {
-        type: Boolean,
-        default: false,
-      },
-      delivered: {
-        type: Boolean,
-        default: false,
-      },
-      failed: {
-        type: Boolean,
-        default: false,
-      },
-      error: String,
-    },
-  },
-  timestamps: {
-    created: {
-      type: Date,
-      default: Date.now,
-    },
-    updated: {
-      type: Date,
-      default: Date.now,
-    },
-    sent: Date,
-    delivered: Date,
-    read: Date,
-    failed: Date,
-  },
-}, {
-  timestamps: true,
-  toJSON: { virtuals: true },
-  toObject: { virtuals: true },
-});
+  {
+    timestamps: true,
+    toJSON: { virtuals: true },
+    toObject: { virtuals: true },
+  }
+);
 
 // Indexes
-notificationSchema.index({ recipient: 1, status: 1 });
-notificationSchema.index({ type: 1, status: 1 });
-notificationSchema.index({ 'data.event': 1 });
-notificationSchema.index({ 'data.vendor': 1 });
-notificationSchema.index({ 'data.payment': 1 });
-notificationSchema.index({ 'data.booking': 1 });
-notificationSchema.index({ 'data.review': 1 });
+notificationSchema.index({ user: 1, isRead: 1 });
+notificationSchema.index({ user: 1, createdAt: -1 });
+notificationSchema.index({ user: 1, type: 1 });
+notificationSchema.index({ expiresAt: 1 }, { expireAfterSeconds: 0 });
 
-// Virtual for notification age in seconds
-notificationSchema.virtual('age').get(function() {
-  return Math.floor((Date.now() - this.timestamps.created) / 1000);
+// Virtuals
+notificationSchema.virtual("isExpired").get(function () {
+  return this.expiresAt && this.expiresAt < new Date();
 });
 
-// Method to mark notification as sent
-notificationSchema.methods.markAsSent = async function(channel) {
-  this.channels[channel].sent = true;
-  this.channels[channel].failed = false;
-  this.channels[channel].error = null;
-  this.timestamps.sent = new Date();
-  this.timestamps.updated = new Date();
+notificationSchema.virtual("age").get(function () {
+  return Date.now() - this.createdAt.getTime();
+});
+
+// Methods
+notificationSchema.methods.markAsRead = function () {
+  this.isRead = true;
+  this.readAt = new Date();
   return this.save();
 };
 
-// Method to mark notification as delivered
-notificationSchema.methods.markAsDelivered = async function(channel) {
-  this.channels[channel].delivered = true;
-  this.timestamps.delivered = new Date();
-  this.timestamps.updated = new Date();
+notificationSchema.methods.markEmailSent = function () {
+  this.emailSentAt = new Date();
   return this.save();
 };
 
-// Method to mark notification as read
-notificationSchema.methods.markAsRead = async function() {
-  this.status = 'read';
-  this.timestamps.read = new Date();
-  this.timestamps.updated = new Date();
+notificationSchema.methods.markSmsSent = function () {
+  this.smsSentAt = new Date();
   return this.save();
 };
 
-// Method to mark notification as failed
-notificationSchema.methods.markAsFailed = async function(channel, error) {
-  this.channels[channel].failed = true;
-  this.channels[channel].error = error;
-  this.status = 'failed';
-  this.timestamps.failed = new Date();
-  this.timestamps.updated = new Date();
+notificationSchema.methods.markPushSent = function () {
+  this.pushSentAt = new Date();
   return this.save();
 };
 
-// Method to check if notification is read
-notificationSchema.methods.isRead = function() {
-  return this.status === 'read';
+// Static methods
+notificationSchema.statics.createNotification = async function (data) {
+  const notification = await this.create(data);
+
+  // TODO: Trigger real-time notification via WebSocket
+  // TODO: Send email if channels.email is true
+  // TODO: Send SMS if channels.sms is true
+  // TODO: Send push if channels.push is true
+
+  return notification;
 };
 
-// Method to check if notification is delivered
-notificationSchema.methods.isDelivered = function() {
-  return this.status === 'delivered';
+notificationSchema.statics.markAllAsRead = async function (userId) {
+  return this.updateMany(
+    { user: userId, isRead: false },
+    { $set: { isRead: true, readAt: new Date() } }
+  );
 };
 
-// Method to check if notification is sent
-notificationSchema.methods.isSent = function() {
-  return this.status === 'sent';
+notificationSchema.statics.getUnreadCount = async function (userId) {
+  return this.countDocuments({ user: userId, isRead: false });
 };
 
-// Method to check if notification is failed
-notificationSchema.methods.isFailed = function() {
-  return this.status === 'failed';
+notificationSchema.statics.deleteOldNotifications = async function (
+  daysOld = 30
+) {
+  const cutoffDate = new Date();
+  cutoffDate.setDate(cutoffDate.getDate() - daysOld);
+
+  return this.deleteMany({
+    createdAt: { $lt: cutoffDate },
+    isRead: true,
+  });
 };
 
-// Method to check if notification is pending
-notificationSchema.methods.isPending = function() {
-  return this.status === 'pending';
-};
+const Notification = mongoose.model("Notification", notificationSchema);
 
-// Method to check if notification is urgent
-notificationSchema.methods.isUrgent = function() {
-  return this.priority === 'urgent';
-};
-
-// Method to check if notification is high priority
-notificationSchema.methods.isHighPriority = function() {
-  return this.priority === 'high';
-};
-
-// Method to check if notification is medium priority
-notificationSchema.methods.isMediumPriority = function() {
-  return this.priority === 'medium';
-};
-
-// Method to check if notification is low priority
-notificationSchema.methods.isLowPriority = function() {
-  return this.priority === 'low';
-};
-
-const Notification = mongoose.model('Notification', notificationSchema);
-
-export default Notification; 
+export default Notification;
