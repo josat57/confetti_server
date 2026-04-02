@@ -785,6 +785,82 @@ export const uploadEventPhotos = async (req, res, next) => {
 };
 
 /**
+ * Get event photos
+ * GET /api/v1/events/:id/photos
+ */
+export const getEventPhotos = async (req, res, next) => {
+  try {
+    const event = await Event.findById(req.params.id).select("media createdBy");
+
+    if (!event) {
+      return next(new AppError("Event not found", 404));
+    }
+
+    // Filter only image/photo media
+    const photos = event.media.filter(
+      (item) => item.type === "image" || item.type === "photo"
+    );
+
+    // Get photo URLs from GridFS
+    const photosWithUrls = await Promise.all(
+      photos.map(async (photo) => {
+        try {
+          // Check if file exists in GridFS
+          const exists = await fileExists(photo.fileId);
+
+          if (exists) {
+            // Generate download URL
+            const url = `/api/v1/files/${photo.fileId}`;
+
+            return {
+              _id: photo._id,
+              type: photo.type,
+              url,
+              fileId: photo.fileId,
+              caption: photo.caption,
+              uploadedBy: photo.uploadedBy,
+              uploadedAt: photo.uploadedAt,
+            };
+          } else {
+            // File doesn't exist, return without URL
+            return {
+              _id: photo._id,
+              type: photo.type,
+              fileId: photo.fileId,
+              caption: photo.caption,
+              uploadedBy: photo.uploadedBy,
+              uploadedAt: photo.uploadedAt,
+              error: "File not found in storage",
+            };
+          }
+        } catch (error) {
+          // Error checking file, return basic info
+          return {
+            _id: photo._id,
+            type: photo.type,
+            fileId: photo.fileId,
+            caption: photo.caption,
+            uploadedBy: photo.uploadedBy,
+            uploadedAt: photo.uploadedAt,
+            error: error.message,
+          };
+        }
+      })
+    );
+
+    res.status(200).json({
+      status: "success",
+      results: photosWithUrls.length,
+      data: {
+        photos: photosWithUrls,
+      },
+    });
+  } catch (error) {
+    next(error);
+  }
+};
+
+/**
  * Delete event media
  * DELETE /api/v1/events/:id/media/:mediaId
  */
@@ -828,6 +904,65 @@ export const deleteEventMedia = async (req, res, next) => {
       message: "Media deleted successfully",
       data: {
         media: event.media,
+      },
+    });
+  } catch (error) {
+    next(error);
+  }
+};
+
+/**
+ * Update event status
+ * PATCH /api/v1/events/:id/status
+ */
+export const updateEventStatus = async (req, res, next) => {
+  try {
+    const { status } = req.body;
+    const validStatuses = [
+      "planning",
+      "confirmed",
+      "in-progress",
+      "completed",
+      "cancelled",
+    ];
+
+    if (!validStatuses.includes(status)) {
+      return next(new AppError("Invalid status value", 400));
+    }
+
+    const event = await Event.findById(req.params.id);
+
+    if (!event) {
+      return next(new AppError("Event not found", 404));
+    }
+
+    // Check if user has access to this event
+    if (!hasEventAccess(event, req.user.id)) {
+      return next(new AppError("Access denied", 403));
+    }
+
+    // Update status
+    event.status = status;
+    event.updatedAt = new Date();
+
+    // Set completion date if status is completed
+    if (status === "completed" && !event.completedAt) {
+      event.completedAt = new Date();
+    }
+
+    await event.save();
+
+    res.status(200).json({
+      status: "success",
+      message: "Event status updated successfully",
+      data: {
+        event: {
+          id: event._id,
+          title: event.title,
+          status: event.status,
+          updatedAt: event.updatedAt,
+          completedAt: event.completedAt,
+        },
       },
     });
   } catch (error) {

@@ -3,6 +3,7 @@ import passport from "passport";
 import { validateRequest } from "../middleware/validation.js";
 import { protect } from "../middleware/auth.js";
 import oauthService from "../services/oauth.service.js";
+import { handleSuperAdminLogin } from "../middleware/superAdmin.js";
 import {
   register,
   login,
@@ -205,7 +206,7 @@ router.post("/register", validateRequest("register"), register);
  *             schema:
  *               $ref: '#/components/schemas/Error'
  */
-router.post("/signin", validateRequest("login"), login);
+router.post("/signin", validateRequest("login"), handleSuperAdminLogin, login);
 
 /**
  * @swagger

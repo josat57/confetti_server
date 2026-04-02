@@ -1,0 +1,64 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: python-api
+  namespace: confetti
+  labels:
+    app: python-api
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: python-api
+  template:
+    metadata:
+      labels:
+        app: python-api
+    spec:
+      containers:
+        - name: python-api
+          image: registry.digitalocean.com/confetti-registry/confetti-python-api:latest
+          ports:
+            - containerPort: 5600
+          envFrom:
+            - configMapRef:
+                name: confetti-config
+            - secretRef:
+                name: confetti-secrets
+          livenessProbe:
+            httpGet:
+              path: /health/ai
+              port: 5600
+            initialDelaySeconds: 30
+            periodSeconds: 10
+            timeoutSeconds: 5
+            failureThreshold: 3
+          readinessProbe:
+            httpGet:
+              path: /health/ai
+              port: 5600
+            initialDelaySeconds: 10
+            periodSeconds: 5
+            timeoutSeconds: 3
+            failureThreshold: 3
+          resources:
+            requests:
+              memory: "512Mi"
+              cpu: "250m"
+            limits:
+              memory: "1Gi"
+              cpu: "500m"
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: python-api-service
+  namespace: confetti
+spec:
+  selector:
+    app: python-api
+  ports:
+    - protocol: TCP
+      port: 5600
+      targetPort: 5600
+  type: ClusterIP

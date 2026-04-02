@@ -1,0 +1,46 @@
+#! python-api-deployment.yaml
+# Generated code, do not edit
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+    name: python-api
+    namespace: confetti-server
+    labels:
+        com.docker.compose.project: confetti_server
+        com.docker.compose.service: python-api
+spec:
+    replicas: 1
+    selector:
+        matchLabels:
+            com.docker.compose.project: confetti_server
+            com.docker.compose.service: python-api
+    strategy:
+        type: Recreate
+    template:
+        metadata:
+            labels:
+                com.docker.compose.project: confetti_server
+                com.docker.compose.service: python-api
+                com.docker.compose.network.confetti-network: "true"
+        spec:
+            containers:
+                - name: confetti-python-api
+                  image: confetti_server-python-api
+                  imagePullPolicy: IfNotPresent
+                  env:
+                    - name: FLASK_ENV
+                      value: "development"
+                    - name: MONGODB_URI
+                      value: "mongodb://mongodb:27017/confetti"
+                    - name: REDIS_URI
+                      value: "redis://redis:6379"
+                  ports:
+                    - name: python-api-5600
+                      containerPort: 5600
+                  volumeMounts:
+                    - name: usr-src-app-src-python
+                      mountPath: /usr/src/app/src/python
+            volumes:
+                - name: usr-src-app-src-python
+                  hostPath:
+                    path: /Users/Apple/projects/confetti_server/src/python

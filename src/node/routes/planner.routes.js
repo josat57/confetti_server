@@ -1,18 +1,7 @@
 import express from "express";
 import { protect, restrictTo } from "../middleware/auth.js";
-import {
-  getDashboardMetrics,
-  getDashboardActivity,
-  getQuickStats,
-} from "../controllers/planner.controller.js";
-import {
-  listClients,
-  createClient,
-  getClient,
-  updateClient,
-  deleteClient,
-  getClientEvents,
-} from "../controllers/client.controller.js";
+// Dashboard controller functions are used in planner-dashboard.routes.js
+// Client controller functions are used in planner-client.routes.js
 import { listAllTasks } from "../controllers/task.controller.js";
 import {
   getCalendarData,
@@ -25,6 +14,10 @@ import {
   generateCustomReport,
 } from "../controllers/analytics.controller.js";
 import { plannerMessageRoutes } from "./communication.routes.js";
+import {
+  bulkEventAction,
+  bulkTaskAction,
+} from "../controllers/planner-bulk.controller.js";
 
 const router = express.Router();
 
@@ -32,18 +25,9 @@ const router = express.Router();
 router.use(protect);
 router.use(restrictTo("event-planner"));
 
-// Dashboard routes
-router.get("/dashboard/metrics", getDashboardMetrics);
-router.get("/dashboard/activity", getDashboardActivity);
-router.get("/dashboard/quick-stats", getQuickStats);
+// Dashboard routes are handled by /planner/dashboard (see planner-dashboard.routes.js)
 
-// Client routes
-router.get("/clients", listClients);
-router.post("/clients", createClient);
-router.get("/clients/:id", getClient);
-router.patch("/clients/:id", updateClient);
-router.delete("/clients/:id", deleteClient);
-router.get("/clients/:id/events", getClientEvents);
+// Client routes are handled by /planner/clients (see planner-client.routes.js)
 
 // Task routes (all tasks across events)
 router.get("/tasks", listAllTasks);
@@ -59,6 +43,10 @@ router.get("/analytics/tasks", getTaskAnalytics);
 
 // Reports routes
 router.post("/reports/custom", generateCustomReport);
+
+// Bulk operations routes
+router.post("/events/bulk-action", bulkEventAction);
+router.post("/tasks/bulk-action", bulkTaskAction);
 
 // Communication routes
 router.use("/messages", plannerMessageRoutes);

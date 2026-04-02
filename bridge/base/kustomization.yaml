@@ -1,0 +1,26 @@
+#! kustomization.yaml
+# Generated code, do not edit
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+resources:
+    - 0-confetti-server-namespace.yaml
+    - confetti-network-network-policy.yaml
+    - mongodb-deployment.yaml
+    - mongodb-expose.yaml
+    - mongodb-mongodb_data-persistentVolumeClaim.yaml
+    - mongodb-service.yaml
+    - node-api-deployment.yaml
+    - node-api-expose.yaml
+    - node-api-node_modules-persistentVolumeClaim.yaml
+    - node-api-service.yaml
+    - postgres-deployment.yaml
+    - postgres-expose.yaml
+    - postgres-postgres_data-persistentVolumeClaim.yaml
+    - postgres-service.yaml
+    - python-api-deployment.yaml
+    - python-api-expose.yaml
+    - python-api-service.yaml
+    - redis-deployment.yaml
+    - redis-expose.yaml
+    - redis-redis_data-persistentVolumeClaim.yaml
+    - redis-service.yaml

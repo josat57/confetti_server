@@ -1,100 +1,65 @@
-import mongoose from 'mongoose';
+import mongoose from "mongoose";
 
-const systemConfigSchema = new mongoose.Schema({
-  siteName: {
-    type: String,
-    required: true,
-    default: 'Confetti'
-  },
-  siteDescription: String,
-  maintenanceMode: {
-    type: Boolean,
-    default: false
-  },
-  maintenanceMessage: String,
-  emailSettings: {
-    smtpHost: String,
-    smtpPort: Number,
-    smtpUser: String,
-    smtpPass: String,
-    fromEmail: String,
-    fromName: String
-  },
-  socialMedia: {
-    facebook: String,
-    twitter: String,
-    instagram: String,
-    linkedin: String
-  },
-  paymentSettings: {
-    currency: {
+const systemConfigSchema = new mongoose.Schema(
+  {
+    key: {
       type: String,
-      default: 'USD'
+      required: true,
+      unique: true,
+      trim: true,
     },
-    stripePublicKey: String,
-    stripeSecretKey: String,
-    paypalClientId: String,
-    paypalSecret: String
-  },
-  securitySettings: {
-    passwordMinLength: {
-      type: Number,
-      default: 8
+    value: {
+      type: mongoose.Schema.Types.Mixed,
+      required: true,
     },
-    requireStrongPassword: {
-      type: Boolean,
-      default: true
-    },
-    sessionTimeout: {
-      type: Number,
-      default: 24 // hours
-    },
-    maxLoginAttempts: {
-      type: Number,
-      default: 5
-    },
-    lockoutDuration: {
-      type: Number,
-      default: 30 // minutes
-    }
-  },
-  notificationSettings: {
-    emailNotifications: {
-      type: Boolean,
-      default: true
-    },
-    pushNotifications: {
-      type: Boolean,
-      default: true
-    }
-  },
-  themeSettings: {
-    primaryColor: {
+    category: {
       type: String,
-      default: '#007bff'
+      required: true,
+      enum: [
+        "general",
+        "payment",
+        "email",
+        "sms",
+        "security",
+        "features",
+        "subscription",
+        "notification",
+      ],
     },
-    secondaryColor: {
+    description: {
       type: String,
-      default: '#6c757d'
+      trim: true,
     },
-    logo: String,
-    favicon: String
+    dataType: {
+      type: String,
+      enum: ["string", "number", "boolean", "object", "array"],
+      default: "string",
+    },
+    isPublic: {
+      type: Boolean,
+      default: false,
+    },
+    isEditable: {
+      type: Boolean,
+      default: true,
+    },
+    lastModifiedBy: {
+      type: mongoose.Schema.Types.ObjectId,
+      ref: "User",
+    },
+    lastModifiedAt: {
+      type: Date,
+    },
+  },
+  {
+    timestamps: true,
   }
-}, {
-  timestamps: true
-});
+);
 
-// Ensure only one system config document exists
-systemConfigSchema.pre('save', async function(next) {
-  if (this.isNew) {
-    const count = await this.constructor.countDocuments();
-    if (count > 0) {
-      throw new Error('Only one system configuration document can exist');
-    }
-  }
-  next();
-});
+// Indexes
+systemConfigSchema.index({ key: 1 });
+systemConfigSchema.index({ category: 1 });
 
-const SystemConfig = mongoose.model('SystemConfig', systemConfigSchema);
+const SystemConfig = mongoose.model("SystemConfig", systemConfigSchema);
 
-export default SystemConfig; 
+export default SystemConfig;

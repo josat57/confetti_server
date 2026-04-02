@@ -1,0 +1,19 @@
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: confetti-config
+  namespace: confetti
+data:
+  NODE_ENV: "production"
+  PORT: "9600"
+  PYTHON_API_URL: "http://python-api-service:5600"
+  FRONTEND_URL: "https://your-domain.com"
+  JWT_ACCESS_EXPIRES_IN: "15m"
+  JWT_REFRESH_EXPIRES_IN: "7d"
+  SMTP_HOST: "smtp.hostinger.com"
+  SMTP_PORT: "465"
+  SMTP_SECURE: "true"
+  FROM_NAME: "Confetti Team"
+  FLUTTERWAVE_BASE_URL: "https://api.flutterwave.com/v3"
+  BCRYPT_SALT_ROUNDS: "12"
+  FLASK_ENV: "production"

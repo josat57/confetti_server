@@ -14,6 +14,7 @@ const router = express.Router();
 
 router.use(protect);
 
+router.get("/overview", getBudgetSummary);
 router.get("/summary", getBudgetSummary);
 router.get("/payments-due", getPaymentsDue);
 

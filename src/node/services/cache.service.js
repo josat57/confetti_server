@@ -244,6 +244,32 @@ class CacheService {
   }
 
   /**
+   * Increment a counter with TTL (for rate limiting)
+   * @param {string} key - Cache key
+   * @param {number} ttl - Time to live in seconds
+   * @returns {Promise<number>} - New value
+   */
+  async increment(key, ttl) {
+    try {
+      if (!this.isConnected || !this.client) {
+        return 1; // Return 1 to allow request when Redis is down
+      }
+
+      const current = await this.client.incr(key);
+
+      // Set expiration only on first increment
+      if (current === 1) {
+        await this.client.expire(key, ttl);
+      }
+
+      return current;
+    } catch (error) {
+      logger.error(`Cache increment error for key ${key}:`, error);
+      return 1; // Return 1 to allow request on error
+    }
+  }
+
+  /**
    * Decrement a counter
    * @param {string} key - Cache key
    * @param {number} amount - Amount to decrement (default: 1)

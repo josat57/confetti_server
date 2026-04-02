@@ -68,7 +68,12 @@ class PlannerTeamController {
   async inviteTeamMember(req, res, next) {
     try {
       const plannerId = req.user.id;
-      const { email, role = "coordinator", assignedEvents = [] } = req.body;
+      const {
+        email,
+        role: rawRole = "coordinator",
+        assignedEvents = [],
+      } = req.body;
+      const role = rawRole.toLowerCase(); // Normalize role to lowercase
 
       if (!email) {
         throw new AppError("Email is required", 400);
@@ -327,6 +332,56 @@ class PlannerTeamController {
         message: "Team member removed successfully",
       });
     } catch (error) {
+      next(error);
+    }
+  }
+
+  /**
+   * Get team activity overview
+   * GET /api/v1/planner/team/activity
+   */
+  async getTeamActivity(req, res, next) {
+    try {
+      const plannerId = req.user.id;
+      const { limit = 50 } = req.query;
+
+      logger.info("Fetching team activity overview", { plannerId });
+
+      // Get all team members with their recent activity
+      const teamMembers = await TeamMember.find({ planner: plannerId })
+        .select("user activityLog")
+        .populate("user", "firstName lastName email")
+        .lean();
+
+      // Collect all activity from all team members
+      const allActivity = [];
+      teamMembers.forEach((member) => {
+        if (member.activityLog && member.activityLog.length > 0) {
+          member.activityLog.forEach((activity) => {
+            allActivity.push({
+              ...activity,
+              user: member.user,
+              memberId: member._id,
+            });
+          });
+        }
+      });
+
+      // Sort by timestamp (most recent first) and limit
+      const recentActivity = allActivity
+        .sort((a, b) => new Date(b.timestamp) - new Date(a.timestamp))
+        .slice(0, parseInt(limit));
+
+      res.status(200).json({
+        success: true,
+        data: {
+          activity: recentActivity,
+          total: allActivity.length,
+          teamMembersCount: teamMembers.length,
+        },
+      });
+    } catch (error) {
+      logger.error("Error fetching team activity:", error);
       next(error);
     }
   }

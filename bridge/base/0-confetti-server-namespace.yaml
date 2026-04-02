@@ -1,0 +1,8 @@
+#! 0-confetti-server-namespace.yaml
+# Generated code, do not edit
+apiVersion: v1
+kind: Namespace
+metadata:
+    name: confetti-server
+    labels:
+        com.docker.compose.project: confetti_server

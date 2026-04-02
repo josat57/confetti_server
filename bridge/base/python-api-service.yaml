@@ -1,0 +1,21 @@
+#! python-api-service.yaml
+# Generated code, do not edit
+apiVersion: v1
+kind: Service
+metadata:
+    name: python-api-published
+    namespace: confetti-server
+    labels:
+        com.docker.compose.project: confetti_server
+        com.docker.compose.service: python-api
+spec:
+    selector:
+        com.docker.compose.project: confetti_server
+        com.docker.compose.service: python-api
+    ports:
+        - name: python-api-5600
+          port: 5600
+          protocol: TCP
+          targetPort: python-api-5600
+
+# check if there is at least one published port

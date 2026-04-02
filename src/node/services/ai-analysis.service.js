@@ -45,12 +45,15 @@ class AIAnalysisService {
 
       const sanitizedRequest = InputSanitizer.sanitizeEventRequest(rawRequest);
 
-      // 2. Validate budget sufficiency
-      BudgetService.validateBudgetSufficiency(
+      // 2. Analyze budget and get recommendations
+      const budgetAnalysis = BudgetService.validateBudgetSufficiency(
         sanitizedRequest.budget,
         sanitizedRequest.eventType,
         sanitizedRequest.guestCount
       );
+
+      // Store budget analysis for later use in recommendations
+      sanitizedRequest.budgetAnalysis = budgetAnalysis;
 
       // 3. Generate session token
       const sessionToken = this.generateSessionToken();
@@ -65,7 +68,11 @@ class AIAnalysisService {
         location: sanitizedRequest.location,
         eventDescription: sanitizedRequest.eventDescription,
         guestClass: sanitizedRequest.guestClass,
-        budget: sanitizedRequest.budget,
+        budget: {
+          amount: sanitizedRequest.budget.amount,
+          currency: sanitizedRequest.budget.currency,
+          budgetFlexibility: sanitizedRequest.budget.budgetFlexibility,
+        },
         status: "processing",
         ipAddress: InputSanitizer.sanitizeIP(ipAddress),
         userAgent: InputSanitizer.sanitizeUserAgent(userAgent),
@@ -122,7 +129,8 @@ class AIAnalysisService {
         { amount: budgetInNGN, currency: "NGN" },
         sanitizedRequest.eventType,
         sanitizedRequest.guestCount,
-        vendorData
+        vendorData,
+        sanitizedRequest.budget.budgetFlexibility
       );
 
       // 10. Generate category recommendations
@@ -323,6 +331,7 @@ class AIAnalysisService {
         currency: request.budget.currency,
         formality: request.guestClass.formality,
       },
+      budgetAnalysis: request.budgetAnalysis || null,
       budgetBreakdown: {
         categories: budgetAllocation.categories.map((cat) => ({
           name: cat.name,
@@ -342,7 +351,8 @@ class AIAnalysisService {
       recommendations: this.generateRecommendations(
         budgetAllocation,
         vendorData,
-        pythonAnalysis
+        pythonAnalysis,
+        request.budgetAnalysis
       ),
       aiInsights: {
         sentiment: pythonAnalysis?.nlp_analysis?.sentiment || {
@@ -351,6 +361,7 @@ class AIAnalysisService {
         },
         keywords: pythonAnalysis?.nlp_analysis?.keywords || [],
         feasibilityScore: budgetAllocation.feasibilityScore,
+        budgetLevel: request.budgetAnalysis?.budgetLevel || "adequate",
       },
     };
   }
@@ -384,18 +395,42 @@ class AIAnalysisService {
    * @param {Object} pythonAnalysis - Python AI analysis
    * @returns {Array} Recommendations
    */
-  generateRecommendations(budgetAllocation, vendorData, pythonAnalysis) {
+  generateRecommendations(
+    budgetAllocation,
+    vendorData,
+    pythonAnalysis,
+    budgetAnalysis
+  ) {
     const recommendations = [];
 
-    // Budget recommendations
-    if (budgetAllocation.feasibilityScore < 70) {
-      recommendations.push(
-        "Your budget is tight for this event. Consider reducing guest count or choosing more budget-friendly options."
-      );
-    } else if (budgetAllocation.feasibilityScore >= 85) {
-      recommendations.push(
-        "Your budget is excellent! You have flexibility to choose premium vendors."
-      );
+    // Budget analysis recommendations (prioritize these)
+    if (budgetAnalysis) {
+      // Add top 3 most relevant recommendations from budget analysis
+      if (
+        budgetAnalysis.recommendations &&
+        budgetAnalysis.recommendations.length > 0
+      ) {
+        recommendations.push(...budgetAnalysis.recommendations.slice(0, 3));
+      }
+
+      // Add top 2 optimizations
+      if (
+        budgetAnalysis.optimizations &&
+        budgetAnalysis.optimizations.length > 0
+      ) {
+        recommendations.push(...budgetAnalysis.optimizations.slice(0, 2));
+      }
+    } else {
+      // Fallback budget recommendations if no analysis available
+      if (budgetAllocation.feasibilityScore < 70) {
+        recommendations.push(
+          "Your budget is tight for this event. Consider reducing guest count or choosing more budget-friendly options."
+        );
+      } else if (budgetAllocation.feasibilityScore >= 85) {
+        recommendations.push(
+          "Your budget is excellent! You have flexibility to choose premium vendors."
+        );
+      }
     }
 
     // Vendor recommendations
@@ -403,18 +438,22 @@ class AIAnalysisService {
       recommendations.push(
         "Limited vendors available in your area. Book early to secure your preferred choices."
       );
+    } else if (vendorData.statistics.totalVendors > 50) {
+      recommendations.push(
+        "Great news! Many vendors available in your area. Compare quotes to find the best value."
+      );
     }
 
     // Python AI recommendations
     if (pythonAnalysis?.recommendations) {
       if (pythonAnalysis.recommendations.budget_tips) {
         recommendations.push(
-          ...pythonAnalysis.recommendations.budget_tips.slice(0, 2)
+          ...pythonAnalysis.recommendations.budget_tips.slice(0, 1)
         );
       }
       if (pythonAnalysis.recommendations.vendor_tips) {
         recommendations.push(
-          ...pythonAnalysis.recommendations.vendor_tips.slice(0, 2)
+          ...pythonAnalysis.recommendations.vendor_tips.slice(0, 1)
         );
       }
     }
@@ -425,7 +464,7 @@ class AIAnalysisService {
       "Create an account to save your event plan and access exclusive features."
     );
 
-    return recommendations.slice(0, 8); // Limit to 8 recommendations
+    return recommendations.slice(0, 10); // Limit to 10 recommendations
   }
 
   /**

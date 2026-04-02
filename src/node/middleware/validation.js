@@ -234,11 +234,38 @@ const schemas = {
 
   sendAnnouncement: Joi.object({
     title: Joi.string().required(),
-    message: Joi.string().required(),
-    targetAudience: Joi.array()
-      .items(Joi.string().valid("all", "users", "vendors", "admins"))
+    content: Joi.string().required(),
+    message: Joi.string().optional(), // Backward compatibility
+    type: Joi.string()
+      .valid("info", "warning", "success", "error")
+      .default("info"),
+    targetAudience: Joi.alternatives()
+      .try(
+        Joi.string().valid(
+          "all",
+          "users",
+          "vendors",
+          "admins",
+          "event-planners"
+        ),
+        Joi.array().items(
+          Joi.string().valid(
+            "all",
+            "users",
+            "vendors",
+            "admins",
+            "event-planners"
+          )
+        )
+      )
       .required(),
     priority: Joi.string().valid("low", "medium", "high").default("medium"),
+    status: Joi.string()
+      .valid("draft", "published", "archived")
+      .default("published"),
+    isSticky: Joi.boolean().default(false),
+    scheduledFor: Joi.date().optional().allow("", null),
+    expiresAt: Joi.date().optional().allow("", null),
   }),
 
   verifyTwoFactor: Joi.object({

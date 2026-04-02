@@ -1,0 +1,49 @@
+#! mongodb-deployment.yaml
+# Generated code, do not edit
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+    name: mongodb
+    namespace: confetti-server
+    labels:
+        com.docker.compose.project: confetti_server
+        com.docker.compose.service: mongodb
+spec:
+    replicas: 1
+    selector:
+        matchLabels:
+            com.docker.compose.project: confetti_server
+            com.docker.compose.service: mongodb
+    strategy:
+        type: Recreate
+    template:
+        metadata:
+            labels:
+                com.docker.compose.project: confetti_server
+                com.docker.compose.service: mongodb
+                com.docker.compose.network.confetti-network: "true"
+        spec:
+            containers:
+                - name: confetti-mongodb
+                  image: mongo:latest
+                  imagePullPolicy: IfNotPresent
+                  env:
+                    - name: MONGO_INITDB_DATABASE
+                      value: "confetti"
+                  ports:
+                    - name: mongodb-27017
+                      containerPort: 27017
+                  volumeMounts:
+                    - name: data-db
+                      mountPath: /data/db
+                    - name: docker-entrypoint-initdb-d-mongo-init-js
+                      mountPath: /docker-entrypoint-initdb.d/mongo-init.js
+                      readOnly: true
+            volumes:
+                - name: data-db
+                  persistentVolumeClaim:
+                    claimName: mongodb-mongodb-data
+                - name: docker-entrypoint-initdb-d-mongo-init-js
+                  hostPath:
+                    path: /Users/Apple/projects/confetti_server/mongo-init.js
+                  readOnly: true

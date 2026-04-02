@@ -1,0 +1,21 @@
+#! node-api-service.yaml
+# Generated code, do not edit
+apiVersion: v1
+kind: Service
+metadata:
+    name: node-api-published
+    namespace: confetti-server
+    labels:
+        com.docker.compose.project: confetti_server
+        com.docker.compose.service: node-api
+spec:
+    selector:
+        com.docker.compose.project: confetti_server
+        com.docker.compose.service: node-api
+    ports:
+        - name: node-api-9600
+          port: 9600
+          protocol: TCP
+          targetPort: node-api-9600
+
+# check if there is at least one published port

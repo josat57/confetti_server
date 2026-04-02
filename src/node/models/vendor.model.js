@@ -303,6 +303,51 @@ const vendorSchema = new mongoose.Schema(
       default: false,
     },
     verifiedAt: Date,
+
+    // Business Profile Fields
+    registrationNumber: {
+      type: String,
+      trim: true,
+      maxlength: [50, "Registration number cannot exceed 50 characters"],
+      validate: {
+        validator: function (v) {
+          if (!v) return true; // Optional field
+          // Allow alphanumeric characters and common separators (hyphens, slashes)
+          return /^[a-zA-Z0-9\-\/]+$/.test(v);
+        },
+        message:
+          "Registration number can only contain alphanumeric characters, hyphens, and slashes",
+      },
+    },
+    taxId: {
+      type: String,
+      trim: true,
+      select: false, // Exclude from queries by default for security
+    },
+    yearEstablished: {
+      type: Number,
+      min: [1800, "Year must be after 1800"],
+      max: [new Date().getFullYear(), "Year cannot be in the future"],
+      validate: {
+        validator: function (v) {
+          if (!v) return true; // Optional field
+          return Number.isInteger(v) && v.toString().length === 4;
+        },
+        message: "Year must be a four-digit number",
+      },
+    },
+    verificationStatus: {
+      type: String,
+      enum: ["pending", "verified", "rejected"],
+      default: "pending",
+      index: true,
+    },
+    verifiedBy: {
+      type: mongoose.Schema.Types.ObjectId,
+      ref: "User",
+    },
+    rejectionReason: String,
+
     reviews: [
       {
         user: {
@@ -354,6 +399,7 @@ vendorSchema.index({ rating: -1, reviewCount: -1 });
 vendorSchema.index({ owner: 1 });
 vendorSchema.index({ subscription: 1 });
 vendorSchema.index({ isFeatured: 1, status: 1 });
+vendorSchema.index({ verificationStatus: 1 });
 
 // Virtual for full display name
 vendorSchema.virtual("fullDisplayName").get(function () {
@@ -386,26 +432,45 @@ vendorSchema.methods.incrementViews = async function () {
 
 // Method to update average rating
 vendorSchema.methods.updateRating = async function () {
-  const Review = mongoose.model("Review");
-  const stats = await Review.aggregate([
-    { $match: { vendor: this._id } },
-    {
-      $group: {
-        _id: null,
-        avgRating: { $avg: "$rating" },
-        count: { $sum: 1 },
+  try {
+    // Check if Review model is registered
+    let Review;
+    try {
+      Review = mongoose.model("Review");
+    } catch (error) {
+      // Review model not registered yet, skip rating update
+      return;
+    }
+
+    const stats = await Review.aggregate([
+      { $match: { vendor: this._id, status: "approved" } },
+      {
+        $group: {
+          _id: null,
+          avgRating: { $avg: "$rating" },
+          count: { $sum: 1 },
+        },
       },
-    },
-  ]);
+    ]);
 
-  if (stats.length > 0) {
-    this.stats.averageRating = Math.round(stats[0].avgRating * 10) / 10;
-    this.stats.totalReviews = stats[0].count;
-    this.rating = this.stats.averageRating;
-    this.reviewCount = this.stats.totalReviews;
+    if (stats.length > 0) {
+      this.stats.averageRating = Math.round(stats[0].avgRating * 10) / 10;
+      this.stats.totalReviews = stats[0].count;
+      this.rating = this.stats.averageRating;
+      this.reviewCount = this.stats.totalReviews;
+    } else {
+      // No reviews found, set defaults
+      this.stats.averageRating = 0;
+      this.stats.totalReviews = 0;
+      this.rating = 0;
+      this.reviewCount = 0;
+    }
+
+    await this.save();
+  } catch (error) {
+    // Log error but don't throw - rating update is not critical
+    console.error("Error updating vendor rating:", error.message);
   }
-
-  await this.save();
 };
 
 // Method to check if vendor is featured
@@ -413,6 +478,28 @@ vendorSchema.methods.isFeaturedNow = function () {
   if (!this.isFeatured) return false;
   if (!this.featuredUntil) return true;
   return new Date() < this.featuredUntil;
+};
+
+// Method to verify business profile
+vendorSchema.methods.verifyBusinessProfile = async function (adminId) {
+  this.verificationStatus = "verified";
+  this.verifiedAt = new Date();
+  this.verifiedBy = adminId;
+  this.rejectionReason = undefined;
+  return this.save();
+};
+
+// Method to reject business profile
+vendorSchema.methods.rejectBusinessProfile = async function (adminId, reason) {
+  this.verificationStatus = "rejected";
+  this.verifiedBy = adminId;
+  this.rejectionReason = reason;
+  return this.save();
+};
+
+// Method to check if business profile is verified
+vendorSchema.methods.isBusinessVerified = function () {
+  return this.verificationStatus === "verified";
 };
 
 // Ensure virtuals are included in JSON

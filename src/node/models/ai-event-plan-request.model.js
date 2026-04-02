@@ -16,14 +16,8 @@ const aiEventPlanRequestSchema = new mongoose.Schema(
     eventType: {
       type: String,
       required: true,
-      enum: [
-        "wedding",
-        "corporate",
-        "birthday",
-        "graduation",
-        "conference",
-        "other",
-      ],
+      trim: true,
+      // No enum restriction - accept any event type
     },
     eventDate: {
       type: Date,
@@ -49,11 +43,11 @@ const aiEventPlanRequestSchema = new mongoose.Schema(
       },
       coordinates: {
         type: [Number], // [longitude, latitude]
-        required: true,
+        required: false, // Make optional since frontend may not have GPS
       },
       address: {
         type: String,
-        required: true,
+        required: false, // Make optional
       },
       city: {
         type: String,
@@ -66,6 +60,10 @@ const aiEventPlanRequestSchema = new mongoose.Schema(
       country: {
         type: String,
         default: "Nigeria",
+      },
+      zipCode: {
+        type: String,
+        required: false,
       },
     },
     eventDescription: {
@@ -119,6 +117,11 @@ const aiEventPlanRequestSchema = new mongoose.Schema(
         default: "NGN",
         enum: ["NGN", "USD", "EUR", "GBP"],
       },
+      budgetFlexibility: {
+        type: String,
+        enum: ["strict", "moderate", "flexible"],
+        default: "moderate",
+      },
     },
     status: {
       type: String,
@@ -146,7 +149,11 @@ const aiEventPlanRequestSchema = new mongoose.Schema(
 );
 
 // Indexes for performance
-aiEventPlanRequestSchema.index({ "location.coordinates": "2dsphere" });
+aiEventPlanRequestSchema.index(
+  { "location.coordinates": "2dsphere" },
+  { sparse: true }
+); // Sparse index for optional coordinates
+aiEventPlanRequestSchema.index({ "location.city": 1, "location.state": 1 }); // Index for city/state queries
 aiEventPlanRequestSchema.index({ createdAt: 1 });
 aiEventPlanRequestSchema.index({ expiresAt: 1 });
 aiEventPlanRequestSchema.index({ userId: 1 });

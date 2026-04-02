@@ -1,0 +1,307 @@
+<!DOCTYPE html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>AI Planner CORS Test</title>
+    <style>
+      body {
+        font-family: Arial, sans-serif;
+        margin: 20px;
+      }
+      .container {
+        max-width: 800px;
+        margin: 0 auto;
+      }
+      .test-section {
+        margin: 20px 0;
+        padding: 15px;
+        border: 1px solid #ddd;
+        border-radius: 5px;
+      }
+      .success {
+        background-color: #d4edda;
+        border-color: #c3e6cb;
+      }
+      .error {
+        background-color: #f8d7da;
+        border-color: #f5c6cb;
+      }
+      button {
+        padding: 10px 15px;
+        margin: 5px;
+        background: #007bff;
+        color: white;
+        border: none;
+        border-radius: 3px;
+        cursor: pointer;
+      }
+      button:hover {
+        background: #0056b3;
+      }
+      pre {
+        background: #f8f9fa;
+        padding: 10px;
+        border-radius: 3px;
+        overflow-x: auto;
+      }
+      .loading {
+        opacity: 0.6;
+      }
+    </style>
+  </head>
+  <body>
+    <div class="container">
+      <h1>AI Planner CORS & Guest Session Test</h1>
+
+      <div class="test-section">
+        <h3>1. Test API Health</h3>
+        <button onclick="testHealth()">Test Health Endpoint</button>
+        <div id="health-result"></div>
+      </div>
+
+      <div class="test-section">
+        <h3>2. Create Guest Session</h3>
+        <button onclick="createGuestSession()">Create Guest Session</button>
+        <div id="guest-session-result"></div>
+      </div>
+
+      <div class="test-section">
+        <h3>3. Generate AI Plan (Guest)</h3>
+        <button onclick="generatePlan()" id="generate-btn" disabled>
+          Generate Plan (Need Guest Session First)
+        </button>
+        <div id="generate-result"></div>
+      </div>
+
+      <div class="test-section">
+        <h3>4. Refine Plan</h3>
+        <button onclick="refinePlan()" id="refine-btn" disabled>
+          Refine Plan (Need Plan First)
+        </button>
+        <div id="refine-result"></div>
+      </div>
+    </div>
+
+    <script>
+      let guestSessionToken = null;
+      let lastResultId = null;
+
+      const API_BASE = "http://localhost:9600/api/v1";
+
+      function showResult(elementId, success, message, data = null) {
+        const element = document.getElementById(elementId);
+        element.className = `test-section ${success ? "success" : "error"}`;
+        element.innerHTML = `
+                <p><strong>${
+                  success ? "✅ Success" : "❌ Error"
+                }:</strong> ${message}</p>
+                ${data ? `<pre>${JSON.stringify(data, null, 2)}</pre>` : ""}
+            `;
+      }
+
+      function setLoading(elementId, loading = true) {
+        const element = document.getElementById(elementId);
+        if (loading) {
+          element.className = "test-section loading";
+          element.innerHTML = "<p>Loading...</p>";
+        }
+      }
+
+      async function testHealth() {
+        setLoading("health-result");
+        try {
+          const response = await fetch(`${API_BASE}/health`, {
+            method: "GET",
+            headers: {
+              "Content-Type": "application/json",
+            },
+          });
+
+          const data = await response.json();
+
+          if (response.ok) {
+            showResult("health-result", true, "API is healthy", data);
+          } else {
+            showResult(
+              "health-result",
+              false,
+              `HTTP ${response.status}: ${data.message || "Unknown error"}`,
+              data
+            );
+          }
+        } catch (error) {
+          showResult("health-result", false, `Network error: ${error.message}`);
+        }
+      }
+
+      async function createGuestSession() {
+        setLoading("guest-session-result");
+        try {
+          const response = await fetch(`${API_BASE}/ai-planner/guest-session`, {
+            method: "POST",
+            headers: {
+              "Content-Type": "application/json",
+            },
+          });
+
+          const data = await response.json();
+
+          if (response.ok && data.status === "success") {
+            guestSessionToken = data.data.guestSessionToken;
+            document.getElementById("generate-btn").disabled = false;
+            showResult(
+              "guest-session-result",
+              true,
+              "Guest session created successfully",
+              {
+                token: guestSessionToken.substring(0, 16) + "...",
+                session: data.data.session,
+              }
+            );
+          } else {
+            showResult(
+              "guest-session-result",
+              false,
+              `Failed to create guest session: ${
+                data.message || "Unknown error"
+              }`,
+              data
+            );
+          }
+        } catch (error) {
+          showResult(
+            "guest-session-result",
+            false,
+            `Network error: ${error.message}`
+          );
+        }
+      }
+
+      async function generatePlan() {
+        if (!guestSessionToken) {
+          showResult(
+            "generate-result",
+            false,
+            "Please create a guest session first"
+          );
+          return;
+        }
+
+        setLoading("generate-result");
+        try {
+          const planData = {
+            eventType: "birthday",
+            guestCount: 30,
+            budget: {
+              amount: 5000,
+              currency: "USD",
+            },
+            location: {
+              city: "Lagos",
+              country: "Nigeria",
+            },
+            eventDate: "2024-12-31T18:00:00Z",
+            theme: "tropical paradise",
+          };
+
+          const response = await fetch(`${API_BASE}/ai-planner/generate`, {
+            method: "POST",
+            headers: {
+              "Content-Type": "application/json",
+              "X-Guest-Session": guestSessionToken,
+            },
+            body: JSON.stringify(planData),
+          });
+
+          const data = await response.json();
+
+          if (response.ok && data.status === "success") {
+            lastResultId = data.data.resultId;
+            document.getElementById("refine-btn").disabled = false;
+            showResult(
+              "generate-result",
+              true,
+              "AI plan generated successfully",
+              {
+                resultId: lastResultId?.substring(0, 16) + "...",
+                eventType: data.data.eventPlan?.eventType,
+                guestSession: data.data.guestSession,
+                canRefine: data.data.canRefine,
+              }
+            );
+          } else {
+            showResult(
+              "generate-result",
+              false,
+              `Failed to generate plan: ${data.message || "Unknown error"}`,
+              data
+            );
+          }
+        } catch (error) {
+          showResult(
+            "generate-result",
+            false,
+            `Network error: ${error.message}`
+          );
+        }
+      }
+
+      async function refinePlan() {
+        if (!lastResultId) {
+          showResult("refine-result", false, "Please generate a plan first");
+          return;
+        }
+
+        setLoading("refine-result");
+        try {
+          const refinementData = {
+            refinementPrompt:
+              "Add more outdoor activities and reduce the budget by 10%",
+            refinementType: "budget_adjustment",
+          };
+
+          const headers = {
+            "Content-Type": "application/json",
+          };
+
+          if (guestSessionToken) {
+            headers["X-Guest-Session"] = guestSessionToken;
+          }
+
+          const response = await fetch(
+            `${API_BASE}/ai-planner/refine/${lastResultId}`,
+            {
+              method: "POST",
+              headers: headers,
+              body: JSON.stringify(refinementData),
+            }
+          );
+
+          const data = await response.json();
+
+          if (response.ok && data.status === "success") {
+            showResult("refine-result", true, "Plan refined successfully", {
+              changes: data.data.changes,
+              reasoning: data.data.reasoning?.substring(0, 200) + "...",
+            });
+          } else {
+            showResult(
+              "refine-result",
+              false,
+              `Failed to refine plan: ${data.message || "Unknown error"}`,
+              data
+            );
+          }
+        } catch (error) {
+          showResult("refine-result", false, `Network error: ${error.message}`);
+        }
+      }
+
+      // Auto-test health on page load
+      window.onload = function () {
+        testHealth();
+      };
+    </script>
+  </body>
+</html>

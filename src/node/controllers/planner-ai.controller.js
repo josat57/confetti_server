@@ -15,7 +15,7 @@ class PlannerAIController {
    */
   async generatePlan(req, res, next) {
     try {
-      const plannerId = req.user.id;
+      const plannerId = req.user._id;
       const {
         eventType,
         date,
@@ -131,7 +131,7 @@ class PlannerAIController {
    */
   async suggestVendors(req, res, next) {
     try {
-      const plannerId = req.user.id;
+      const plannerId = req.user._id;
       const { eventType, location, budget, categories } = req.body;
 
       if (!eventType || !location) {
@@ -219,7 +219,7 @@ class PlannerAIController {
    */
   async optimizeBudget(req, res, next) {
     try {
-      const plannerId = req.user.id;
+      const plannerId = req.user._id;
       const { eventType, currentBudget, guestCount, priorities } = req.body;
 
       if (!eventType || !currentBudget || !guestCount) {
@@ -301,7 +301,7 @@ class PlannerAIController {
    */
   async savePlan(req, res, next) {
     try {
-      const plannerId = req.user.id;
+      const plannerId = req.user._id;
       const { eventPlan, title } = req.body;
 
       if (!eventPlan) {
@@ -353,7 +353,7 @@ class PlannerAIController {
    */
   async getUsageStats(req, res, next) {
     try {
-      const plannerId = req.user.id;
+      const plannerId = req.user._id;
 
       // Get subscription
       const subscription = await Subscription.findOne({

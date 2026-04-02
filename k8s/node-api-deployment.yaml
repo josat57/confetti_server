@@ -1,0 +1,64 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: node-api
+  namespace: confetti
+  labels:
+    app: node-api
+spec:
+  replicas: 2
+  selector:
+    matchLabels:
+      app: node-api
+  template:
+    metadata:
+      labels:
+        app: node-api
+    spec:
+      containers:
+        - name: node-api
+          image: registry.digitalocean.com/confetti-registry/confetti-node-api:latest
+          ports:
+            - containerPort: 9600
+          envFrom:
+            - configMapRef:
+                name: confetti-config
+            - secretRef:
+                name: confetti-secrets
+          livenessProbe:
+            httpGet:
+              path: /health
+              port: 9600
+            initialDelaySeconds: 30
+            periodSeconds: 10
+            timeoutSeconds: 5
+            failureThreshold: 3
+          readinessProbe:
+            httpGet:
+              path: /health
+              port: 9600
+            initialDelaySeconds: 10
+            periodSeconds: 5
+            timeoutSeconds: 3
+            failureThreshold: 3
+          resources:
+            requests:
+              memory: "256Mi"
+              cpu: "250m"
+            limits:
+              memory: "512Mi"
+              cpu: "500m"
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: node-api-service
+  namespace: confetti
+spec:
+  selector:
+    app: node-api
+  ports:
+    - protocol: TCP
+      port: 9600
+      targetPort: 9600
+  type: ClusterIP

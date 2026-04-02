@@ -11,29 +11,75 @@ const vendorBookingSchema = new mongoose.Schema(
     planner: {
       type: mongoose.Schema.Types.ObjectId,
       ref: "User",
-      required: [true, "Planner reference is required"],
+      required: false,
       index: true,
     },
     event: {
       type: mongoose.Schema.Types.ObjectId,
       ref: "Event",
-      required: [true, "Event reference is required"],
+      required: false,
       index: true,
+    },
+    // Vendor-initiated booking fields (when no planner/event)
+    clientName: {
+      type: String,
+    },
+    clientEmail: {
+      type: String,
+    },
+    clientPhone: {
+      type: String,
+    },
+    eventType: {
+      type: String,
+    },
+    eventDate: {
+      type: Date,
+    },
+    eventEndDate: {
+      type: Date,
+    },
+    location: {
+      type: String,
+    },
+    guestCount: {
+      type: Number,
+    },
+    totalAmount: {
+      type: Number,
+    },
+    depositAmount: {
+      type: Number,
+    },
+    currency: {
+      type: String,
+      default: "NGN",
+    },
+    notes: {
+      type: String,
     },
     status: {
       type: String,
-      enum: ["pending", "contacted", "quoted", "booked", "confirmed", "cancelled", "completed"],
+      enum: [
+        "pending",
+        "contacted",
+        "quoted",
+        "booked",
+        "confirmed",
+        "cancelled",
+        "completed",
+      ],
       default: "pending",
       index: true,
     },
     serviceRequirements: {
       type: String,
-      required: [true, "Service requirements are required"],
+      required: false,
     },
     budget: {
       amount: {
         type: Number,
-        required: true,
+        required: false,
         min: 0,
       },
       currency: {
@@ -140,7 +186,11 @@ vendorBookingSchema.index({ planner: 1, status: 1 });
 vendorBookingSchema.index({ event: 1 });
 vendorBookingSchema.index({ createdAt: -1 });
 
-vendorBookingSchema.methods.updateStatus = async function (newStatus, userId, note) {
+vendorBookingSchema.methods.updateStatus = async function (
+  newStatus,
+  userId,
+  note
+) {
   this.statusHistory.push({
     status: this.status,
     changedBy: userId,
@@ -150,7 +200,11 @@ vendorBookingSchema.methods.updateStatus = async function (newStatus, userId, no
   return this.save();
 };
 
-vendorBookingSchema.methods.addCommunication = async function (from, message, type = "message") {
+vendorBookingSchema.methods.addCommunication = async function (
+  from,
+  message,
+  type = "message"
+) {
   this.communication.push({
     from,
     message,

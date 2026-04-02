@@ -1,0 +1,18 @@
+{
+  "permissions": {
+    "allow": [
+      "Read(//Users/Apple/projects/confetti_client/src/services/**)",
+      "Read(//Users/Apple/projects/confetti_client/src/lib/**)",
+      "Read(//Users/Apple/projects/confetti_client/src/api/**)",
+      "Read(//Users/Apple/projects/confetti_client/src/app/sign-in/**)",
+      "Read(//Users/Apple/projects/confetti_client/src/app/payment/callback/**)",
+      "Read(//Users/Apple/projects/confetti_client/src/contexts/**)",
+      "Read(//Users/Apple/projects/confetti_client/src/app/**)",
+      "Read(//Users/Apple/projects/confetti_client/**)"
+    ],
+    "additionalDirectories": [
+      "/Users/Apple/projects/confetti_client/src/api",
+      "/Users/Apple/projects/confetti_client/src/contexts"
+    ]
+  }
+}

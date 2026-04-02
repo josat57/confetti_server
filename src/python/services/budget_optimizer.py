@@ -97,14 +97,19 @@ class BudgetOptimizer:
     
     def _get_min_budget_per_person(self, event_type):
         """Get minimum budget per person for event type"""
-        minimums = {
-            'wedding': 15000,
-            'corporate': 10000,
-            'birthday': 5000,
-            'graduation': 4000,
-            'conference': 12000
-        }
-        return minimums.get(event_type, 5000)
+        try:
+            from config.event_types import get_min_budget_per_person
+            return get_min_budget_per_person(event_type)
+        except:
+            # Fallback to basic minimums
+            minimums = {
+                'wedding': 15000,
+                'corporate': 10000,
+                'birthday': 5000,
+                'graduation': 4000,
+                'conference': 12000
+            }
+            return minimums.get(event_type, 5000)
     
     def _generate_budget_recommendations(self, feasibility_score, budget, guest_count):
         """Generate budget-specific recommendations"""

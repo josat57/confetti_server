@@ -1,0 +1,187 @@
+name: confetti-event-planner
+region: nyc
+
+services:
+  - name: node-api
+    source_dir: /
+    github:
+      repo: your-username/confetti-server
+      branch: main
+      deploy_on_push: true
+    run_command: npm start
+    environment_slug: node-js
+    instance_count: 2
+    instance_size_slug: basic-xxs
+    http_port: 9600
+    routes:
+      - path: /api
+      - path: /health
+    health_check:
+      http_path: /health
+      initial_delay_seconds: 30
+      period_seconds: 10
+      timeout_seconds: 5
+      success_threshold: 1
+      failure_threshold: 3
+    envs:
+      - key: NODE_ENV
+        value: production
+      - key: PORT
+        value: "9600"
+      - key: PYTHON_API_URL
+        value: ${python-api.PRIVATE_URL}
+      - key: FRONTEND_URL
+        value: https://${APP_DOMAIN}
+      - key: MONGODB_URI
+        value: ${confetti-mongodb.DATABASE_URL}
+        type: SECRET
+      - key: POSTGRES_URI
+        value: ${confetti-postgres.DATABASE_URL}
+        type: SECRET
+      - key: REDIS_URL
+        value: ${confetti-redis.DATABASE_URL}
+        type: SECRET
+      - key: JWT_ACCESS_SECRET
+        value: your-super-secure-jwt-access-secret-here-change-this
+        type: SECRET
+      - key: JWT_REFRESH_SECRET
+        value: your-super-secure-jwt-refresh-secret-here-change-this
+        type: SECRET
+      - key: SESSION_SECRET
+        value: your-super-secure-session-secret-here-change-this
+        type: SECRET
+      - key: JWT_ACCESS_EXPIRES_IN
+        value: 15m
+      - key: JWT_REFRESH_EXPIRES_IN
+        value: 7d
+      - key: SMTP_HOST
+        value: smtp.hostinger.com
+      - key: SMTP_PORT
+        value: "465"
+      - key: SMTP_SECURE
+        value: "true"
+      - key: SMTP_USER
+        value: your-production-email@yourdomain.com
+        type: SECRET
+      - key: SMTP_PASSWORD
+        value: your-production-email-password
+        type: SECRET
+      - key: FROM_EMAIL
+        value: your-production-email@yourdomain.com
+      - key: FROM_NAME
+        value: Confetti Team
+      - key: OPENAI_API_KEY
+        value: your-production-openai-api-key
+        type: SECRET
+      - key: FLUTTERWAVE_PUBLIC_KEY
+        value: your-production-flutterwave-public-key
+        type: SECRET
+      - key: FLUTTERWAVE_SECRET_KEY
+        value: your-production-flutterwave-secret-key
+        type: SECRET
+      - key: FLUTTERWAVE_ENCRYPTION_KEY
+        value: your-production-flutterwave-encryption-key
+        type: SECRET
+      - key: FLUTTERWAVE_BASE_URL
+        value: https://api.flutterwave.com/v3
+      - key: FLUTTERWAVE_WEBHOOK_SECRET
+        value: your-production-webhook-secret
+        type: SECRET
+      - key: FLUTTERWAVE_WEBHOOK
+        value: https://${APP_DOMAIN}/api/v1/webhooks/flutterwave
+      - key: PAYSTACK_PUBLIC_KEY
+        value: your-production-paystack-public-key
+        type: SECRET
+      - key: PAYSTACK_SECRET_KEY
+        value: your-production-paystack-secret-key
+        type: SECRET
+      - key: PAYSTACK_WEBHOOK_SECRET
+        value: your-production-paystack-webhook-secret
+        type: SECRET
+      - key: CLOUDINARY_CLOUD_NAME
+        value: your-cloudinary-cloud-name
+      - key: CLOUDINARY_API_KEY
+        value: your-cloudinary-api-key
+        type: SECRET
+      - key: CLOUDINARY_API_SECRET
+        value: your-cloudinary-api-secret
+        type: SECRET
+      - key: BCRYPT_SALT_ROUNDS
+        value: "12"
+
+  - name: python-api
+    source_dir: /src/python
+    github:
+      repo: your-username/confetti-server
+      branch: main
+      deploy_on_push: true
+    run_command: python run.py
+    environment_slug: python
+    instance_count: 1
+    instance_size_slug: basic-xxs
+    http_port: 5600
+    routes:
+      - path: /ai
+    health_check:
+      http_path: /health/ai
+      initial_delay_seconds: 30
+      period_seconds: 10
+      timeout_seconds: 5
+      success_threshold: 1
+      failure_threshold: 3
+    envs:
+      - key: FLASK_ENV
+        value: production
+      - key: MONGODB_URI
+        value: ${confetti-mongodb.DATABASE_URL}
+        type: SECRET
+      - key: REDIS_URI
+        value: ${confetti-redis.DATABASE_URL}
+        type: SECRET
+
+databases:
+  - name: confetti-mongodb
+    engine: MONGODB
+    version: "5"
+    size: db-s-1vcpu-1gb
+    num_nodes: 1
+    production: true
+
+  - name: confetti-postgres
+    engine: PG
+    version: "14"
+    size: db-s-1vcpu-1gb
+    num_nodes: 1
+    production: true
+
+  - name: confetti-redis
+    engine: REDIS
+    version: "7"
+    size: db-s-1vcpu-1gb
+    num_nodes: 1
+    production: true
+
+domains:
+  - domain: your-domain.com
+    type: PRIMARY
+    wildcard: false
+    zone: your-domain.com
+
+alerts:
+  - rule: CPU_UTILIZATION
+    disabled: false
+    value: 80
+    operator: GREATER_THAN
+    window: FIVE_MINUTES
+
+  - rule: MEM_UTILIZATION
+    disabled: false
+    value: 80
+    operator: GREATER_THAN
+    window: FIVE_MINUTES
+
+  - rule: RESTART_COUNT
+    disabled: false
+    value: 5
+    operator: GREATER_THAN
+    window: FIVE_MINUTES

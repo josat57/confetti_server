@@ -15,6 +15,9 @@ const router = express.Router();
 // All payment routes require authentication
 router.use(protect);
 
+// Root route for payment overview
+router.get("/", getPaymentHistory);
+
 router.get("/invoices", getInvoices);
 router.post("/invoices", createInvoice);
 router.get("/invoices/:id", getInvoice);

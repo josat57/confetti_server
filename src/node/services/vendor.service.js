@@ -313,6 +313,75 @@ class VendorService {
   }
 
   /**
+   * Find vendors for a specific event (used by AI planner)
+   * @param {Object} params - Event parameters
+   * @returns {Promise<Array>} Array of vendors
+   */
+  async findVendorsForEvent(params) {
+    try {
+      const { eventType, location, budget } = params;
+
+      logger.info("Finding vendors for event", {
+        eventType,
+        location: location?.city,
+        budget: budget?.amount,
+      });
+
+      // Use existing aggregateVendorData method
+      const vendorData = await this.aggregateVendorData(location, eventType);
+
+      // Filter vendors based on budget if provided
+      let vendors = vendorData.vendors || [];
+
+      if (budget && budget.amount) {
+        // Filter vendors based on category-specific budget allocations
+        vendors = vendors.filter((vendor) => {
+          // If vendor has pricing info, check if it fits budget based on category
+          if (vendor.averagePrice) {
+            // Category-specific budget percentages
+            const categoryBudgetPercentages = {
+              venue: 0.4, // Venues can take up to 40% of budget
+              catering: 0.5, // Catering can take up to 50% of budget
+              photography: 0.2, // Photography up to 20%
+              videography: 0.2, // Videography up to 20%
+              entertainment: 0.2, // Entertainment up to 20%
+              decoration: 0.15, // Decoration up to 15%
+              transportation: 0.1, // Transportation up to 10%
+              security: 0.05, // Security up to 5%
+              audio_visual: 0.15, // AV up to 15%
+              cake_desserts: 0.1, // Cake up to 10%
+              florals: 0.15, // Florals up to 15%
+              rentals: 0.2, // Rentals up to 20%
+              other: 0.3, // Other services up to 30%
+            };
+
+            const maxBudgetForCategory =
+              budget.amount *
+              (categoryBudgetPercentages[vendor.category] || 0.3);
+            return vendor.averagePrice <= maxBudgetForCategory;
+          }
+          return true; // Include vendors without pricing info
+        });
+      }
+
+      logger.info("Vendors found for event", {
+        totalVendors: vendors.length,
+        originalVendorCount: vendorData.vendors?.length || 0,
+        afterBudgetFilter: vendors.length,
+        eventType,
+        location: location?.city,
+        budget: budget?.amount,
+      });
+
+      return vendors;
+    } catch (error) {
+      logger.error("Error finding vendors for event:", error);
+      // Return empty array instead of throwing to prevent AI planner from failing
+      return [];
+    }
+  }
+
+  /**
    * Invalidate cache for a location
    * @param {string} city - City name
    * @param {string} state - State name

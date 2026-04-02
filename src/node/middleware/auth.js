@@ -8,8 +8,16 @@ import speakeasy from "speakeasy";
 
 export const protect = async (req, res, next) => {
   try {
-    // Get token from cookie
-    const token = req.cookies.accessToken;
+    // Get token from cookie or Authorization header
+    let token = req.cookies.accessToken;
+
+    // If no cookie, check Authorization header
+    if (!token && req.headers.authorization) {
+      const authHeader = req.headers.authorization;
+      if (authHeader.startsWith("Bearer ")) {
+        token = authHeader.substring(7);
+      }
+    }
 
     if (!token) {
       return next(new AppError("Not authenticated. Please log in.", 401));
@@ -17,10 +25,31 @@ export const protect = async (req, res, next) => {
 
     // Verify token
     const decoded = verifyAccessToken(token);
+    console.log("JWT decoded payload:", JSON.stringify(decoded, null, 2));
 
     // Check if user still exists
     const user = await User.findById(decoded.id);
     if (!user) {
+      console.log(
+        `Authentication failed: User not found for ID: ${decoded.id}`
+      );
+      console.log("Decoded token contents:", decoded);
+
+      // Check if this might be an admin token
+      if (decoded.type === "admin") {
+        console.log(
+          "This appears to be an admin token, checking Admin model..."
+        );
+        const admin = await Admin.findById(decoded.id);
+        if (admin) {
+          console.log("Found admin user, attaching as req.admin");
+          req.admin = admin;
+          req.user = admin; // Also attach as user for compatibility
+          await populateUserProfiles(req);
+          return next();
+        }
+      }
+
       return next(new AppError("User no longer exists.", 401));
     }
 
@@ -41,6 +70,10 @@ export const protect = async (req, res, next) => {
 
     // Grant access to protected route
     req.user = user;
+
+    // Populate vendor and planner profiles if needed
+    await populateUserProfiles(req);
+
     next();
   } catch (error) {
     next(new AppError("Not authenticated. Please log in.", 401));
@@ -68,8 +101,16 @@ export const verifyEmail = async (req, res, next) => {
 // Optional authentication - doesn't fail if no token
 export const optionalAuth = async (req, res, next) => {
   try {
-    // Get token from cookie
-    const token = req.cookies.accessToken;
+    // Get token from cookie or Authorization header
+    let token = req.cookies.accessToken;
+
+    // If no cookie, check Authorization header
+    if (!token && req.headers.authorization) {
+      const authHeader = req.headers.authorization;
+      if (authHeader.startsWith("Bearer ")) {
+        token = authHeader.substring(7);
+      }
+    }
 
     if (!token) {
       // No token, but that's okay - continue without user
@@ -84,12 +125,53 @@ export const optionalAuth = async (req, res, next) => {
     if (user && user.isActive) {
       // User exists and is active, attach to request
       req.user = user;
+
+      // Populate vendor and planner profiles if needed
+      await populateUserProfiles(req);
     }
 
     next();
   } catch (error) {
     // Token verification failed, but that's okay - continue without user
     next();
+  }
+};
+
+// Helper function to populate vendor and planner profiles
+const populateUserProfiles = async (req) => {
+  if (!req.user) return;
+
+  try {
+    // Import models dynamically to avoid circular dependencies
+    const { default: Vendor } = await import("../models/vendor.model.js");
+    const { default: PlannerBusinessProfile } = await import(
+      "../models/planner-business-profile.model.js"
+    );
+
+    // Check if user is a vendor
+    if (req.user.role === "vendor") {
+      const vendor = await Vendor.findOne({ owner: req.user._id })
+        .populate("subscription", "planName planType status")
+        .lean();
+      if (vendor) {
+        req.vendor = vendor;
+      }
+    }
+
+    // Check if user is a planner
+    if (req.user.role === "event-planner") {
+      const planner = await PlannerBusinessProfile.findOne({
+        owner: req.user._id,
+      })
+        .populate("subscription", "planName planType status")
+        .lean();
+      if (planner) {
+        req.planner = planner;
+      }
+    }
+  } catch (error) {
+    // Don't fail if profile lookup fails
+    console.log("Profile lookup failed:", error.message);
   }
 };
 
@@ -145,8 +227,16 @@ export const handleTokenRefresh = async (req, res, next) => {
 
 const authenticateAdmin = async (req, res, next) => {
   try {
-    // Get token from HTTP-only cookie
-    const token = req.cookies.accessToken;
+    // Get token from HTTP-only cookie or Authorization header
+    let token = req.cookies.accessToken;
+
+    // If no cookie, check Authorization header
+    if (!token && req.headers.authorization) {
+      const authHeader = req.headers.authorization;
+      if (authHeader.startsWith("Bearer ")) {
+        token = authHeader.substring(7);
+      }
+    }
 
     if (!token) {
       throw createError(401, "Authentication required");

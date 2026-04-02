@@ -47,36 +47,45 @@ export const searchVendors = async (req, res) => {
     let sortOptions = {};
     switch (sortBy) {
       case "rating":
-        sortOptions = { rating: -1, reviewCount: -1 };
+        // Prioritize verified vendors, then by rating
+        sortOptions = { verificationStatus: -1, rating: -1, reviewCount: -1 };
         break;
       case "price_low":
-        sortOptions = { "priceRange.min": 1 };
+        sortOptions = { verificationStatus: -1, "priceRange.min": 1 };
         break;
       case "price_high":
-        sortOptions = { "priceRange.min": -1 };
+        sortOptions = { verificationStatus: -1, "priceRange.min": -1 };
         break;
       case "newest":
-        sortOptions = { createdAt: -1 };
+        sortOptions = { verificationStatus: -1, createdAt: -1 };
         break;
       default:
-        sortOptions = { rating: -1 };
+        sortOptions = { verificationStatus: -1, rating: -1 };
     }
 
     const skip = (page - 1) * limit;
 
     const vendors = await Vendor.find(query)
       .select(
-        "name businessName category rating reviewCount priceRange address location services availabilityStatus"
+        "name businessName category rating reviewCount priceRange address location services availabilityStatus logo verificationStatus registrationNumber yearEstablished"
       )
       .skip(skip)
       .limit(parseInt(limit))
       .sort(sortOptions);
 
+    // Add verification badge and format response
+    const formattedVendors = vendors.map((vendor) => {
+      const vendorData = vendor.toObject();
+      vendorData.isBusinessVerified = vendor.verificationStatus === "verified";
+      vendorData.hasVerifiedBadge = vendor.verificationStatus === "verified";
+      return vendorData;
+    });
+
     const total = await Vendor.countDocuments(query);
 
     res.status(200).json({
       success: true,
-      data: vendors,
+      data: formattedVendors,
       pagination: {
         page: parseInt(page),
         limit: parseInt(limit),
@@ -214,9 +223,28 @@ export const getFavoriteVendors = async (req, res) => {
 
 export const createBooking = async (req, res) => {
   try {
-    const { eventId, serviceRequirements, budget, specialRequirements } =
-      req.body;
-    const vendorId = req.params.id;
+    // Handle both vendor-initiated and planner-initiated bookings
+    const vendorId = req.params.id || req.user._id; // Use logged-in vendor if no ID in params
+
+    const {
+      eventId,
+      serviceRequirements,
+      budget,
+      specialRequirements,
+      // Vendor-initiated booking fields
+      clientName,
+      clientEmail,
+      clientPhone,
+      eventType,
+      eventDate,
+      eventEndDate,
+      location,
+      guestCount,
+      totalAmount,
+      depositAmount,
+      currency,
+      eventNotes,
+    } = req.body;
 
     const vendor = await Vendor.findOne({
       _id: vendorId,
@@ -245,15 +273,44 @@ export const createBooking = async (req, res) => {
       });
     }
 
-    const booking = await VendorBooking.create({
+    // Create booking data
+    const bookingData = {
       vendor: vendorId,
-      planner: req.user._id,
-      event: eventId,
-      serviceRequirements,
-      budget,
-      specialRequirements,
       status: "pending",
-    });
+    };
+
+    // Planner-initiated booking
+    if (eventId) {
+      bookingData.planner = req.user._id;
+      bookingData.event = eventId;
+      bookingData.serviceRequirements = serviceRequirements;
+      bookingData.budget = budget;
+      bookingData.specialRequirements = specialRequirements;
+    }
+    // Vendor-initiated booking
+    else if (clientName) {
+      bookingData.clientName = clientName;
+      bookingData.clientEmail = clientEmail;
+      bookingData.clientPhone = clientPhone;
+      bookingData.eventType = eventType;
+      bookingData.eventDate = eventDate ? new Date(eventDate) : undefined;
+      bookingData.eventEndDate = eventEndDate
+        ? new Date(eventEndDate)
+        : undefined;
+      bookingData.location = location;
+      bookingData.guestCount = guestCount;
+      bookingData.totalAmount = totalAmount;
+      bookingData.depositAmount = depositAmount;
+      bookingData.currency = currency || "NGN";
+      bookingData.notes = eventNotes;
+    } else {
+      return res.status(400).json({
+        success: false,
+        message: "Either eventId or client details are required",
+      });
+    }
+
+    const booking = await VendorBooking.create(bookingData);
 
     await booking.populate([
       { path: "vendor", select: "name businessName category" },
@@ -262,13 +319,91 @@ export const createBooking = async (req, res) => {
 
     res.status(201).json({
       success: true,
-      message: "Booking request created successfully",
+      message: "Booking created successfully",
       data: booking,
     });
   } catch (error) {
     res.status(500).json({
       success: false,
       message: "Error creating booking",
+      error: error.message,
+    });
+  }
+};
+
+export const getBookingStats = async (req, res) => {
+  try {
+    const query = { planner: req.user._id };
+
+    // Get total bookings count
+    const total = await VendorBooking.countDocuments(query);
+
+    // Get bookings by status
+    const statusBreakdown = await VendorBooking.aggregate([
+      { $match: query },
+      {
+        $group: {
+          _id: "$status",
+          count: { $sum: 1 },
+        },
+      },
+    ]);
+
+    // Get bookings by category
+    const categoryBreakdown = await VendorBooking.aggregate([
+      { $match: query },
+      {
+        $lookup: {
+          from: "vendors",
+          localField: "vendor",
+          foreignField: "_id",
+          as: "vendorInfo",
+        },
+      },
+      { $unwind: "$vendorInfo" },
+      {
+        $group: {
+          _id: "$vendorInfo.category",
+          count: { $sum: 1 },
+        },
+      },
+    ]);
+
+    // Calculate total spent
+    const totalSpent = await VendorBooking.aggregate([
+      { $match: { ...query, status: { $in: ["confirmed", "completed"] } } },
+      {
+        $group: {
+          _id: null,
+          total: { $sum: "$totalCost" },
+        },
+      },
+    ]);
+
+    // Format status breakdown
+    const stats = {
+      total,
+      pending: statusBreakdown.find((s) => s._id === "pending")?.count || 0,
+      confirmed: statusBreakdown.find((s) => s._id === "confirmed")?.count || 0,
+      completed: statusBreakdown.find((s) => s._id === "completed")?.count || 0,
+      cancelled: statusBreakdown.find((s) => s._id === "cancelled")?.count || 0,
+    };
+
+    res.status(200).json({
+      success: true,
+      data: {
+        stats,
+        byCategory: categoryBreakdown.map((item) => ({
+          category: item._id,
+          count: item.count,
+        })),
+        totalSpent: totalSpent[0]?.total || 0,
+      },
+    });
+  } catch (error) {
+    res.status(500).json({
+      success: false,
+      message: "Error fetching booking stats",
       error: error.message,
     });
   }
@@ -424,6 +559,130 @@ export const cancelBooking = async (req, res) => {
     res.status(500).json({
       success: false,
       message: "Error cancelling booking",
+      error: error.message,
+    });
+  }
+};
+
+export const getVendorCategories = async (req, res) => {
+  try {
+    // Get all unique vendor categories from approved vendors
+    const categories = await Vendor.aggregate([
+      {
+        $match: {
+          status: "approved",
+          isActive: true,
+          category: { $exists: true, $ne: null },
+        },
+      },
+      {
+        $group: {
+          _id: "$category",
+          count: { $sum: 1 },
+          avgRating: { $avg: "$rating" },
+          minPrice: { $min: "$priceRange.min" },
+          maxPrice: { $max: "$priceRange.max" },
+        },
+      },
+      {
+        $project: {
+          _id: 0,
+          category: "$_id",
+          vendorCount: "$count",
+          averageRating: { $round: ["$avgRating", 1] },
+          priceRange: {
+            min: "$minPrice",
+            max: "$maxPrice",
+          },
+        },
+      },
+      {
+        $sort: { vendorCount: -1 },
+      },
+    ]);
+
+    // Add category metadata
+    const categoryMetadata = {
+      catering: {
+        name: "Catering",
+        description: "Food and beverage services",
+        icon: "🍽️",
+      },
+      photography: {
+        name: "Photography",
+        description: "Professional photography services",
+        icon: "📸",
+      },
+      videography: {
+        name: "Videography",
+        description: "Video recording and editing services",
+        icon: "🎥",
+      },
+      decoration: {
+        name: "Decoration",
+        description: "Event decoration and styling",
+        icon: "🎨",
+      },
+      music: {
+        name: "Music & Entertainment",
+        description: "DJs, bands, and entertainment services",
+        icon: "🎵",
+      },
+      venue: {
+        name: "Venues",
+        description: "Event venues and locations",
+        icon: "🏛️",
+      },
+      transportation: {
+        name: "Transportation",
+        description: "Transportation and logistics",
+        icon: "🚗",
+      },
+      flowers: {
+        name: "Flowers",
+        description: "Floral arrangements and bouquets",
+        icon: "🌸",
+      },
+      makeup: {
+        name: "Makeup & Beauty",
+        description: "Beauty and styling services",
+        icon: "💄",
+      },
+      security: {
+        name: "Security",
+        description: "Event security services",
+        icon: "🛡️",
+      },
+      other: {
+        name: "Other Services",
+        description: "Miscellaneous event services",
+        icon: "⭐",
+      },
+    };
+
+    // Enhance categories with metadata
+    const enhancedCategories = categories.map((cat) => ({
+      ...cat,
+      ...(categoryMetadata[cat.category] || {
+        name: cat.category.charAt(0).toUpperCase() + cat.category.slice(1),
+        description: `${cat.category} services`,
+        icon: "⭐",
+      }),
+    }));
+
+    res.status(200).json({
+      success: true,
+      message: "Vendor categories retrieved successfully",
+      data: {
+        categories: enhancedCategories,
+        totalCategories: enhancedCategories.length,
+        totalVendors: categories.reduce((sum, cat) => sum + cat.vendorCount, 0),
+      },
+    });
+  } catch (error) {
+    res.status(500).json({
+      success: false,
+      message: "Error fetching vendor categories",
       error: error.message,
     });
   }

@@ -4,6 +4,55 @@ import Booking from "../models/booking.model.js";
 import { AppError } from "../utils/AppError.js";
 
 /**
+ * Get new client form metadata
+ * GET /api/v1/vendors/clients/new
+ */
+export const getNewClientForm = async (req, res, next) => {
+  try {
+    // Return metadata for creating a new client
+    res.status(200).json({
+      status: "success",
+      message: "Use POST /api/v1/vendors/clients to create a new client",
+      data: {
+        endpoint: "/api/v1/vendors/clients",
+        method: "POST",
+        requiredFields: ["name", "email"],
+        optionalFields: [
+          "phone",
+          "company",
+          "address",
+          "notes",
+          "tags",
+          "segment",
+          "source",
+        ],
+        availableSegments: ["vip", "regular", "potential"],
+        availableSources: [
+          "website",
+          "referral",
+          "social_media",
+          "event",
+          "other",
+        ],
+        examplePayload: {
+          name: "John Doe",
+          email: "john@example.com",
+          phone: "+1234567890",
+          company: "Acme Corp",
+          segment: "regular",
+          source: "website",
+          tags: ["wedding", "corporate"],
+          notes: "Interested in catering services", // Can be a string, will be converted to array
+        },
+        note: "The 'notes' field can be sent as a string and will be automatically converted to the proper format",
+      },
+    });
+  } catch (error) {
+    next(error);
+  }
+};
+
+/**
  * Get all clients
  * GET /api/v1/vendors/clients
  */
@@ -22,17 +71,21 @@ export const getClients = async (req, res, next) => {
       sort = "-createdAt",
     } = req.query;
 
-    let query = { vendor: vendor._id };
+    // Query by planner (which is set to vendor owner's user ID)
+    let query = { planner: req.user._id };
 
     if (status) query.status = status;
     if (segment) query.segment = segment;
     if (tags) query.tags = { $in: Array.isArray(tags) ? tags : [tags] };
 
-    // Search
+    // Search by name, email, company, or phone
     if (search) {
-      const searchResults = await Client.searchClients(vendor._id, search);
-      const clientIds = searchResults.map((c) => c._id);
-      query._id = { $in: clientIds };
+      query.$or = [
+        { name: { $regex: search, $options: "i" } },
+        { email: { $regex: search, $options: "i" } },
+        { company: { $regex: search, $options: "i" } },
+        { phone: { $regex: search, $options: "i" } },
+      ];
     }
 
     const skip = (page - 1) * limit;
@@ -70,9 +123,10 @@ export const getClient = async (req, res, next) => {
     const vendor = await Vendor.findOne({ owner: req.user._id });
     if (!vendor) return next(new AppError("Vendor profile not found", 404));
 
+    // Query by planner (which is set to vendor owner's user ID)
     const client = await Client.findOne({
       _id: req.params.id,
-      vendor: vendor._id,
+      planner: req.user._id,
     }).populate("notes.createdBy", "name email");
 
     if (!client) return next(new AppError("Client not found", 404));
@@ -106,10 +160,24 @@ export const createClient = async (req, res, next) => {
     const vendor = await Vendor.findOne({ owner: req.user._id });
     if (!vendor) return next(new AppError("Vendor profile not found", 404));
 
+    // Prepare client data
     const clientData = {
       ...req.body,
       vendor: vendor._id,
+      // Set planner to the vendor owner (required by model)
+      planner: req.user._id,
     };
+
+    // Handle notes field - convert string to array format if needed
+    if (clientData.notes && typeof clientData.notes === "string") {
+      clientData.notes = [
+        {
+          content: clientData.notes,
+          createdBy: req.user._id,
+          createdAt: new Date(),
+        },
+      ];
+    }
 
     const client = await Client.create(clientData);
 
@@ -133,7 +201,7 @@ export const updateClient = async (req, res, next) => {
     if (!vendor) return next(new AppError("Vendor profile not found", 404));
 
     const client = await Client.findOneAndUpdate(
-      { _id: req.params.id, vendor: vendor._id },
+      { _id: req.params.id, planner: req.user._id },
       req.body,
       { new: true, runValidators: true }
     );
@@ -164,12 +232,19 @@ export const addNote = async (req, res, next) => {
 
     const client = await Client.findOne({
       _id: req.params.id,
-      vendor: vendor._id,
+      planner: req.user._id,
     });
 
     if (!client) return next(new AppError("Client not found", 404));
 
-    await client.addNote(text, req.user._id);
+    // Add note to the notes array
+    client.notes.push({
+      content: text,
+      createdBy: req.user._id,
+      createdAt: new Date(),
+    });
+
+    await client.save();
     await client.populate("notes.createdBy", "name email");
 
     res.status(200).json({
@@ -198,7 +273,7 @@ export const updateTags = async (req, res, next) => {
 
     const client = await Client.findOne({
       _id: req.params.id,
-      vendor: vendor._id,
+      planner: req.user._id,
     });
 
     if (!client) return next(new AppError("Client not found", 404));
@@ -227,7 +302,7 @@ export const getClientHistory = async (req, res, next) => {
 
     const client = await Client.findOne({
       _id: req.params.id,
-      vendor: vendor._id,
+      planner: req.user._id,
     });
 
     if (!client) return next(new AppError("Client not found", 404));
@@ -284,6 +359,38 @@ export const getClientHistory = async (req, res, next) => {
 };
 
 /**
+ * Update client follow-up date
+ * PATCH /api/v1/vendors/clients/:id/follow-up
+ */
+export const updateFollowUp = async (req, res, next) => {
+  try {
+    const vendor = await Vendor.findOne({ owner: req.user._id });
+    if (!vendor) return next(new AppError("Vendor profile not found", 404));
+
+    const { nextFollowUp } = req.body;
+    if (!nextFollowUp) {
+      return next(new AppError("Next follow-up date is required", 400));
+    }
+
+    const client = await Client.findOneAndUpdate(
+      { _id: req.params.id, planner: req.user._id },
+      { nextFollowUp: new Date(nextFollowUp) },
+      { new: true, runValidators: true }
+    );
+
+    if (!client) return next(new AppError("Client not found", 404));
+
+    res.status(200).json({
+      status: "success",
+      message: "Follow-up date updated successfully",
+      data: { client },
+    });
+  } catch (error) {
+    next(error);
+  }
+};
+
+/**
  * Delete client
  * DELETE /api/v1/vendors/clients/:id
  */
@@ -294,7 +401,7 @@ export const deleteClient = async (req, res, next) => {
 
     const client = await Client.findOneAndDelete({
       _id: req.params.id,
-      vendor: vendor._id,
+      planner: req.user._id,
     });
 
     if (!client) return next(new AppError("Client not found", 404));

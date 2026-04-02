@@ -1,0 +1,99 @@
+#! node-api-deployment.yaml
+# Generated code, do not edit
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+    name: node-api
+    namespace: confetti-server
+    labels:
+        com.docker.compose.project: confetti_server
+        com.docker.compose.service: node-api
+spec:
+    replicas: 1
+    selector:
+        matchLabels:
+            com.docker.compose.project: confetti_server
+            com.docker.compose.service: node-api
+    strategy:
+        type: Recreate
+    template:
+        metadata:
+            labels:
+                com.docker.compose.project: confetti_server
+                com.docker.compose.service: node-api
+                com.docker.compose.network.confetti-network: "true"
+        spec:
+            containers:
+                - name: confetti-node-api
+                  image: confetti_server-node-api
+                  imagePullPolicy: IfNotPresent
+                  env:
+                    - name: FLUTTERWAVE_BASE_URL
+                      value: "https://api.flutterwave.com/v3"
+                    - name: FLUTTERWAVE_ENCRYPTION_KEY
+                      value: "FFFLWSECK_TESTae9f5f14707d"
+                    - name: FLUTTERWAVE_PUBLIC_KEY
+                      value: "FLWPUBK_TEST-2dd0b38eb0a986ba3a9d30c0651be09b-X"
+                    - name: FLUTTERWAVE_SECRET_KEY
+                      value: "FLWSECK_TEST-e2b0311ff7778eaf1dd37550a6a800b6-X"
+                    - name: FLUTTERWAVE_WEBHOOK_SECRET
+                      value: "confetti_flw_webhook_2025_secure_key_789xyz"
+                    - name: FROM_EMAIL
+                      value: "hello@tripmatch.io"
+                    - name: FROM_NAME
+                      value: "Confetti"
+                    - name: FRONTEND_URL
+                      value: "http://localhost:3000"
+                    - name: JWT_ACCESS_EXPIRES_IN
+                      value: "15m"
+                    - name: JWT_ACCESS_SECRET
+                      value: "2fa88006305c434c8457012bb6ddfc27a6118475e8c07616c69067011583de7c0fe560d5ba565256682b446bc85705b9c62bfe5b6e87f336d86d4816942fff2b"
+                    - name: JWT_REFRESH_EXPIRES_IN
+                      value: "7d"
+                    - name: JWT_REFRESH_SECRET
+                      value: "7c89a8dfc691825da63c2b90a352af373894905f6fd03a45fa45239f9ff81a8c7d9143069f44f6e6d8299b1b948f1d36f9f0424571c5b9ff577dc8978f2c7f5c"
+                    - name: MONGODB_URI
+                      value: "mongodb://mongodb:27017/confetti"
+                    - name: NODE_ENV
+                      value: "development"
+                    - name: PAYSTACK_PUBLIC_KEY
+                      value: "pk_test_ab0b48aa0c06bbe9188cfc107557d2eee65e3224"
+                    - name: PAYSTACK_SECRET_KEY
+                      value: "sk_test_964477162e79fba8e13fa380993757b1b4ce6661"
+                    - name: PORT
+                      value: "9600"
+                    - name: POSTGRES_URI
+                      value: "postgres://postgres:postgres@postgres:5432/confetti"
+                    - name: PYTHON_API_URL
+                      value: "http://python-api:5600"
+                    - name: REDIS_HOST
+                      value: "redis"
+                    - name: REDIS_PORT
+                      value: "6379"
+                    - name: REDIS_URL
+                      value: "redis://redis:6379"
+                    - name: SMTP_HOST
+                      value: "smtp.hostinger.com"
+                    - name: SMTP_PASSWORD
+                      value: "Ginger@1232025*"
+                    - name: SMTP_PORT
+                      value: "465"
+                    - name: SMTP_SECURE
+                      value: "true"
+                    - name: SMTP_USER
+                      value: "hello@tripmatch.io"
+                  ports:
+                    - name: node-api-9600
+                      containerPort: 9600
+                  volumeMounts:
+                    - name: usr-src-app-src-node
+                      mountPath: /usr/src/app/src/node
+                    - name: usr-src-app-node-modules
+                      mountPath: /usr/src/app/node_modules
+            volumes:
+                - name: usr-src-app-src-node
+                  hostPath:
+                    path: /Users/Apple/projects/confetti_server/src/node
+                - name: usr-src-app-node-modules
+                  persistentVolumeClaim:
+                    claimName: node-api-node-modules

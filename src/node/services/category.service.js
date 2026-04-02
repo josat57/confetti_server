@@ -52,7 +52,7 @@ class CategoryService {
 
       // Format for teaser
       const formattedCategories = uniqueCategories.map((cat) => {
-        const info = getCategoryInfo(cat.category);
+        const info = this.getCategoryInfo(cat.category);
         const allocation = budgetAllocation.categories.find(
           (a) => a.category === cat.category
         );
@@ -243,12 +243,103 @@ class CategoryService {
   }
 
   /**
+   * Get category information
+   * @param {string} category - Category name
+   * @returns {Object} Category info with displayName and description
+   */
+  getCategoryInfo(category) {
+    const categoryData = {
+      venue: {
+        displayName: "Venue",
+        description: "Event space rental and setup",
+      },
+      catering: {
+        displayName: "Catering",
+        description: "Food and beverage services",
+      },
+      photography: {
+        displayName: "Photography",
+        description: "Professional event photography",
+      },
+      videography: {
+        displayName: "Videography",
+        description: "Professional video recording and editing",
+      },
+      decoration: {
+        displayName: "Decoration",
+        description: "Event decoration and styling",
+      },
+      entertainment: {
+        displayName: "Entertainment",
+        description: "Music, DJ, or live entertainment",
+      },
+      audio_visual: {
+        displayName: "Audio/Visual",
+        description: "Sound systems and visual equipment",
+      },
+      event_planning: {
+        displayName: "Event Planning",
+        description: "Professional event coordination",
+      },
+      transportation: {
+        displayName: "Transportation",
+        description: "Guest transportation services",
+      },
+      florals: {
+        displayName: "Florals",
+        description: "Floral arrangements and bouquets",
+      },
+      security: {
+        displayName: "Security",
+        description: "Event security services",
+      },
+      lighting: {
+        displayName: "Lighting",
+        description: "Professional lighting setup",
+      },
+      cake_desserts: {
+        displayName: "Cake & Desserts",
+        description: "Wedding cake and dessert services",
+      },
+      valet_parking: {
+        displayName: "Valet Parking",
+        description: "Valet parking services",
+      },
+      invitations: {
+        displayName: "Invitations",
+        description: "Event invitations and stationery",
+      },
+      favors_gifts: {
+        displayName: "Favors & Gifts",
+        description: "Guest favors and gifts",
+      },
+      bar_services: {
+        displayName: "Bar Services",
+        description: "Professional bar and beverage service",
+      },
+      rentals: {
+        displayName: "Rentals",
+        description: "Equipment and furniture rentals",
+      },
+    };
+
+    return (
+      categoryData[category] || {
+        displayName: category
+          ? category.charAt(0).toUpperCase() + category.slice(1)
+          : "Other",
+        description: "Additional event services",
+      }
+    );
+  }
+
+  /**
    * Get category display name
    * @param {string} category - Category name
    * @returns {string} Display name
    */
   getCategoryDisplayName(category) {
-    return getCategoryInfo(category).displayName;
+    return this.getCategoryInfo(category).displayName;
   }
 
   /**
@@ -258,7 +349,7 @@ class CategoryService {
    * @returns {string} Description
    */
   getCategoryDescription(category, eventType) {
-    const info = getCategoryInfo(category);
+    const info = this.getCategoryInfo(category);
     return info.description;
   }
 

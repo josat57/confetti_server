@@ -24,7 +24,17 @@ export const getVendor = async (req, res, next) => {
   try {
     const vendor = await Vendor.findById(req.params.id);
     if (!vendor) return next(new AppError("Vendor not found", 404));
-    res.status(200).json({ status: "success", vendor });
+
+    // Add verification badge flag
+    const vendorData = vendor.toObject();
+    vendorData.isBusinessVerified = vendor.verificationStatus === "verified";
+    vendorData.hasVerifiedBadge = vendor.verificationStatus === "verified";
+
+    // Exclude sensitive fields from public response
+    delete vendorData.taxId;
+    delete vendorData.rejectionReason;
+
+    res.status(200).json({ status: "success", vendor: vendorData });
   } catch (error) {
     next(error);
   }
@@ -693,8 +703,16 @@ export const getProfileStats = async (req, res, next) => {
       return next(new AppError("Vendor profile not found", 404));
     }
 
-    // Update rating before returning stats
-    await vendor.updateRating();
+    // Try to update rating before returning stats (non-critical)
+    try {
+      await vendor.updateRating();
+    } catch (ratingError) {
+      // Log but don't fail the request if rating update fails
+      logger.warn("Failed to update vendor rating:", {
+        vendorId: vendor._id,
+        error: ratingError.message,
+      });
+    }
 
     res.status(200).json({
       status: "success",
@@ -707,6 +725,315 @@ export const getProfileStats = async (req, res, next) => {
     next(error);
   }
 };
+
+/**
+ * Get dashboard summary
+ * GET /api/v1/vendors/dashboard/summary
+ */
+export const getDashboardSummary = async (req, res, next) => {
+  try {
+    const vendor = await Vendor.findOne({ owner: req.user._id });
+
+    if (!vendor) {
+      return next(new AppError("Vendor profile not found", 404));
+    }
+
+    // Import models needed for aggregation
+    const Lead = (await import("../models/lead.model.js")).default;
+    const Payment = (await import("../models/payment.model.js")).default;
+
+    // Try to update rating before calculating stats (non-critical)
+    try {
+      await vendor.updateRating();
+    } catch (ratingError) {
+      // Log but don't fail the request if rating update fails
+      logger.warn("Failed to update vendor rating:", {
+        vendorId: vendor._id,
+        error: ratingError.message,
+      });
+    }
+
+    // Get date range for filtering (default: last 30 days)
+    const { startDate, endDate } = req.query;
+    const dateFilter = {};
+
+    if (startDate) {
+      dateFilter.$gte = new Date(startDate);
+    } else {
+      // Default to last 30 days
+      dateFilter.$gte = new Date(Date.now() - 30 * 24 * 60 * 60 * 1000);
+    }
+
+    if (endDate) {
+      dateFilter.$lte = new Date(endDate);
+    }
+
+    // 1. Profile Stats (views, rating, etc.)
+    const profileStats = {
+      profileViews: vendor.stats.profileViews,
+      totalBookings: vendor.stats.totalBookings,
+      totalReviews: vendor.stats.totalReviews,
+      averageRating: vendor.stats.averageRating,
+      responseTime: vendor.stats.responseTime,
+      responseRate: vendor.stats.responseRate,
+      totalRevenue: vendor.stats.totalRevenue,
+      isFeatured: vendor.isFeaturedNow(),
+    };
+
+    // 2. Lead/Inquiry Statistics
+    const leadQuery = { vendor: vendor._id };
+    if (Object.keys(dateFilter).length > 0) {
+      leadQuery.createdAt = dateFilter;
+    }
+
+    const [totalLeads, leadsByStatus, recentLeads] = await Promise.all([
+      Lead.countDocuments({ vendor: vendor._id }),
+      Lead.aggregate([
+        { $match: { vendor: vendor._id } },
+        {
+          $group: {
+            _id: "$status",
+            count: { $sum: 1 },
+          },
+        },
+      ]),
+      Lead.find(leadQuery)
+        .sort({ createdAt: -1 })
+        .limit(5)
+        .select("customer eventDetails status priority createdAt")
+        .lean(),
+    ]);
+
+    // Calculate conversion rate
+    const wonLeads = leadsByStatus.find((s) => s._id === "won")?.count || 0;
+    const conversionRate = totalLeads > 0 ? (wonLeads / totalLeads) * 100 : 0;
+
+    // Format leads by status
+    const leadsBreakdown = {
+      total: totalLeads,
+      new: leadsByStatus.find((s) => s._id === "new")?.count || 0,
+      contacted: leadsByStatus.find((s) => s._id === "contacted")?.count || 0,
+      qualified: leadsByStatus.find((s) => s._id === "qualified")?.count || 0,
+      proposal_sent:
+        leadsByStatus.find((s) => s._id === "proposal_sent")?.count || 0,
+      negotiating:
+        leadsByStatus.find((s) => s._id === "negotiating")?.count || 0,
+      won: wonLeads,
+      lost: leadsByStatus.find((s) => s._id === "lost")?.count || 0,
+      conversionRate: Math.round(conversionRate * 100) / 100,
+    };
+
+    // Get leads needing follow-up
+    const needingFollowUp = await Lead.countDocuments({
+      vendor: vendor._id,
+      status: {
+        $in: ["contacted", "qualified", "proposal_sent", "negotiating"],
+      },
+      followUpDate: { $lte: new Date() },
+    });
+
+    // 3. Revenue Statistics (for the filtered period)
+    const paymentQuery = {
+      vendor: vendor._id,
+      status: "completed",
+    };
+
+    if (Object.keys(dateFilter).length > 0) {
+      paymentQuery.createdAt = dateFilter;
+    }
+
+    const [payments, revenueByMonth] = await Promise.all([
+      Payment.find(paymentQuery).lean(),
+      Payment.aggregate([
+        { $match: paymentQuery },
+        {
+          $group: {
+            _id: {
+              year: { $year: "$createdAt" },
+              month: { $month: "$createdAt" },
+            },
+            revenue: { $sum: "$amount" },
+            count: { $sum: 1 },
+          },
+        },
+        { $sort: { "_id.year": 1, "_id.month": 1 } },
+        { $limit: 12 }, // Last 12 months
+      ]),
+    ]);
+
+    const periodRevenue = payments.reduce((sum, p) => sum + p.amount, 0);
+    const periodBookings = payments.length;
+    const averageBookingValue =
+      periodBookings > 0 ? periodRevenue / periodBookings : 0;
+
+    // Format revenue trends
+    const revenueTrends = revenueByMonth.map((item) => ({
+      period: `${item._id.year}-${String(item._id.month).padStart(2, "0")}`,
+      revenue: item.revenue,
+      bookings: item.count,
+    }));
+
+    // 4. Recent Activity (combine recent leads and payments)
+    const recentPayments = await Payment.find({
+      vendor: vendor._id,
+      status: "completed",
+    })
+      .sort({ createdAt: -1 })
+      .limit(5)
+      .select("amount status createdAt")
+      .populate("booking", "eventType eventDate")
+      .lean();
+
+    const recentActivity = [
+      ...recentLeads.map((lead) => ({
+        type: "lead",
+        id: lead._id,
+        title: `New inquiry from ${lead.customer?.name || "Unknown"}`,
+        description: `${lead.eventDetails?.type || "Event"} ${
+          lead.eventDetails?.date
+            ? `on ${new Date(lead.eventDetails.date).toLocaleDateString()}`
+            : ""
+        }`,
+        status: lead.status,
+        priority: lead.priority,
+        date: lead.createdAt,
+      })),
+      ...recentPayments.map((payment) => ({
+        type: "payment",
+        id: payment._id,
+        title: `Payment received`,
+        description: `${payment.amount} for ${
+          payment.booking?.eventType || "booking"
+        }`,
+        status: payment.status,
+        date: payment.createdAt,
+      })),
+    ]
+      .sort((a, b) => new Date(b.date) - new Date(a.date))
+      .slice(0, 10);
+
+    // 5. Quick Actions / Alerts
+    const alerts = [];
+
+    if (needingFollowUp > 0) {
+      alerts.push({
+        type: "warning",
+        message: `${needingFollowUp} lead${
+          needingFollowUp > 1 ? "s" : ""
+        } need follow-up`,
+        action: "View leads",
+        link: "/vendors/leads/followup",
+      });
+    }
+
+    if (profileStats.profileViews < 100) {
+      alerts.push({
+        type: "info",
+        message: "Boost your profile visibility",
+        action: "Upgrade plan",
+        link: "/subscriptions",
+      });
+    }
+
+    if (profileStats.averageRating < 4.0 && profileStats.totalReviews > 5) {
+      alerts.push({
+        type: "warning",
+        message: "Your rating could use improvement",
+        action: "View reviews",
+        link: "/vendors/profile",
+      });
+    }
+
+    // 6. Performance Metrics
+    const performanceMetrics = {
+      profileCompleteness: calculateProfileCompleteness(vendor),
+      responseMetrics: {
+        responseTime: profileStats.responseTime,
+        responseRate: profileStats.responseRate,
+      },
+      engagement: {
+        viewsToInquiryRate:
+          profileStats.profileViews > 0
+            ? Math.round((totalLeads / profileStats.profileViews) * 100 * 100) /
+              100
+            : 0,
+        inquiryToBookingRate: conversionRate,
+      },
+    };
+
+    // Construct response
+    res.status(200).json({
+      status: "success",
+      data: {
+        summary: {
+          profileViews: profileStats.profileViews,
+          totalInquiries: totalLeads,
+          totalBookings: profileStats.totalBookings,
+          totalRevenue: profileStats.totalRevenue,
+          averageRating: profileStats.averageRating,
+          totalReviews: profileStats.totalReviews,
+          isFeatured: profileStats.isFeatured,
+        },
+        inquiries: {
+          ...leadsBreakdown,
+          needingFollowUp,
+        },
+        revenue: {
+          period: {
+            start: dateFilter.$gte?.toISOString() || "all time",
+            end: dateFilter.$lte?.toISOString() || "present",
+          },
+          total: periodRevenue,
+          bookings: periodBookings,
+          averageValue: Math.round(averageBookingValue * 100) / 100,
+          trends: revenueTrends,
+        },
+        recentActivity,
+        alerts,
+        performance: performanceMetrics,
+      },
+    });
+  } catch (error) {
+    logger.error("Error fetching dashboard summary:", error);
+    next(error);
+  }
+};
+
+/**
+ * Helper function to calculate profile completeness
+ */
+function calculateProfileCompleteness(vendor) {
+  let score = 0;
+  const maxScore = 100;
+
+  // Basic info (30 points)
+  if (vendor.businessName) score += 5;
+  if (vendor.displayName) score += 5;
+  if (vendor.description && vendor.description.length > 50) score += 10;
+  if (vendor.category) score += 5;
+  if (vendor.contactInfo?.email) score += 5;
+
+  // Location (10 points)
+  if (vendor.address?.city) score += 5;
+  if (vendor.address?.state) score += 5;
+
+  // Media (20 points)
+  if (vendor.logo) score += 10;
+  if (vendor.media && vendor.media.length > 0) score += 10;
+
+  // Services (15 points)
+  if (vendor.services && vendor.services.length > 0) score += 15;
+
+  // Pricing (10 points)
+  if (vendor.pricing?.basePrice) score += 5;
+  if (vendor.pricing?.currency) score += 5;
+
+  // Social proof (15 points)
+  if (vendor.stats.totalReviews > 0) score += 10;
+  if (vendor.stats.averageRating >= 4.0) score += 5;
+
+  return Math.min(score, maxScore);
+}
 
 // ============================================
 // SEARCH & DISCOVERY

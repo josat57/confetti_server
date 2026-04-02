@@ -13,18 +13,7 @@ class InputSanitizer {
   sanitizeEventRequest(request) {
     try {
       return {
-        eventType: this.sanitizeEnum(
-          request.eventType,
-          [
-            "wedding",
-            "corporate",
-            "birthday",
-            "graduation",
-            "conference",
-            "other",
-          ],
-          "eventType"
-        ),
+        eventType: this.sanitizeText(request.eventType, 2, 50, "eventType"),
         eventDate: this.sanitizeDate(request.eventDate),
         guestCount: this.sanitizeNumber(
           request.guestCount,
@@ -330,6 +319,7 @@ class InputSanitizer {
     }
 
     const allowedCurrencies = ["NGN", "USD", "EUR", "GBP"];
+    const allowedFlexibility = ["strict", "moderate", "flexible"];
 
     const sanitized = {
       amount: this.sanitizeNumber(
@@ -343,6 +333,9 @@ class InputSanitizer {
         allowedCurrencies,
         "currency"
       ).toUpperCase(),
+      budgetFlexibility: allowedFlexibility.includes(budget.budgetFlexibility)
+        ? budget.budgetFlexibility
+        : "moderate",
     };
 
     // Validate minimum budget based on currency

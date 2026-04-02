@@ -23,6 +23,7 @@ import {
   deleteMedia,
   updateBranding,
   getProfileStats,
+  getDashboardSummary,
   // Search & Discovery endpoints
   getFeaturedVendors,
   trackProfileView,
@@ -341,6 +342,172 @@ router.use(protect);
 // ============================================
 // VENDOR DASHBOARD - PROFILE MANAGEMENT
 // ============================================
+
+/**
+ * @swagger
+ * /vendors/dashboard/summary:
+ *   get:
+ *     summary: Get comprehensive dashboard summary
+ *     description: Retrieve a complete dashboard summary including profile stats, inquiries, revenue, recent activity, and alerts. This is an optimized endpoint that aggregates data from multiple sources in a single request.
+ *     tags: [Vendor Dashboard]
+ *     security:
+ *       - bearerAuth: []
+ *     parameters:
+ *       - in: query
+ *         name: startDate
+ *         schema:
+ *           type: string
+ *           format: date-time
+ *         description: Filter data from this date (ISO format). Defaults to last 30 days.
+ *         example: 2024-01-01T00:00:00Z
+ *       - in: query
+ *         name: endDate
+ *         schema:
+ *           type: string
+ *           format: date-time
+ *         description: Filter data until this date (ISO format). Defaults to now.
+ *         example: 2024-12-31T23:59:59Z
+ *     responses:
+ *       200:
+ *         description: Dashboard summary retrieved successfully
+ *         content:
+ *           application/json:
+ *             schema:
+ *               type: object
+ *               properties:
+ *                 status:
+ *                   type: string
+ *                   example: success
+ *                 data:
+ *                   type: object
+ *                   properties:
+ *                     summary:
+ *                       type: object
+ *                       properties:
+ *                         profileViews:
+ *                           type: number
+ *                           example: 1250
+ *                         totalInquiries:
+ *                           type: number
+ *                           example: 150
+ *                         totalBookings:
+ *                           type: number
+ *                           example: 45
+ *                         totalRevenue:
+ *                           type: number
+ *                           example: 125000
+ *                         averageRating:
+ *                           type: number
+ *                           example: 4.7
+ *                         totalReviews:
+ *                           type: number
+ *                           example: 38
+ *                         isFeatured:
+ *                           type: boolean
+ *                           example: true
+ *                     inquiries:
+ *                       type: object
+ *                       properties:
+ *                         total:
+ *                           type: number
+ *                           example: 150
+ *                         new:
+ *                           type: number
+ *                           example: 25
+ *                         contacted:
+ *                           type: number
+ *                           example: 30
+ *                         won:
+ *                           type: number
+ *                           example: 40
+ *                         conversionRate:
+ *                           type: number
+ *                           example: 26.67
+ *                         needingFollowUp:
+ *                           type: number
+ *                           example: 12
+ *                     revenue:
+ *                       type: object
+ *                       properties:
+ *                         period:
+ *                           type: object
+ *                           properties:
+ *                             start:
+ *                               type: string
+ *                             end:
+ *                               type: string
+ *                         total:
+ *                           type: number
+ *                           example: 45000
+ *                         bookings:
+ *                           type: number
+ *                           example: 15
+ *                         averageValue:
+ *                           type: number
+ *                           example: 3000
+ *                         trends:
+ *                           type: array
+ *                           items:
+ *                             type: object
+ *                             properties:
+ *                               period:
+ *                                 type: string
+ *                                 example: "2024-01"
+ *                               revenue:
+ *                                 type: number
+ *                                 example: 15000
+ *                               bookings:
+ *                                 type: number
+ *                                 example: 5
+ *                     recentActivity:
+ *                       type: array
+ *                       items:
+ *                         type: object
+ *                         properties:
+ *                           type:
+ *                             type: string
+ *                             enum: [lead, payment]
+ *                           title:
+ *                             type: string
+ *                           description:
+ *                             type: string
+ *                           status:
+ *                             type: string
+ *                           date:
+ *                             type: string
+ *                             format: date-time
+ *                     alerts:
+ *                       type: array
+ *                       items:
+ *                         type: object
+ *                         properties:
+ *                           type:
+ *                             type: string
+ *                             enum: [info, warning, error]
+ *                           message:
+ *                             type: string
+ *                           action:
+ *                             type: string
+ *                           link:
+ *                             type: string
+ *                     performance:
+ *                       type: object
+ *                       properties:
+ *                         profileCompleteness:
+ *                           type: number
+ *                           example: 85
+ *                         responseMetrics:
+ *                           type: object
+ *                         engagement:
+ *                           type: object
+ *       401:
+ *         description: Unauthorized - Authentication required
+ *       404:
+ *         description: Vendor profile not found
+ *       500:
+ *         description: Internal server error
+ */
+router.get("/dashboard/summary", getDashboardSummary);
 
 /**
  * @swagger

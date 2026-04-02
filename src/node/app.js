@@ -30,7 +30,28 @@ app.use(express.urlencoded({ extended: true }));
 
 // Configure CORS
 const corsOptions = {
-  origin: process.env.FRONTEND_URL || "http://localhost:3000",
+  origin: function (origin, callback) {
+    // Allow requests with no origin (like mobile apps or curl requests)
+    if (!origin) return callback(null, true);
+
+    const allowedOrigins = [
+      process.env.FRONTEND_URL || "http://localhost:3000",
+      "http://localhost:3000",
+      "http://localhost:3001",
+      "http://localhost:8080",
+      "http://localhost:8000",
+      "http://127.0.0.1:3000",
+      "http://127.0.0.1:3001",
+      process.env.PUBLIC_NGROK_URL,
+    ].filter(Boolean); // Remove any undefined values
+
+    if (allowedOrigins.indexOf(origin) !== -1) {
+      callback(null, true);
+    } else {
+      console.log(`CORS blocked origin: ${origin}`);
+      callback(null, true); // Allow all origins in development - change this in production
+    }
+  },
   credentials: true,
   methods: ["GET", "POST", "PUT", "DELETE", "PATCH", "OPTIONS"],
   allowedHeaders: [
@@ -39,6 +60,7 @@ const corsOptions = {
     "X-Requested-With",
     "Accept",
     "Origin",
+    "X-Guest-Session", // Add guest session header
     "Access-Control-Allow-Origin",
     "Access-Control-Allow-Headers",
     "Access-Control-Allow-Methods",
@@ -54,6 +76,9 @@ const corsOptions = {
 };
 
 app.use(cors(corsOptions));
+
+// Handle preflight requests for AI planner
+app.options("/api/v1/ai-planner/*", cors(corsOptions));
 
 // Cookie parser middleware (before routes)
 app.use(cookieParser());
@@ -129,8 +154,38 @@ app.use((req, res, next) => {
 
 // Global Error Handler
 app.use((err, req, res, next) => {
+  // Handle Mongoose validation errors
+  if (err.name === "ValidationError") {
+    const errors = Object.values(err.errors).map((e) => e.message);
+    err.statusCode = 400;
+    err.status = "fail";
+    err.message = errors.join(". ");
+    err.isOperational = true;
+  }
+
+  // Handle Mongoose cast errors
+  if (err.name === "CastError") {
+    err.statusCode = 400;
+    err.status = "fail";
+    err.message = `Invalid ${err.path}: ${err.value}`;
+    err.isOperational = true;
+  }
+
+  // Handle duplicate key errors
+  if (err.code === 11000) {
+    const field = Object.keys(err.keyValue)[0];
+    err.statusCode = 409;
+    err.status = "fail";
+    err.message = `${field} already exists`;
+    err.isOperational = true;
+  }
+
   err.statusCode = err.statusCode || 500;
   err.status = err.status || "error";
+
+  // Log error for debugging
+  console.error(`[Error] ${err.statusCode} - ${err.message}`);
+  if (err.stack) console.error(err.stack);
 
   if (process.env.NODE_ENV === "development") {
     res.status(err.statusCode).json({

@@ -16,6 +16,7 @@ import monitoringRoutes from "./monitoring.routes.js";
 import subscriptionPlanRoutes from "./subscriptionPlan.routes.js";
 import calendarRoutes from "./calendar.routes.js";
 import teamRoutes from "./team.routes.js";
+import teamRouterRoutes from "./team-router.routes.js";
 import leadRoutes from "./lead.routes.js";
 import quoteRoutes from "./quote.routes.js";
 import crmRoutes from "./crm.routes.js";
@@ -25,6 +26,8 @@ import securityRoutes from "./security.routes.js";
 import financialRoutes from "./financial.routes.js";
 import settingsRoutes from "./settings.routes.js";
 import plannerRoutes from "./planner.routes.js";
+import plannerDashboardRoutes from "./planner-dashboard.routes.js";
+import plannerDocumentRoutes from "./planner-document.routes.js";
 import plannerClientRoutes from "./planner-client.routes.js";
 import plannerVendorRoutes, { bookingRouter } from "./planner-vendor.routes.js";
 import plannerTaskRoutes from "./planner-task.routes.js";
@@ -53,17 +56,30 @@ import guestRoutes, {
 import documentRoutes, { eventDocumentRoutes } from "./document.routes.js";
 import messageRoutes from "./communication.routes.js";
 import budgetRoutes, { eventBudgetRoutes } from "./budget.routes.js";
+import businessProfileRoutes from "./business-profile.routes.js";
+import businessVerificationRoutes from "./business-verification.routes.js";
+import brandingRoutes from "./branding.routes.js";
+import featureFlagRoutes from "./featureFlagRoutes.js";
+import couponRoutes from "./couponRoutes.js";
+// Vendor AI routes are now integrated into universal AI planner
+// import vendorAIRoutes from "./vendor-ai-planner.routes.js";
 
 const router = express.Router();
 
 // Routes
 router.use("/auth", authRoutes);
 router.use("/users", userRoutes);
+router.use("/team", teamRouterRoutes);
 router.use("/settings", settingsRoutes);
+router.use("/business-profile", businessProfileRoutes);
+router.use("/branding", brandingRoutes);
 router.use("/planner", plannerRoutes);
+router.use("/planner/dashboard", plannerDashboardRoutes);
+router.use("/planner/documents", plannerDocumentRoutes);
 router.use("/planner/clients", plannerClientRoutes);
 router.use("/planner/vendors", plannerVendorRoutes);
 router.use("/planner/bookings", bookingRouter);
+router.use("/planner/budget", budgetRoutes);
 router.use("/planner/budgets", budgetRoutes);
 router.use("/planner/tasks", plannerTaskRoutes);
 router.use("/planner/guests", plannerGuestRoutes);
@@ -101,31 +117,35 @@ router.use("/vendors/payments", paymentRoutes);
 router.use("/vendors/clients", crmRoutes);
 router.use("/vendors/locations", locationRoutes);
 router.use("/vendors/security", securityRoutes);
+router.use("/vendors/bookings", bookingRouter);
+// Vendor AI routes are now part of universal AI planner at /ai-planner
+// router.use("/vendors/ai-planner", vendorAIRoutes);
 // General vendor routes (with /:id) must come AFTER specific routes
 router.use("/vendors", vendorRoutes);
 router.use("/vendors", apiAccessRoutes);
 router.use("/vendors", financialRoutes);
 router.use("/quotes", quoteRoutes); // Public quote routes
+// Admin routes MUST come before general routes to avoid conflicts
+router.use("/admin", adminRoutes);
+router.use("/admin/business-profiles", businessVerificationRoutes);
+router.use("/admin", featureFlagRoutes);
+router.use("/admin", couponRoutes);
+// General routes (after admin routes)
 router.use("/notifications", notificationRoutes);
 router.use("/analytics", analyticsRoutes);
 router.use("/subscriptions", subscriptionRoutes);
 router.use("/subscription-plans", subscriptionPlanRoutes);
-router.use("/admin", adminRoutes);
 router.use("/health", healthRoutes);
 router.use("/email-health", emailHealthRoutes);
 router.use("/ai-planner", aiPlannerRoutes);
 router.use("/webhooks", webhookRoutes);
 router.use("/monitoring", monitoringRoutes);
 
-// Default route for API
-router.use("/", (req, res) => {
-  res.json({ message: "Bad request" });
-});
-
 // Error handling for undefined routes
 router.use("*", (req, res) => {
   res.status(404).json({
-    success: false,
+    status: "error",
+    message: `Cannot ${req.method} ${req.originalUrl}`,
     error: "Route not found",
   });
 });

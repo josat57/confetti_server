@@ -5,6 +5,7 @@ import {
   getNotification,
   updateNotification,
   listNotifications,
+  getUnreadCount,
   markAsSent,
   markAsDelivered,
   markAsRead,
@@ -107,6 +108,7 @@ const router = express.Router();
  *               $ref: '#/components/schemas/Error'
  */
 router.get("/", listNotifications);
+router.get("/unread-count", protect, getUnreadCount);
 
 /**
  * @swagger

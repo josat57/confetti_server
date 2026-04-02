@@ -7,6 +7,7 @@ import MessageService from "./services/messaging/message.service.js";
 import config from "./config/index.js";
 import logger from "./services/logging/advanced.service.js";
 import { validateEmailConfig } from "./utils/validateEmailConfig.js";
+import { initializeGridFS } from "./services/file-storage.service.js";
 
 // Debug environment variables
 console.log("Environment Variables:", {
@@ -51,8 +52,66 @@ const startServer = async () => {
     await connectDB();
     logger.info("Database connected successfully");
 
+    // Initialize Super Admin
+    try {
+      const initializeSuperAdmin = (await import("./utils/initSuperAdmin.js"))
+        .default;
+      await initializeSuperAdmin();
+      logger.info("Super admin initialization completed successfully");
+    } catch (error) {
+      logger.error("Super admin initialization failed:", error.message);
+      logger.warn(
+        "Server will continue startup, but super admin may not be available"
+      );
+    }
+
+    // Initialize GridFS for file storage
+    try {
+      initializeGridFS();
+      logger.info("GridFS file storage initialized successfully");
+    } catch (error) {
+      logger.error("GridFS initialization failed:", error.message);
+      logger.warn(
+        "Server will continue startup, but file upload functionality may not work properly"
+      );
+    }
+
     // Start server
     const server = http.createServer(app);
+
+    // Initialize Admin Real-time Service
+    try {
+      const adminRealtimeService = (
+        await import("./services/admin-realtime.service.js")
+      ).default;
+      adminRealtimeService.initialize(server);
+      logger.info("Admin real-time service initialized successfully");
+    } catch (error) {
+      logger.error(
+        "Admin real-time service initialization failed:",
+        error.message
+      );
+      logger.warn(
+        "Server will continue startup, but real-time features may not work properly"
+      );
+    }
+
+    // Initialize System Monitoring Service
+    try {
+      const adminSystemMonitoringService = (
+        await import("./services/admin-system-monitoring.service.js")
+      ).default;
+      adminSystemMonitoringService.startMonitoring(60000); // Monitor every minute
+      logger.info("System monitoring service initialized successfully");
+    } catch (error) {
+      logger.error(
+        "System monitoring service initialization failed:",
+        error.message
+      );
+      logger.warn(
+        "Server will continue startup, but monitoring features may not work properly"
+      );
+    }
 
     // Attach WebSocket upgrade handler
     // server.js

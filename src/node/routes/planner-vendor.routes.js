@@ -7,9 +7,11 @@ import {
   getFavoriteVendors,
   createBooking,
   getBookings,
+  getBookingStats,
   getBookingById,
   updateBooking,
   cancelBooking,
+  getVendorCategories,
 } from "../controllers/planner-vendor.controller.js";
 import { protect } from "../middleware/auth.js";
 
@@ -18,6 +20,7 @@ const router = express.Router();
 router.use(protect);
 
 router.get("/search", searchVendors);
+router.get("/categories", getVendorCategories);
 router.get("/favorites", getFavoriteVendors);
 router.get("/:id", getVendorById);
 router.post("/:id/favorite", addVendorToFavorites);
@@ -30,6 +33,9 @@ export const bookingRouter = express.Router();
 bookingRouter.use(protect);
 
 bookingRouter.get("/", getBookings);
+bookingRouter.post("/", createBooking);
+// Stats route MUST come before /:id to avoid route conflict
+bookingRouter.get("/stats", getBookingStats);
 bookingRouter.get("/:id", getBookingById);
 bookingRouter.put("/:id", updateBooking);
 bookingRouter.post("/:id/cancel", cancelBooking);

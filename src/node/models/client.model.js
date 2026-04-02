@@ -40,6 +40,15 @@ const clientSchema = new mongoose.Schema(
       enum: ["active", "inactive"],
       default: "active",
     },
+    tags: [
+      {
+        type: String,
+        trim: true,
+      },
+    ],
+    nextFollowUp: {
+      type: Date,
+    },
     preferences: {
       communicationMethod: {
         type: String,

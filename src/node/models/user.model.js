@@ -177,6 +177,17 @@ const userSchema = new mongoose.Schema(
         },
       ],
     },
+    // Metadata for additional user information
+    metadata: {
+      isSuperAdmin: {
+        type: Boolean,
+        default: false,
+      },
+      createdAt: Date,
+      autoCreated: Boolean,
+      lastPasswordChange: Date,
+      notes: String,
+    },
   },
   {
     timestamps: true,
@@ -354,6 +365,16 @@ userSchema.methods.activateAccount = async function () {
   this.status = "active";
   this.isEmailVerified = true;
   await this.save();
+};
+
+// Check if user is super admin
+userSchema.methods.isSuperAdmin = function () {
+  return this.role === "admin" && this.metadata?.isSuperAdmin === true;
+};
+
+// Check if user has admin privileges
+userSchema.methods.hasAdminPrivileges = function () {
+  return this.role === "admin";
 };
 
 const User = mongoose.model("User", userSchema);

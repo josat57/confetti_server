@@ -1,0 +1,97 @@
+version: "3.8"
+
+services:
+  # Node.js API Service
+  node-api:
+    image: registry.digitalocean.com/confetti-registry/confetti-node-api:latest
+    ports:
+      - "9600:9600"
+    environment:
+      - NODE_ENV=production
+      - PORT=9600
+      - MONGODB_URI=${MONGODB_URI}
+      - POSTGRES_URI=${POSTGRES_URI}
+      - REDIS_URL=${REDIS_URL}
+      - REDIS_HOST=${REDIS_HOST}
+      - REDIS_PORT=${REDIS_PORT}
+      - PYTHON_API_URL=http://python-api:5600
+      - FRONTEND_URL=${FRONTEND_URL}
+      - JWT_ACCESS_SECRET=${JWT_ACCESS_SECRET}
+      - JWT_REFRESH_SECRET=${JWT_REFRESH_SECRET}
+      - JWT_ACCESS_EXPIRES_IN=15m
+      - JWT_REFRESH_EXPIRES_IN=7d
+      - SESSION_SECRET=${SESSION_SECRET}
+      - SMTP_HOST=${SMTP_HOST}
+      - SMTP_PORT=${SMTP_PORT}
+      - SMTP_SECURE=${SMTP_SECURE}
+      - SMTP_USER=${SMTP_USER}
+      - SMTP_PASSWORD=${SMTP_PASSWORD}
+      - FROM_EMAIL=${FROM_EMAIL}
+      - FROM_NAME=${FROM_NAME}
+      - OPENAI_API_KEY=${OPENAI_API_KEY}
+      - FLUTTERWAVE_PUBLIC_KEY=${FLUTTERWAVE_PUBLIC_KEY}
+      - FLUTTERWAVE_SECRET_KEY=${FLUTTERWAVE_SECRET_KEY}
+      - FLUTTERWAVE_ENCRYPTION_KEY=${FLUTTERWAVE_ENCRYPTION_KEY}
+      - FLUTTERWAVE_BASE_URL=${FLUTTERWAVE_BASE_URL}
+      - FLUTTERWAVE_WEBHOOK_SECRET=${FLUTTERWAVE_WEBHOOK_SECRET}
+      - FLUTTERWAVE_WEBHOOK=${FLUTTERWAVE_WEBHOOK}
+      - PAYSTACK_PUBLIC_KEY=${PAYSTACK_PUBLIC_KEY}
+      - PAYSTACK_SECRET_KEY=${PAYSTACK_SECRET_KEY}
+      - PAYSTACK_WEBHOOK_SECRET=${PAYSTACK_WEBHOOK_SECRET}
+      - CLOUDINARY_CLOUD_NAME=${CLOUDINARY_CLOUD_NAME}
+      - CLOUDINARY_API_KEY=${CLOUDINARY_API_KEY}
+      - CLOUDINARY_API_SECRET=${CLOUDINARY_API_SECRET}
+      - BCRYPT_SALT_ROUNDS=12
+    depends_on:
+      - python-api
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:9600/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 40s
+    networks:
+      - confetti-network
+
+  # Python AI/ML Service
+  python-api:
+    image: registry.digitalocean.com/confetti-registry/confetti-python-api:latest
+    ports:
+      - "5600:5600"
+    environment:
+      - FLASK_ENV=production
+      - MONGODB_URI=${MONGODB_URI}
+      - REDIS_URI=${REDIS_URL}
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:5600/health/ai"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 40s
+    networks:
+      - confetti-network
+
+  # Nginx Reverse Proxy
+  nginx:
+    image: nginx:alpine
+    ports:
+      - "80:80"
+      - "443:443"
+    volumes:
+      - ./nginx/nginx.conf:/etc/nginx/nginx.conf:ro
+      - ./nginx/ssl:/etc/nginx/ssl:ro
+    depends_on:
+      - node-api
+      - python-api
+    restart: unless-stopped
+    networks:
+      - confetti-network
+
+networks:
+  confetti-network:
+    driver: bridge
+
+volumes:
+  ssl_certs:

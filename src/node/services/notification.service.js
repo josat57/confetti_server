@@ -310,6 +310,86 @@ class NotificationService {
       throw error;
     }
   }
+
+  async getUnreadCount(userId) {
+    try {
+      const count = await Notification.countDocuments({
+        recipient: userId,
+        isRead: false,
+        status: { $in: ["pending", "sent", "delivered"] },
+      });
+      return count;
+    } catch (error) {
+      logger.error("Failed to get unread count", { error, userId });
+      throw error;
+    }
+  }
+
+  async listNotifications(query = {}) {
+    try {
+      const {
+        page = 1,
+        limit = 20,
+        userId,
+        type,
+        status,
+        isRead,
+        sortBy = "createdAt",
+        sortOrder = "desc",
+      } = query;
+
+      const filter = {};
+      if (userId) filter.recipient = userId;
+      if (type) filter.type = type;
+      if (status) filter.status = status;
+      if (isRead !== undefined)
+        filter.isRead = isRead === "true" || isRead === true;
+
+      const skip = (page - 1) * limit;
+      const sort = { [sortBy]: sortOrder === "asc" ? 1 : -1 };
+
+      const [notifications, total] = await Promise.all([
+        Notification.find(filter)
+          .sort(sort)
+          .skip(skip)
+          .limit(parseInt(limit))
+          .lean(),
+        Notification.countDocuments(filter),
+      ]);
+
+      return {
+        status: "success",
+        data: {
+          notifications,
+          pagination: {
+            page: parseInt(page),
+            limit: parseInt(limit),
+            total,
+            pages: Math.ceil(total / limit),
+          },
+        },
+      };
+    } catch (error) {
+      logger.error("Failed to list notifications", { error, query });
+      throw error;
+    }
+  }
+
+  async getNotificationById(notificationId) {
+    try {
+      const notification = await Notification.findById(notificationId).lean();
+      if (!notification) {
+        throw new Error("Notification not found");
+      }
+      return {
+        status: "success",
+        data: { notification },
+      };
+    } catch (error) {
+      logger.error("Failed to get notification", { error, notificationId });
+      throw error;
+    }
+  }
 }
 
 export default new NotificationService();

@@ -14,6 +14,7 @@ import {
   getEvents,
   updateEvent,
   deleteEvent,
+  updateEventStatus,
   addVendor,
   removeVendor,
   addGuest,
@@ -28,6 +29,7 @@ import {
   uploadEventImage,
   uploadEventMedia,
   uploadEventPhotos,
+  getEventPhotos,
   deleteEventMedia,
 } from "../controllers/event.controller.js";
 
@@ -519,6 +521,45 @@ router.put(
  *               $ref: '#/components/schemas/Error'
  */
 router.delete("/:id", deleteEvent);
+
+/**
+ * @swagger
+ * /events/{id}/status:
+ *   patch:
+ *     summary: Update event status
+ *     description: Update the status of an event (planning, confirmed, in-progress, completed, cancelled)
+ *     tags: [Events]
+ *     security:
+ *       - bearerAuth: []
+ *     parameters:
+ *       - in: path
+ *         name: id
+ *         required: true
+ *         schema:
+ *           type: string
+ *         description: Event ID
+ *     requestBody:
+ *       required: true
+ *       content:
+ *         application/json:
+ *           schema:
+ *             type: object
+ *             required:
+ *               - status
+ *             properties:
+ *               status:
+ *                 type: string
+ *                 enum: [planning, confirmed, in-progress, completed, cancelled]
+ *                 example: confirmed
+ *     responses:
+ *       200:
+ *         description: Event status updated successfully
+ *       400:
+ *         description: Invalid status value
+ *       404:
+ *         description: Event not found
+ */
+router.patch("/:id/status", updateEventStatus);
 
 // Event-specific routes
 
@@ -1351,6 +1392,7 @@ router.post(
 // Media upload routes
 router.post("/:id/image", uploadImageMiddleware, uploadEventImage);
 router.post("/:id/media", uploadMediaMiddleware, uploadEventMedia);
+router.get("/:id/photos", getEventPhotos);
 router.post("/:id/photos", uploadMultipleMedia, uploadEventPhotos);
 router.delete("/:id/media/:mediaId", deleteEventMedia);
 
