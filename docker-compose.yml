@@ -5,7 +5,7 @@ services:
       context: ./
       dockerfile: Dockerfile
     ports:
-      - "9600:9600"
+      - "9601:9600"
     volumes:
       - ./src/node:/usr/src/app/src/node
       - node_modules:/usr/src/app/node_modules
@@ -23,13 +23,21 @@ services:
       - JWT_REFRESH_EXPIRES_IN=7d
       - JWT_ACCESS_SECRET=2fa88006305c434c8457012bb6ddfc27a6118475e8c07616c69067011583de7c0fe560d5ba565256682b446bc85705b9c62bfe5b6e87f336d86d4816942fff2b
       - JWT_REFRESH_SECRET=7c89a8dfc691825da63c2b90a352af373894905f6fd03a45fa45239f9ff81a8c7d9143069f44f6e6d8299b1b948f1d36f9f0424571c5b9ff577dc8978f2c7f5c
-      - SMTP_HOST=smtp.hostinger.com
-      - SMTP_PORT=465
-      - SMTP_SECURE=true
-      - SMTP_USER=hello@tripmatch.io
-      - SMTP_PASSWORD=Ginger@1232025*
-      - FROM_EMAIL=hello@tripmatch.io
-      - FROM_NAME=Confetti
+      # - SMTP_HOST=smtp.hostinger.com
+      # - SMTP_PORT=465
+      # - SMTP_SECURE=true
+      # - SMTP_USER=hello@tripmatch.io
+      # - SMTP_PASSWORD=Ginger@1232025*
+      # - FROM_EMAIL=hello@tripmatch.io
+      # - FROM_NAME=Confetti
+      - SMTP_HOST=smtp.ethereal.email
+      - SMTP_PORT=587
+      - SMTP_USER=miracle44@ethereal.email
+      - SMTP_PASS=XA8zdrR3xARyRkrhz5
+      - SMTP_FROM=miracle44@ethereal.email
+      - FROM_EMAIL=team@confetti.io
+      - FROM_NAME=Confetti Team
+      - SUPPORT_EMAIL=hello@tripmatch.io
       - FLUTTERWAVE_PUBLIC_KEY=FLWPUBK_TEST-2dd0b38eb0a986ba3a9d30c0651be09b-X
       - FLUTTERWAVE_SECRET_KEY=FLWSECK_TEST-e2b0311ff7778eaf1dd37550a6a800b6-X
       - FLUTTERWAVE_ENCRYPTION_KEY=FFFLWSECK_TESTae9f5f14707d
@@ -84,7 +92,7 @@ services:
     image: postgres:latest
     container_name: confetti-postgres
     ports:
-      - "5432:5432"
+      - "5434:5432"
     volumes:
       - postgres_data:/var/lib/postgresql/data
     environment:
@@ -99,7 +107,7 @@ services:
     image: redis:latest
     container_name: confetti-redis
     ports:
-      - "6379:6379"
+      - "6380:6379"
     volumes:
       - redis_data:/data
     networks:

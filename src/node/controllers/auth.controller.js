@@ -95,8 +95,16 @@ export const register = async (req, res, next) => {
 
     // Send emails based on plan type
     if (isFree) {
-      await sendWelcomeEmail(user);
-      await sendVerificationEmail(user, otp, token);
+      try {
+        await sendWelcomeEmail(user);
+      } catch (emailError) {
+        console.error("Failed to send welcome email:", emailError.message);
+      }
+      try {
+        await sendVerificationEmail(user, otp, token);
+      } catch (emailError) {
+        console.error("Failed to send verification email:", emailError.message);
+      }
 
       return res.status(200).json({
         status: "success",
@@ -595,7 +603,7 @@ export const refreshToken = async (req, res, next) => {
     }
 
     // Check if user's token version matches
-    if (user.tokenVersion !== decoded.tokenVersion) {
+    if ((user.tokenVersion ?? 0) !== (decoded.tokenVersion ?? 0)) {
       return next(new AppError("Token has been revoked", 401));
     }
 

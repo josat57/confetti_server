@@ -75,6 +75,8 @@ import {
   exportFlaggedContent,
   getSubscriptions,
   getSubscriptionById,
+  getSubscriptionPayments,
+  getSubscriptionChanges,
   upgradeSubscription,
   downgradeSubscription,
   cancelSubscription,
@@ -630,6 +632,16 @@ router.get(
   "/subscriptions/:subscriptionId",
   authorizeAdmin(["financial_oversight"]),
   getSubscriptionById
+);
+router.get(
+  "/subscriptions/:subscriptionId/payments",
+  authorizeAdmin(["financial_oversight"]),
+  getSubscriptionPayments
+);
+router.get(
+  "/subscriptions/:subscriptionId/changes",
+  authorizeAdmin(["financial_oversight"]),
+  getSubscriptionChanges
 );
 router.post(
   "/subscriptions/:subscriptionId/upgrade",

@@ -6,7 +6,7 @@ const router = express.Router();
 
 // Apply authentication middleware to all routes
 router.use(protect);
-router.use(restrictTo("admin"));
+router.use(restrictTo("admin", "super_admin"));
 
 // ==================== COUPON ROUTES ====================
 

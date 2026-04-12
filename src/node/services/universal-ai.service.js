@@ -11,6 +11,7 @@ import Event from "../models/event.model.js";
 import Vendor from "../models/vendor.model.js";
 import User from "../models/user.model.js";
 import crypto from "crypto";
+import mongoose from "mongoose";
 
 /**
  * Universal AI Service for Event Planning
@@ -1357,10 +1358,10 @@ class UniversalAIService {
     try {
       const skip = (page - 1) * limit;
 
-      // Build query
+      // Build query - only filter by userId, not userType, as userType can change
+      // between sessions (e.g. user creates a planner/vendor profile after generating plans)
       const query = {
         userId: userContext.userId,
-        userType: userContext.userType,
       };
 
       // Add filters
@@ -2686,9 +2687,9 @@ class UniversalAIService {
     try {
       const { limit = 5, includeArchived = false } = options;
 
+      // Only filter by userId — userType can change between sessions
       const query = {
         userId: userContext.userId,
-        userType: userContext.userType,
       };
 
       if (!includeArchived) {
@@ -2716,11 +2717,10 @@ class UniversalAIService {
     try {
       const startTime = Date.now();
 
-      // Get the existing plan
+      // Get the existing plan — don't filter by userType as it can change between sessions
       const existingPlan = await AIPlan.findOne({
         planId,
         userId: userContext.userId,
-        userType: userContext.userType,
       });
 
       if (!existingPlan) {
@@ -2956,7 +2956,6 @@ Respond in JSON format:
         existingPlan = await AIPlan.findOne({
           planId: resultId,
           userId: userContext.userId,
-          userType: userContext.userType,
         });
 
         if (existingPlan) {
@@ -3082,7 +3081,6 @@ Respond in JSON format:
       const existingPlan = await AIPlan.findOne({
         planId,
         userId: userContext.userId,
-        userType: userContext.userType,
       });
 
       if (!existingPlan) {
@@ -3483,12 +3481,30 @@ Respond with a JSON object containing:
    */
   async updatePlan(planId, updateData) {
     try {
-      const { userContext, planData, eventTitle, status } = updateData;
+      const {
+        userContext,
+        planData,
+        eventTitle,
+        status,
+        // Direct form fields from client
+        eventType,
+        budget,
+        guestCount,
+        date,
+        location,
+        duration,
+        preferences,
+        clientInfo,
+      } = updateData;
+
+      // Support both custom planId string and MongoDB _id
+      const idQuery = mongoose.isValidObjectId(planId)
+        ? { $or: [{ planId }, { _id: planId }] }
+        : { planId };
 
       const existingPlan = await AIPlan.findOne({
-        planId,
+        ...idQuery,
         userId: userContext.userId,
-        userType: userContext.userType,
       });
 
       if (!existingPlan) {
@@ -3506,6 +3522,48 @@ Respond with a JSON object containing:
 
       if (status) {
         existingPlan.status = status;
+      }
+
+      // Update originalRequest fields from direct form payload
+      if (eventType) {
+        existingPlan.originalRequest = existingPlan.originalRequest || {};
+        existingPlan.originalRequest.eventType = eventType;
+      }
+      if (budget !== undefined) {
+        existingPlan.originalRequest = existingPlan.originalRequest || {};
+        existingPlan.originalRequest.budget = {
+          ...existingPlan.originalRequest.budget,
+          amount: budget,
+        };
+      }
+      if (guestCount !== undefined) {
+        existingPlan.originalRequest = existingPlan.originalRequest || {};
+        existingPlan.originalRequest.guestCount = guestCount;
+      }
+      if (date) {
+        existingPlan.originalRequest = existingPlan.originalRequest || {};
+        existingPlan.originalRequest.date = {
+          ...existingPlan.originalRequest.date,
+          preferred: new Date(date),
+        };
+      }
+      if (location) {
+        existingPlan.originalRequest = existingPlan.originalRequest || {};
+        existingPlan.originalRequest.location = {
+          ...existingPlan.originalRequest.location,
+          city: location,
+        };
+      }
+      if (preferences) {
+        existingPlan.originalRequest = existingPlan.originalRequest || {};
+        existingPlan.originalRequest.preferences = preferences;
+      }
+      if (clientInfo) {
+        existingPlan.originalRequest = existingPlan.originalRequest || {};
+        existingPlan.originalRequest.clientProfile = clientInfo;
+      }
+      if (eventType || budget !== undefined || guestCount !== undefined || date || location || preferences || clientInfo) {
+        existingPlan.markModified("originalRequest");
       }
 
       existingPlan.lastModified = new Date();
@@ -3530,7 +3588,19 @@ Respond with a JSON object containing:
         userType: userContext.userType,
       });
 
-      return existingPlan;
+      // Return a format consistent with getUserPlans so the client can transform it correctly
+      return {
+        id: existingPlan._id,
+        planId: existingPlan.planId,
+        title: existingPlan.title,
+        description: existingPlan.description || "",
+        status: existingPlan.status,
+        eventType: existingPlan.originalRequest?.eventType || "",
+        lastModified: existingPlan.lastModified,
+        createdAt: existingPlan.createdAt,
+        viewCount: existingPlan.analytics?.viewCount || 0,
+        lastAccessed: existingPlan.analytics?.lastAccessed,
+      };
     } catch (error) {
       logger.error("Failed to update AI plan:", error);
       throw error;
@@ -4482,10 +4552,14 @@ Respond with a JSON object containing:
    */
   async deletePlan(planId, userContext) {
     try {
+      // Support both custom planId string and MongoDB _id
+      const idQuery = mongoose.isValidObjectId(planId)
+        ? { $or: [{ planId }, { _id: planId }] }
+        : { planId };
+
       const existingPlan = await AIPlan.findOne({
-        planId,
+        ...idQuery,
         userId: userContext.userId,
-        userType: userContext.userType,
       });
 
       if (!existingPlan) {

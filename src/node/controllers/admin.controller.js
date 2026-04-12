@@ -5404,3 +5404,37 @@ export const getSystemHealth = async (req, res, next) => {
     next(error);
   }
 };
+
+export const getSubscriptionPayments = async (req, res, next) => {
+  try {
+    const { subscriptionId } = req.params;
+    const payments = await Payment.find({ subscription: subscriptionId })
+      .sort("-createdAt")
+      .lean();
+    res.status(200).json({
+      status: "success",
+      data: { payments },
+    });
+  } catch (error) {
+    next(error);
+  }
+};
+
+export const getSubscriptionChanges = async (req, res, next) => {
+  try {
+    const { subscriptionId } = req.params;
+    const Subscription = (await import("../models/subscription.model.js")).default;
+    const subscription = await Subscription.findById(subscriptionId)
+      .select("history")
+      .lean();
+    if (!subscription) {
+      return next(createError(404, "Subscription not found"));
+    }
+    res.status(200).json({
+      status: "success",
+      data: { changes: subscription.history || [] },
+    });
+  } catch (error) {
+    next(error);
+  }
+};
