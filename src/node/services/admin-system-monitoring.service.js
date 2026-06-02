@@ -5,6 +5,7 @@ import SystemAlert from "../models/systemAlert.model.js";
 import AuditLog from "../models/auditLog.model.js";
 import { createError } from "../utils/error.js";
 import adminRealtimeService from "./admin-realtime.service.js";
+import { logger } from "../utils/logger.js";
 
 class AdminSystemMonitoringService {
   constructor() {
@@ -640,11 +641,11 @@ class AdminSystemMonitoringService {
         await this.recordSystemMetric("cpu", cpuUsage.percent, "percent");
         await this.recordSystemMetric("memory", memoryUsage.percent, "percent");
       } catch (error) {
-        console.error("Monitoring error:", error);
+        logger.error("Monitoring error:", error);
       }
     }, interval);
 
-    console.log("✅ System monitoring started");
+    logger.info("System monitoring started");
   }
 
   // Stop monitoring
@@ -652,7 +653,7 @@ class AdminSystemMonitoringService {
     if (this.monitoringInterval) {
       clearInterval(this.monitoringInterval);
       this.monitoringInterval = null;
-      console.log("System monitoring stopped");
+      logger.info("System monitoring stopped");
     }
   }
 }

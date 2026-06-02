@@ -9,12 +9,13 @@ import logger from "./services/logging/advanced.service.js";
 import { validateEmailConfig } from "./utils/validateEmailConfig.js";
 import { initializeGridFS } from "./services/file-storage.service.js";
 
-// Debug environment variables
-console.log("Environment Variables:", {
-  MONGODB_URI: process.env.MONGODB_URI,
-  NODE_ENV: process.env.NODE_ENV,
-  PORT: process.env.PORT,
-});
+// Validate critical environment variables at startup
+const REQUIRED_ENV_VARS = ["MONGODB_URI", "JWT_ACCESS_SECRET", "JWT_REFRESH_SECRET"];
+const missingVars = REQUIRED_ENV_VARS.filter((v) => !process.env[v]);
+if (missingVars.length > 0) {
+  console.error(`Missing required environment variables: ${missingVars.join(", ")}`);
+  process.exit(1);
+}
 
 const PORT = config.port;
 
@@ -116,10 +117,9 @@ const startServer = async () => {
     // Attach WebSocket upgrade handler
     // server.js
     server.on("upgrade", (request, socket, head) => {
-      // Log the upgrade request for debugging
-      console.log("WebSocket upgrade request:", {
+      // Log the upgrade request
+      logger.debug("WebSocket upgrade request", {
         url: request.url,
-        headers: request.headers,
         pathname: new URL(request.url, `http://${request.headers.host}`)
           .pathname,
       });
@@ -141,17 +141,13 @@ const startServer = async () => {
           MessageService.wss.emit("connection", ws, request);
         });
       } else {
-        console.log("Invalid WebSocket path:", pathname);
+        logger.warn(`Invalid WebSocket path: ${pathname}`);
         socket.destroy();
       }
     });
 
     const serverListening = server.listen(PORT, () => {
-      console.log(`
-                🚀 Server running on port ${PORT}
-                🌐 Health check: http://localhost:${PORT}/health
-                ⏰ Time: ${new Date().toISOString()}
-            `);
+      logger.info(`Server running on port ${PORT} [${process.env.NODE_ENV || "development"}]`);
     });
 
     // Handle unhandled rejections
@@ -170,7 +166,6 @@ const startServer = async () => {
     process.exit(1);
   }
 };
-console.log("Start a sign here...", startServer);
 startServer();
 
 export default app;

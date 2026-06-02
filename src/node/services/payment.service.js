@@ -4,6 +4,7 @@ import { AppError } from "../utils/AppError.js";
 import Flutterwave from "flutterwave-node-v3";
 import crypto from "crypto";
 import axios from "axios";
+import { logger } from "../utils/logger.js";
 
 // Initialize Flutterwave
 let flutterwave;
@@ -17,12 +18,12 @@ try {
       process.env.FLUTTERWAVE_SECRET_KEY
     );
   } else {
-    console.warn(
+    logger.warn(
       "Flutterwave keys not configured, payment functionality will be limited"
     );
   }
 } catch (error) {
-  console.error("Failed to initialize Flutterwave:", error.message);
+  logger.error("Failed to initialize Flutterwave:", { message: error.message });
   flutterwave = null;
 }
 
@@ -135,10 +136,9 @@ class PaymentService {
           );
         }
       } catch (error) {
-        console.error(
-          "Flutterwave initialization error:",
-          error.response?.data || error.message
-        );
+        logger.error("Flutterwave initialization error", {
+          detail: error.response?.data || error.message,
+        });
         throw new AppError(
           `Payment initialization failed: ${
             error.response?.data?.message || error.message
@@ -204,7 +204,7 @@ class PaymentService {
       signature
     );
     if (!isValid) {
-      console.error(`Invalid webhook signature from ${provider}`);
+      logger.warn(`Invalid webhook signature from ${provider}`);
       throw new AppError("Invalid webhook signature", 401);
     }
 
@@ -221,13 +221,13 @@ class PaymentService {
     // Find payment record
     const payment = await Payment.findOne({ reference });
     if (!payment) {
-      console.error(`Payment not found for reference: ${reference}`);
+      logger.warn(`Payment not found for reference: ${reference}`);
       throw new AppError("Payment not found", 404);
     }
 
     // Check idempotency (already processed)
     if (payment.webhookReceived && payment.status === "completed") {
-      console.log(`Webhook already processed for reference: ${reference}`);
+      logger.info(`Webhook already processed for reference: ${reference}`);
       return { message: "Webhook already processed", payment };
     }
 
@@ -295,7 +295,7 @@ class PaymentService {
       if (provider === "flutterwave") {
         const secretHash = process.env.FLUTTERWAVE_WEBHOOK_SECRET;
         if (!secretHash) {
-          console.error("Flutterwave webhook secret not configured");
+          logger.error("Flutterwave webhook secret not configured");
           return false;
         }
 
@@ -313,7 +313,7 @@ class PaymentService {
       } else if (provider === "paystack") {
         const secretKey = process.env.PAYSTACK_SECRET_KEY;
         if (!secretKey) {
-          console.error("Paystack secret key not configured");
+          logger.error("Paystack secret key not configured");
           return false;
         }
 
@@ -335,10 +335,10 @@ class PaymentService {
         );
       }
 
-      console.error(`Unknown payment provider: ${provider}`);
+      logger.error(`Unknown payment provider: ${provider}`);
       return false;
     } catch (error) {
-      console.error(`Webhook signature verification failed: ${error.message}`);
+      logger.error(`Webhook signature verification failed: ${error.message}`);
       return false;
     }
   }
@@ -391,7 +391,7 @@ class PaymentService {
         throw new AppError("Invalid payment provider", 400);
       }
     } catch (error) {
-      console.error(`Payment requery failed: ${error.message}`);
+      logger.error(`Payment requery failed: ${error.message}`);
       // Track requery attempts and timestamp even on failure
       payment.requeryAttempts += 1;
       payment.lastRequeryAt = new Date();

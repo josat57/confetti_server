@@ -18,8 +18,7 @@ class VisualAIService:
     def __init__(self):
         self.image_models = {
             'stable-diffusion': {'available': False, 'fallback': True},
-            'dall-e': {'available': False, 'fallback': True},
-            'midjourney': {'available': False, 'fallback': True}
+            'dall-e-3': {'available': False, 'fallback': True},
         }
         
         # Fallback image URLs (placeholder images)
@@ -87,8 +86,8 @@ class VisualAIService:
             logger.error(f"Image generation failed: {e}")
             return self._get_fallback_image_response(prompt, style)
     
-    def analyze_image(self, image_url: str, prompt: str = None, 
-                     model: str = 'gpt-4-vision', analysis_type: str = 'general') -> Dict[str, Any]:
+    def analyze_image(self, image_url: str, prompt: str = None,
+                     model: str = 'gpt-4o', analysis_type: str = 'general') -> Dict[str, Any]:
         """
         Analyze images using AI vision models (fallback implementation)
         """

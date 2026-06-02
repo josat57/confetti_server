@@ -69,7 +69,7 @@ export const createTask = async (req, res) => {
     res.status(500).json({
       success: false,
       message: "Error creating task",
-      error: error.message,
+      error: process.env.NODE_ENV === "production" ? undefined : error.message,
     });
   }
 };
@@ -146,7 +146,7 @@ export const getTasks = async (req, res) => {
     res.status(500).json({
       success: false,
       message: "Error fetching tasks",
-      error: error.message,
+      error: process.env.NODE_ENV === "production" ? undefined : error.message,
     });
   }
 };
@@ -177,7 +177,7 @@ export const getTaskById = async (req, res) => {
     res.status(500).json({
       success: false,
       message: "Error fetching task",
-      error: error.message,
+      error: process.env.NODE_ENV === "production" ? undefined : error.message,
     });
   }
 };
@@ -228,7 +228,7 @@ export const updateTask = async (req, res) => {
     res.status(500).json({
       success: false,
       message: "Error updating task",
-      error: error.message,
+      error: process.env.NODE_ENV === "production" ? undefined : error.message,
     });
   }
 };
@@ -257,7 +257,7 @@ export const deleteTask = async (req, res) => {
     res.status(500).json({
       success: false,
       message: "Error deleting task",
-      error: error.message,
+      error: process.env.NODE_ENV === "production" ? undefined : error.message,
     });
   }
 };
@@ -287,7 +287,7 @@ export const completeTask = async (req, res) => {
     res.status(500).json({
       success: false,
       message: "Error completing task",
-      error: error.message,
+      error: process.env.NODE_ENV === "production" ? undefined : error.message,
     });
   }
 };
@@ -320,7 +320,7 @@ export const addComment = async (req, res) => {
     res.status(500).json({
       success: false,
       message: "Error adding comment",
-      error: error.message,
+      error: process.env.NODE_ENV === "production" ? undefined : error.message,
     });
   }
 };
@@ -339,9 +339,11 @@ export const getUpcomingTasks = async (req, res) => {
         $lte: futureDate,
       },
     })
+      .limit(200)
       .populate("assignee", "name email")
       .populate("event", "title startDate")
-      .sort({ dueDate: 1 });
+      .sort({ dueDate: 1 })
+      .lean();
 
     res.status(200).json({
       success: true,
@@ -352,7 +354,7 @@ export const getUpcomingTasks = async (req, res) => {
     res.status(500).json({
       success: false,
       message: "Error fetching upcoming tasks",
-      error: error.message,
+      error: process.env.NODE_ENV === "production" ? undefined : error.message,
     });
   }
 };
@@ -364,9 +366,11 @@ export const getOverdueTasks = async (req, res) => {
       status: { $ne: "completed" },
       dueDate: { $lt: new Date() },
     })
+      .limit(200)
       .populate("assignee", "name email")
       .populate("event", "title startDate")
-      .sort({ dueDate: 1 });
+      .sort({ dueDate: 1 })
+      .lean();
 
     res.status(200).json({
       success: true,
@@ -377,7 +381,7 @@ export const getOverdueTasks = async (req, res) => {
     res.status(500).json({
       success: false,
       message: "Error fetching overdue tasks",
-      error: error.message,
+      error: process.env.NODE_ENV === "production" ? undefined : error.message,
     });
   }
 };

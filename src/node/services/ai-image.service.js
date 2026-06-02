@@ -10,13 +10,12 @@ class AIImageService {
   constructor() {
     this.imageModels = {
       dalle: "dall-e-3",
-      midjourney: "midjourney-v6",
       stable: "stable-diffusion-xl",
     };
 
     this.analysisModels = {
-      vision: "gpt-4-vision-preview",
-      claude: "claude-3-vision",
+      vision: "gpt-4o",
+      claude: "claude-sonnet-4-6",
     };
   }
 
@@ -314,7 +313,7 @@ class AIImageService {
       2: "stable-diffusion",
       3: "dall-e-3",
       4: "dall-e-3",
-      5: "midjourney-v6",
+      5: "dall-e-3",
     };
 
     return modelsByPlan[planLevel] || "stable-diffusion";

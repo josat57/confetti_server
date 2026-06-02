@@ -14,6 +14,7 @@ __pycache__
 *.pyd
 .Python
 env
+src/python/venv
 pip-log.txt
 pip-delete-this-directory.txt
 .tox
@@ -26,3 +27,8 @@ coverage.xml
 *.log
 .DS_Store
 .vscode
+logs
+*.sh
+tests
+docs
+*.md

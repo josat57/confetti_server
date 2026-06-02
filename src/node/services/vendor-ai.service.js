@@ -15,13 +15,12 @@ import crypto from "crypto";
 class VendorAIService {
   constructor() {
     this.aiModels = {
-      gpt4: "gpt-4-turbo-preview",
-      claude: "claude-3-sonnet",
-      gemini: "gemini-pro",
+      gpt4: "gpt-4o",
+      claude: "claude-sonnet-4-6",
+      gemini: "gemini-2.0-flash",
     };
     this.imageModels = {
       dalle: "dall-e-3",
-      midjourney: "midjourney-v6",
       stable: "stable-diffusion-xl",
     };
   }

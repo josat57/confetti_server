@@ -5,6 +5,7 @@ import jwt from "jsonwebtoken";
 import Admin from "../models/Admin.js";
 import { createError } from "../utils/error.js";
 import speakeasy from "speakeasy";
+import { logger } from "../utils/logger.js";
 
 export const protect = async (req, res, next) => {
   try {
@@ -25,24 +26,14 @@ export const protect = async (req, res, next) => {
 
     // Verify token
     const decoded = verifyAccessToken(token);
-    console.log("JWT decoded payload:", JSON.stringify(decoded, null, 2));
 
     // Check if user still exists
     const user = await User.findById(decoded.id);
     if (!user) {
-      console.log(
-        `Authentication failed: User not found for ID: ${decoded.id}`
-      );
-      console.log("Decoded token contents:", decoded);
-
       // Check if this might be an admin token
       if (decoded.type === "admin") {
-        console.log(
-          "This appears to be an admin token, checking Admin model..."
-        );
         const admin = await Admin.findById(decoded.id);
         if (admin) {
-          console.log("Found admin user, attaching as req.admin");
           req.admin = admin;
           req.user = admin; // Also attach as user for compatibility
           await populateUserProfiles(req);
@@ -82,6 +73,9 @@ export const protect = async (req, res, next) => {
 
 export const restrictTo = (...roles) => {
   return (req, res, next) => {
+    if (!req.user) {
+      return next(new AppError("Not authenticated. Please log in.", 401));
+    }
     if (!roles.includes(req.user.role)) {
       return next(
         new AppError("You do not have permission to perform this action", 403)
@@ -171,7 +165,7 @@ const populateUserProfiles = async (req) => {
     }
   } catch (error) {
     // Don't fail if profile lookup fails
-    console.log("Profile lookup failed:", error.message);
+    logger.warn("Profile lookup failed:", { message: error.message });
   }
 };
 

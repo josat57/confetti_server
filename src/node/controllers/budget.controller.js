@@ -1,6 +1,7 @@
 import Budget from "../models/budget.model.js";
 import Event from "../models/event.model.js";
 import { applyBudgetTemplate } from "../config/budget-templates.js";
+import { logger } from "../utils/logger.js";
 
 export const createOrUpdateBudget = async (req, res) => {
   try {
@@ -61,7 +62,7 @@ export const createOrUpdateBudget = async (req, res) => {
     res.status(500).json({
       success: false,
       message: "Error creating/updating budget",
-      error: error.message,
+      error: process.env.NODE_ENV === "production" ? undefined : error.message,
     });
   }
 };
@@ -98,7 +99,7 @@ export const getBudget = async (req, res) => {
     res.status(500).json({
       success: false,
       message: "Error fetching budget",
-      error: error.message,
+      error: process.env.NODE_ENV === "production" ? undefined : error.message,
     });
   }
 };
@@ -137,7 +138,7 @@ export const addExpense = async (req, res) => {
     res.status(500).json({
       success: false,
       message: "Error adding expense",
-      error: error.message,
+      error: process.env.NODE_ENV === "production" ? undefined : error.message,
     });
   }
 };
@@ -173,7 +174,7 @@ export const updateExpense = async (req, res) => {
     res.status(500).json({
       success: false,
       message: "Error updating expense",
-      error: error.message,
+      error: process.env.NODE_ENV === "production" ? undefined : error.message,
     });
   }
 };
@@ -205,7 +206,7 @@ export const deleteExpense = async (req, res) => {
     res.status(500).json({
       success: false,
       message: "Error deleting expense",
-      error: error.message,
+      error: process.env.NODE_ENV === "production" ? undefined : error.message,
     });
   }
 };
@@ -213,8 +214,10 @@ export const deleteExpense = async (req, res) => {
 export const getBudgetSummary = async (req, res) => {
   try {
     const budgets = await Budget.find({ planner: req.user._id })
+      .limit(500)
       .populate("event", "title startDate status")
-      .select("totalBudget currency expenses event");
+      .select("totalBudget currency expenses event")
+      .lean();
 
     const summary = {
       totalBudgets: budgets.length,
@@ -256,7 +259,7 @@ export const getBudgetSummary = async (req, res) => {
     res.status(500).json({
       success: false,
       message: "Error fetching budget summary",
-      error: error.message,
+      error: process.env.NODE_ENV === "production" ? undefined : error.message,
     });
   }
 };
@@ -268,8 +271,10 @@ export const getPaymentsDue = async (req, res) => {
     futureDate.setDate(futureDate.getDate() + parseInt(days));
 
     const budgets = await Budget.find({ planner: req.user._id })
+      .limit(500)
       .populate("event", "title startDate")
-      .populate("expenses.vendor", "name businessName");
+      .populate("expenses.vendor", "name businessName")
+      .lean();
 
     const paymentsDue = [];
     const now = new Date();
@@ -317,7 +322,7 @@ export const getPaymentsDue = async (req, res) => {
     res.status(500).json({
       success: false,
       message: "Error fetching payments due",
-      error: error.message,
+      error: process.env.NODE_ENV === "production" ? undefined : error.message,
     });
   }
 };

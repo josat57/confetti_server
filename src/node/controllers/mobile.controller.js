@@ -132,7 +132,7 @@ export const syncOfflineChanges = async (req, res, next) => {
         logger.error("Error syncing change:", error);
         results.failed.push({
           localId: change.localId,
-          error: error.message,
+          error: process.env.NODE_ENV === "production" ? undefined : error.message,
         });
       }
     }

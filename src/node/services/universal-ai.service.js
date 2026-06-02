@@ -12,6 +12,7 @@ import Vendor from "../models/vendor.model.js";
 import User from "../models/user.model.js";
 import crypto from "crypto";
 import mongoose from "mongoose";
+import redis from "../config/redis.js";
 
 /**
  * Universal AI Service for Event Planning
@@ -21,20 +22,19 @@ import mongoose from "mongoose";
 class UniversalAIService {
   constructor() {
     this.aiModels = {
-      gpt4: "gpt-4-turbo-preview",
-      claude: "claude-3-sonnet",
-      gemini: "gemini-pro",
-      local: "local-model",
+      gpt4: "gpt-4o",
+      claude: "claude-sonnet-4-6",
+      gemini: "gemini-2.0-flash",
+      local: "local-scoring",
     };
 
     this.imageModels = {
       dalle: "dall-e-3",
-      midjourney: "midjourney-v6",
       stable: "stable-diffusion-xl",
     };
 
-    // Initialize session cache for guest plans
-    this.sessionCache = new Map();
+    // Session cache backed by Redis (Fix 4 — replaces in-memory Map)
+    this.redis = redis;
 
     // Feature access levels by plan
     this.featureAccess = {
@@ -1545,103 +1545,46 @@ class UniversalAIService {
     const budget = params.budget || {};
     const location = params.location || {};
     const clientProfile = params.clientProfile || {};
+    const budgetAmount = (budget.amount || 0).toLocaleString();
+    const currency = budget.currency || "NGN";
+    const planLevel = params.userContext?.planLevel || 1;
+    const perHead = budget.amount && params.guestCount
+      ? Math.round(budget.amount / params.guestCount)
+      : null;
 
-    return `
-      You are a world-class event planning expert with 15+ years of experience specializing in ${
-        params.eventType
-      } events. 
-      Analyze this event planning request with deep cultural intelligence and market expertise.
+    return `You are an expert event planning AI. Analyze this ${params.eventType} event request and respond with valid JSON only — no markdown, no extra text.
 
-      === CLIENT PROFILE ===
-      Event Type: ${params.eventType}
-      Budget: ${budget.currency || "NGN"} ${(
-      budget.amount || 0
-    ).toLocaleString()}
-      Guest Count: ${params.guestCount || "Not specified"}
-      Location: ${location.city || "Not specified"}, ${
-      location.country || "Not specified"
-    }
-      Date: ${params.eventDate || "Not specified"}
-      Theme: ${params.theme || "Client's preference to be determined"}
-      
-      Client Demographics:
-      - Age: ${clientProfile.age || "Not specified"}
-      - Lifestyle: ${clientProfile.lifestyle || "Not specified"}
-      - Cultural Background: ${
-        clientProfile.culturalBackground || "Not specified"
-      }
-      - Experience Level: ${
-        clientProfile.experience || "First-time event planner"
-      }
-      - Personality: ${clientProfile.personality || "Balanced"}
-      
-      Special Requirements: ${params.specialRequirements || "None specified"}
-      
-      === ANALYSIS REQUIREMENTS ===
-      Provide a comprehensive analysis that includes:
-      
-      1. **Cultural Intelligence Assessment**:
-         - Identify cultural traditions and customs relevant to this event
-         - Suggest culturally appropriate elements often overlooked
-         - Highlight potential cultural sensitivities
-      
-      2. **Budget Reality Check**:
-         - Assess if budget is realistic for the event scope
-         - Identify potential budget gaps or opportunities
-         - Suggest budget optimization strategies
-      
-      3. **Hidden Requirements Discovery**:
-         - List essential components typically needed for ${
-           params.eventType
-         } events
-         - Identify elements the client might not have considered
-         - Suggest premium upgrades within budget
-      
-      4. **Guest Experience Mapping**:
-         - Consider guest demographics and needs
-         - Plan for accessibility and dietary requirements
-         - Design memorable moments and experiences
-      
-      5. **Risk Assessment**:
-         - Identify potential challenges specific to this event type and location
-         - Suggest mitigation strategies
-         - Plan for weather, vendor, and logistical contingencies
-      
-      6. **Success Metrics Definition**:
-         - Define what success looks like for this specific client
-         - Identify key performance indicators
-         - Suggest feedback collection methods
-      
-      === OUTPUT FORMAT ===
-      Provide detailed, actionable insights in JSON format:
-      {
-        "clientPersonality": "Detailed personality assessment",
-        "culturalConsiderations": ["tradition1", "custom2", "sensitivity3"],
-        "budgetAssessment": {
-          "realistic": true/false,
-          "recommendations": ["suggestion1", "suggestion2"],
-          "potentialGaps": ["gap1", "gap2"]
-        },
-        "hiddenNeeds": ["need1", "need2", "need3"],
-        "guestExperienceFactors": ["factor1", "factor2"],
-        "riskFactors": [
-          {
-            "risk": "risk description",
-            "probability": "low/medium/high",
-            "mitigation": "mitigation strategy"
-          }
-        ],
-        "successMetrics": ["metric1", "metric2", "metric3"],
-        "personalizationOpportunities": ["opportunity1", "opportunity2"],
-        "essentialComponents": ["component1", "component2", "component3"],
-        "culturalElements": ["element1", "element2"],
-        "budgetOptimization": ["tip1", "tip2", "tip3"]
-      }
-      
-      Tailor the depth and sophistication to plan level ${
-        params.userContext.planLevel
-      }.
-    `;
+EVENT SPECIFICS:
+  Type: ${params.eventType}
+  Budget: ${currency} ${budgetAmount}${perHead ? ` (${currency} ${perHead.toLocaleString()} per guest)` : ""}
+  Guests: ${params.guestCount || "unspecified"}
+  Location: ${location.city || "?"}, ${location.state || ""}, ${location.country || ""}
+  Date: ${params.eventDate || "unspecified"}
+  Theme: ${params.theme || "to be determined"}
+  Special requirements: ${params.specialRequirements || "none"}
+  Client background: age=${clientProfile.age || "?"}, lifestyle=${clientProfile.lifestyle || "?"}, cultural=${clientProfile.culturalBackground || "?"}
+
+Respond with this exact JSON schema:
+{
+  "personality": "string — one sentence personality and expectation profile",
+  "cultural": ["string — culturally relevant traditions/customs for this event type and location"],
+  "hiddenNeeds": ["string — things they likely haven't thought of but will need"],
+  "emotionalJourney": {
+    "planning": "string — emotional state during planning",
+    "event": "string — emotional state on event day",
+    "post": "string — emotional state after event"
+  },
+  "successMetrics": ["string — how they will judge if the event was successful"],
+  "personalization": ["string — specific personalization ideas for this client"],
+  "budgetReality": {
+    "feasible": true,
+    "rating": "excellent|good|tight|challenging",
+    "concerns": ["string"],
+    "tips": ["string — specific cost-saving actions for this event type and location"]
+  },
+  "essentialComponents": ["string — must-have elements for a ${params.eventType} at this budget and guest count"],
+  "riskFactors": [{"risk": "string", "severity": "low|medium|high", "mitigation": "string"}]
+}`;
   }
 
   getPlanNameByLevel(level) {
@@ -2166,46 +2109,34 @@ class UniversalAIService {
    */
   async createGuestSession(existingToken = null) {
     try {
-      if (!this.guestSessions) {
-        this.guestSessions = new Map();
-      }
+      const TTL_SECONDS = 7 * 24 * 60 * 60; // 7 days
+      let sessionToken = existingToken || crypto.randomBytes(32).toString("hex");
+      const redisKey = `guest_session:${sessionToken}`;
 
-      let sessionToken = existingToken;
-
-      // If no existing token provided, create new one
-      if (!sessionToken) {
-        sessionToken = crypto.randomBytes(32).toString("hex");
-      }
-
-      // Check if session already exists
-      if (this.guestSessions.has(sessionToken)) {
-        const session = this.guestSessions.get(sessionToken);
-        // Extend session if it's still valid
-        if (new Date() <= session.expiresAt) {
-          session.lastAccessed = new Date();
+      // Check if existing session is still valid in Redis
+      if (existingToken) {
+        const existing = await this.redis.get(redisKey);
+        if (existing) {
+          const session = JSON.parse(existing);
+          session.lastAccessed = new Date().toISOString();
+          await this.redis.setex(redisKey, TTL_SECONDS, JSON.stringify(session));
           return { sessionToken, session, isNew: false };
-        } else {
-          // Session expired, remove it
-          this.guestSessions.delete(sessionToken);
         }
       }
 
-      // Create new session
       const sessionData = {
         sessionToken,
-        createdAt: new Date(),
-        lastAccessed: new Date(),
-        expiresAt: new Date(Date.now() + 7 * 24 * 60 * 60 * 1000), // 7 days
-        planLevel: 1, // Basic level for guests
+        createdAt: new Date().toISOString(),
+        lastAccessed: new Date().toISOString(),
+        expiresAt: new Date(Date.now() + TTL_SECONDS * 1000).toISOString(),
+        planLevel: 1,
         planHistory: [],
         preferences: {},
         totalPlansGenerated: 0,
         totalRefinements: 0,
-        ipAddress: null, // Will be set by caller
-        userAgent: null, // Will be set by caller
       };
 
-      this.guestSessions.set(sessionToken, sessionData);
+      await this.redis.setex(redisKey, TTL_SECONDS, JSON.stringify(sessionData));
 
       logger.info("Guest session created", {
         sessionToken: sessionToken.substring(0, 10) + "...",
@@ -2224,21 +2155,15 @@ class UniversalAIService {
    */
   async validateGuestSession(sessionToken) {
     try {
-      if (!this.guestSessions || !this.guestSessions.has(sessionToken)) {
-        return null;
-      }
-
-      const session = this.guestSessions.get(sessionToken);
-
-      // Check if session is expired
-      if (new Date() > session.expiresAt) {
-        this.guestSessions.delete(sessionToken);
-        return null;
-      }
-
-      // Update last accessed
-      session.lastAccessed = new Date();
-
+      const raw = await this.redis.get(`guest_session:${sessionToken}`);
+      if (!raw) return null;
+      const session = JSON.parse(raw);
+      session.lastAccessed = new Date().toISOString();
+      await this.redis.setex(
+        `guest_session:${sessionToken}`,
+        7 * 24 * 60 * 60,
+        JSON.stringify(session)
+      );
       return session;
     } catch (error) {
       logger.error("Failed to validate guest session:", error);
@@ -2252,41 +2177,38 @@ class UniversalAIService {
   async updateGuestSession(sessionToken, activity) {
     try {
       const session = await this.validateGuestSession(sessionToken);
-      if (!session) {
-        return false;
-      }
+      if (!session) return false;
 
-      // Update session statistics
       if (activity.type === "plan_generated") {
-        session.totalPlansGenerated++;
+        session.totalPlansGenerated = (session.totalPlansGenerated || 0) + 1;
+        session.planHistory = session.planHistory || [];
         session.planHistory.push({
           planId: activity.planId,
           sessionToken: activity.sessionToken,
           eventType: activity.eventType,
-          createdAt: new Date(),
+          createdAt: new Date().toISOString(),
         });
       } else if (activity.type === "plan_refined") {
-        session.totalRefinements++;
+        session.totalRefinements = (session.totalRefinements || 0) + 1;
       }
 
-      // Update preferences based on activity
       if (activity.preferences) {
-        session.preferences = {
-          ...session.preferences,
-          ...activity.preferences,
-        };
+        session.preferences = { ...session.preferences, ...activity.preferences };
       }
 
-      // Upgrade plan level based on usage (gamification)
-      if (session.totalPlansGenerated >= 3 && session.planLevel < 2) {
-        session.planLevel = 2; // Upgrade to starter level features
+      if ((session.totalPlansGenerated || 0) >= 3 && session.planLevel < 2) {
+        session.planLevel = 2;
         logger.info("Guest session upgraded", {
           sessionToken: sessionToken.substring(0, 10) + "...",
-          newPlanLevel: session.planLevel,
-          totalPlans: session.totalPlansGenerated,
+          newPlanLevel: 2,
         });
       }
 
+      await this.redis.setex(
+        `guest_session:${sessionToken}`,
+        7 * 24 * 60 * 60,
+        JSON.stringify(session)
+      );
       return true;
     } catch (error) {
       logger.error("Failed to update guest session:", error);
@@ -2304,27 +2226,25 @@ class UniversalAIService {
         return [];
       }
 
-      // Get plans from session cache that belong to this session
+      // Get plans from Redis cache that belong to this session
       const sessionPlans = [];
 
-      if (this.sessionCache) {
-        for (const [planToken, planData] of this.sessionCache.entries()) {
-          // Check if this plan belongs to the guest session
-          if (session.planHistory.some((p) => p.sessionToken === planToken)) {
-            sessionPlans.push({
-              sessionToken: planToken,
-              title: this.generatePlanTitle(
-                planData.planData.originalRequest || {}
-              ),
-              eventType: planData.planData.eventType || "event",
-              createdAt: planData.createdAt,
-              expiresAt: planData.expiresAt,
-            });
-          }
+      const planHistory = session.planHistory || [];
+      for (const p of planHistory) {
+        const raw = await this.redis.get(`session_plan:${p.sessionToken}`);
+        if (raw) {
+          const planData = JSON.parse(raw);
+          sessionPlans.push({
+            sessionToken: p.sessionToken,
+            title: this.generatePlanTitle(planData.planData?.originalRequest || {}),
+            eventType: planData.planData?.eventType || "event",
+            createdAt: planData.createdAt,
+            expiresAt: planData.expiresAt,
+          });
         }
       }
 
-      return sessionPlans.sort((a, b) => b.createdAt - a.createdAt);
+      return sessionPlans.sort((a, b) => new Date(b.createdAt) - new Date(a.createdAt));
     } catch (error) {
       logger.error("Failed to get guest session plans:", error);
       return [];
@@ -2332,52 +2252,40 @@ class UniversalAIService {
   }
 
   /**
-   * Store session plan for guests (enhanced version)
+   * Store session plan for guests — backed by Redis (Fix 4)
    */
   async storeSessionPlan(sessionToken, planData, guestSessionToken = null) {
     try {
-      // Store in memory cache with expiration (24 hours)
-      // In production, you might want to use Redis for this
-      if (!this.sessionCache) {
-        this.sessionCache = new Map();
-      }
-
+      const TTL = 24 * 60 * 60; // 24 hours
       const sessionData = {
         planData,
-        guestSessionToken, // Link to guest session
-        createdAt: new Date(),
-        expiresAt: new Date(Date.now() + 24 * 60 * 60 * 1000), // 24 hours
+        guestSessionToken,
+        createdAt: new Date().toISOString(),
+        expiresAt: new Date(Date.now() + TTL * 1000).toISOString(),
       };
 
-      this.sessionCache.set(sessionToken, sessionData);
+      await this.redis.setex(
+        `session_plan:${sessionToken}`,
+        TTL,
+        JSON.stringify(sessionData)
+      );
 
-      // Update guest session if provided
       if (guestSessionToken) {
         await this.updateGuestSession(guestSessionToken, {
           type: "plan_generated",
           planId: planData.planId,
-          sessionToken: sessionToken,
+          sessionToken,
           eventType: planData.eventType,
-          preferences: {
-            eventType: planData.eventType,
-            theme: planData.theme,
-          },
+          preferences: { eventType: planData.eventType, theme: planData.theme },
         });
       }
 
-      // Clean up expired sessions periodically
-      this.cleanupExpiredSessions();
-
-      logger.info("Session plan stored", {
+      logger.info("Session plan stored in Redis", {
         sessionToken: sessionToken.substring(0, 10) + "...",
-        guestSessionToken: guestSessionToken
-          ? guestSessionToken.substring(0, 10) + "..."
-          : null,
         expiresAt: sessionData.expiresAt,
       });
     } catch (error) {
       logger.error("Failed to store session plan:", error);
-      // Don't throw error as this is not critical for the main flow
     }
   }
 
@@ -2388,22 +2296,14 @@ class UniversalAIService {
     const { resultId, userContext } = params;
 
     try {
-      // First, try to get from session cache (for guests)
-      if (this.sessionCache && this.sessionCache.has(resultId)) {
-        const sessionData = this.sessionCache.get(resultId);
-
-        // Check if session is expired
-        if (new Date() > sessionData.expiresAt) {
-          this.sessionCache.delete(resultId);
-          return null;
-        }
-
-        // Enhance plan based on current user context
+      // First, try to get from Redis session cache (for guests)
+      const rawSessionPlan = await this.redis.get(`session_plan:${resultId}`);
+      if (rawSessionPlan) {
+        const sessionData = JSON.parse(rawSessionPlan);
         const enhancedPlan = await this.enhancePlanForUser(
           sessionData.planData,
           userContext
         );
-
         return {
           eventPlan: enhancedPlan,
           generatedAt: sessionData.createdAt,
@@ -2563,14 +2463,7 @@ class UniversalAIService {
    * Clean up expired session plans
    */
   cleanupExpiredSessions() {
-    if (!this.sessionCache) return;
-
-    const now = new Date();
-    for (const [token, data] of this.sessionCache.entries()) {
-      if (now > data.expiresAt) {
-        this.sessionCache.delete(token);
-      }
-    }
+    // Redis TTL handles expiration automatically — nothing to do here.
   }
   /**
    * Auto-save AI plan for authenticated users
@@ -2963,29 +2856,23 @@ Respond in JSON format:
         }
       }
 
-      // If not found as saved plan, try session cache (for guests or session tokens)
-      if (
-        !existingPlan &&
-        this.sessionCache &&
-        this.sessionCache.has(resultId)
-      ) {
-        const sessionData = this.sessionCache.get(resultId);
-
-        // Check if session is expired
-        if (new Date() <= sessionData.expiresAt) {
-          // Create a temporary plan object for refinement
+      // If not found as saved plan, try Redis session cache (for guests or session tokens)
+      if (!existingPlan) {
+        const rawSession = await this.redis.get(`session_plan:${resultId}`);
+        if (rawSession) {
+          const sessionData = JSON.parse(rawSession);
           existingPlan = {
             planId: resultId,
             aiPlan: sessionData.planData,
-            originalRequest: sessionData.planData.originalRequest || {},
-            // Mock methods for session plans
+            originalRequest: sessionData.planData?.originalRequest || {},
             addRefinement: () => {},
             save: async () => {
-              // Update session cache with refined plan
               sessionData.planData = existingPlan.aiPlan;
-              this.sessionCache.set(resultId, sessionData);
-
-              // Update guest session statistics
+              await this.redis.setex(
+                `session_plan:${resultId}`,
+                24 * 60 * 60,
+                JSON.stringify(sessionData)
+              );
               if (sessionData.guestSessionToken) {
                 await this.updateGuestSession(sessionData.guestSessionToken, {
                   type: "plan_refined",
@@ -2995,8 +2882,6 @@ Respond in JSON format:
             },
           };
           planSource = "session";
-        } else {
-          this.sessionCache.delete(resultId);
         }
       }
 
@@ -4600,12 +4485,10 @@ Respond with a JSON object containing:
       // Convert all plans from guest session to saved plans
       for (const planHistory of guestSession.planHistory) {
         try {
-          // Get plan data from session cache
-          if (
-            this.sessionCache &&
-            this.sessionCache.has(planHistory.sessionToken)
-          ) {
-            const sessionData = this.sessionCache.get(planHistory.sessionToken);
+          // Get plan data from Redis session cache
+          const rawPlan = await this.redis.get(`session_plan:${planHistory.sessionToken}`);
+          if (rawPlan) {
+            const sessionData = JSON.parse(rawPlan);
 
             // Create saved plan from session data
             const savedPlan = await this.autoSavePlan({
@@ -4641,10 +4524,8 @@ Respond with a JSON object containing:
         }
       }
 
-      // Clean up guest session
-      if (this.guestSessions) {
-        this.guestSessions.delete(guestSessionToken);
-      }
+      // Clean up guest session from Redis
+      await this.redis.del(`guest_session:${guestSessionToken}`);
 
       logger.info("Guest session converted to user account", {
         guestSessionToken: guestSessionToken.substring(0, 10) + "...",

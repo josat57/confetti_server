@@ -8,32 +8,36 @@ import {
 
 class PythonService {
   constructor() {
-    this.pythonApiUrl = process.env.PYTHON_API_URL || "http://python-api:5600";
-    this.aiTimeout = 60000; // 60 seconds for complex AI processing
-    this.retryAttempts = 3;
+    this.pythonApiUrl = process.env.PYTHON_API_URL || "http://localhost:5600";
+    this.aiTimeout = 90000; // 90 seconds — real AI calls take longer
+    this.retryAttempts = 2;  // Fewer retries to avoid excessive latency
     this.apiKey = process.env.PYTHON_API_KEY;
 
-    // AI model configurations
+    // AI model configurations — updated to current model names (Fix 5)
     this.models = {
       gpt4: {
         endpoint: "/ai/gpt4",
         maxTokens: 4000,
-        temperature: 0.7,
+        temperature: 0.4,
+        modelName: "gpt-4o",
       },
       claude: {
         endpoint: "/ai/claude",
         maxTokens: 3000,
-        temperature: 0.6,
+        temperature: 0.4,
+        modelName: "claude-sonnet-4-6",
       },
       gemini: {
         endpoint: "/ai/gemini",
         maxTokens: 2000,
-        temperature: 0.8,
+        temperature: 0.5,
+        modelName: "gemini-2.0-flash",
       },
       local: {
         endpoint: "/ai/local",
         maxTokens: 1000,
         temperature: 0.5,
+        modelName: "local-scoring",
       },
     };
   }
@@ -318,7 +322,7 @@ class PythonService {
       const requestData = {
         image_url: imageUrl,
         prompt: prompt,
-        model: model || "gpt-4-vision",
+        model: model || "gpt-4o",
         analysis_type: analysisType || "general",
         detailed_analysis: true,
       };
@@ -563,17 +567,83 @@ class PythonService {
     }
   }
 
-  getFallbackMarketInsights(params) {
+  /**
+   * Stream a plan generation from the Python SSE endpoint (Fix 6).
+   * Calls the Flask /ai/stream-plan endpoint and pipes chunks to the Express response.
+   *
+   * @param {Object} payload   - { event_data, vendors, vendor_statistics, user_context }
+   * @param {Object} res       - Express response object (must not be ended yet)
+   */
+  async streamPlan(payload, res) {
+    const url = `${this.pythonApiUrl}/ai/stream-plan`;
+
+    res.setHeader("Content-Type", "text/event-stream");
+    res.setHeader("Cache-Control", "no-cache");
+    res.setHeader("X-Accel-Buffering", "no");
+    res.flushHeaders();
+
+    try {
+      const response = await axios.post(url, payload, {
+        responseType: "stream",
+        timeout: this.aiTimeout,
+        headers: { "Content-Type": "application/json" },
+      });
+
+      response.data.on("data", (chunk) => {
+        res.write(chunk);
+      });
+
+      await new Promise((resolve, reject) => {
+        response.data.on("end", resolve);
+        response.data.on("error", reject);
+      });
+    } catch (error) {
+      logger.error("streamPlan failed:", error.message);
+      res.write(`data: ${JSON.stringify({ error: error.message, phase: "error" })}\n\n`);
+    } finally {
+      res.end();
+    }
+  }
+
+  /**
+   * Record user feedback on a generated plan — feeds the learning loop.
+   */
+  async recordFeedback({ userId, userType, rating, comments, successful }) {
+    try {
+      const response = await this.makeRequest("/ai/feedback", {
+        user_id: userId,
+        user_type: userType,
+        rating,
+        comments,
+        successful,
+      });
+      return response;
+    } catch (error) {
+      logger.error("recordFeedback failed:", error.message);
+      return { recorded: false, error: error.message };
+    }
+  }
+
+  /**
+   * Get the learning status / metrics for a user.
+   */
+  async getUserLearningStatus(userId, userType) {
+    try {
+      return await this.makeRequest(
+        `/ai/model-metrics/${userType}/${userId}`,
+        {},
+        "GET"
+      );
+    } catch (error) {
+      logger.error("getUserLearningStatus failed:", error.message);
+      return { exists: false };
+    }
+  }
+
+  getFallbackMarketInsights() {
     return {
-      insights: {
-        demandLevel: "moderate",
-        competitionLevel: "medium",
-        pricingTrend: "stable",
-      },
-      trends: {
-        seasonal: "spring_peak",
-        popular_themes: ["modern", "rustic", "elegant"],
-      },
+      insights: { demandLevel: "moderate", competitionLevel: "medium", pricingTrend: "stable" },
+      trends: { seasonal: "spring_peak", popular_themes: ["modern", "rustic", "elegant"] },
       confidence: 0.6,
       dataSource: "fallback",
     };

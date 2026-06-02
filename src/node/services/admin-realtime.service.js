@@ -3,6 +3,7 @@ import jwt from "jsonwebtoken";
 import User from "../models/user.model.js";
 import AuditLog from "../models/auditLog.model.js";
 import { createError } from "../utils/error.js";
+import { logger } from "../utils/logger.js";
 
 class AdminRealtimeService {
   constructor() {
@@ -25,7 +26,7 @@ class AdminRealtimeService {
     this.setupMiddleware();
     this.setupEventHandlers();
 
-    console.log("✅ Admin Real-time service initialized");
+    logger.info("Admin Real-time service initialized");
   }
 
   // Setup authentication middleware
@@ -102,7 +103,7 @@ class AdminRealtimeService {
     // Broadcast admin online status
     this.broadcastAdminStatus(adminId, "online");
 
-    console.log(`Admin ${socket.admin.email} connected (${socket.id})`);
+    logger.info(`Admin connected: ${socket.admin.email} (${socket.id})`);
   }
 
   // Handle disconnection
@@ -125,7 +126,7 @@ class AdminRealtimeService {
       members.delete(socket.id);
     });
 
-    console.log(`Admin ${socket.admin.email} disconnected (${socket.id})`);
+    logger.info(`Admin disconnected: ${socket.admin.email} (${socket.id})`);
   }
 
   // Handle join room
@@ -145,7 +146,7 @@ class AdminRealtimeService {
     this.rooms.get(room).add(socket.id);
 
     socket.emit("room_joined", { room, timestamp: new Date() });
-    console.log(`Admin ${socket.admin.email} joined room: ${room}`);
+    logger.info(`Admin ${socket.admin.email} joined room: ${room}`);
   }
 
   // Handle leave room

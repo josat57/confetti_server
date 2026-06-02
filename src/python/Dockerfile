@@ -2,7 +2,7 @@
 FROM python:3.9-slim
 
 # Set the working directory
-WORKDIR ./
+WORKDIR /usr/src/app
 
 # Install build dependencies
 RUN apt-get update && apt-get install -y \

@@ -1,7 +1,6 @@
 import rateLimit from "express-rate-limit";
 import helmet from "helmet";
 import mongoSanitize from "express-mongo-sanitize";
-import xss from "xss-clean";
 import { AppError } from "../utils/AppError.js";
 import { logger } from "../utils/logger.js";
 import User from "../models/user.model.js";
@@ -36,11 +35,6 @@ export const securityHeaders = helmet({
  * Data sanitization against NoSQL injection
  */
 export const sanitizeData = mongoSanitize();
-
-/**
- * Data sanitization against XSS
- */
-export const preventXSS = xss();
 
 /**
  * General rate limiter for all API routes
@@ -423,7 +417,6 @@ export const corsOptions = {
 export default {
   securityHeaders,
   sanitizeData,
-  preventXSS,
   generalLimiter,
   authLimiter,
   searchLimiter,

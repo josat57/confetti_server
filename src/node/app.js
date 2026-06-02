@@ -13,11 +13,20 @@ import { AppError } from "./utils/error.js";
 import adminRoutes from "./routes/admin.routes.js";
 import { checkEmailConfig } from "./utils/validateEmailConfig.js";
 import { setupSwagger } from "./config/swagger.config.js";
+import { generalLimiter, authLimiter, sanitizeData } from "./middleware/security.js";
 // import authRoutes from './routes/auth.routes.js';
 // import oauthService from './services/oauth.service.js';
 
 // Load env vars
 dotenv.config();
+
+// Validate required environment variables at startup
+const sessionSecret = process.env.SESSION_SECRET;
+if (!sessionSecret) {
+  throw new Error(
+    "SESSION_SECRET environment variable is required — set it in your .env file"
+  );
+}
 
 // Create Express app
 const app = express();
@@ -27,6 +36,11 @@ app.use(helmet());
 app.use(morgan("dev"));
 app.use(express.json());
 app.use(express.urlencoded({ extended: true }));
+
+// Security — NoSQL injection prevention and rate limiting
+app.use(sanitizeData);
+app.use("/api/v1", generalLimiter);
+app.use("/api/v1/auth", authLimiter);
 
 // Configure CORS
 const corsOptions = {
@@ -47,9 +61,12 @@ const corsOptions = {
 
     if (allowedOrigins.indexOf(origin) !== -1) {
       callback(null, true);
+    } else if (process.env.NODE_ENV === "production") {
+      logger.warn(`CORS blocked origin: ${origin}`);
+      callback(new Error("Not allowed by CORS"));
     } else {
-      console.log(`CORS blocked origin: ${origin}`);
-      callback(null, true); // Allow all origins in development - change this in production
+      logger.warn(`CORS: allowing unlisted origin in development: ${origin}`);
+      callback(null, true);
     }
   },
   credentials: true,
@@ -89,9 +106,7 @@ app.use("/uploads", express.static("uploads"));
 // Session middleware
 app.use(
   session({
-    secret:
-      process.env.SESSION_SECRET ||
-      "a3f622dfc19c94003f567781b4c79c3c41aec94581e6cc14673589e2fd1300a7",
+    secret: sessionSecret,
     resave: true,
     saveUninitialized: true,
     store: MongoStore.create({
@@ -184,8 +199,7 @@ app.use((err, req, res, next) => {
   err.status = err.status || "error";
 
   // Log error for debugging
-  console.error(`[Error] ${err.statusCode} - ${err.message}`);
-  if (err.stack) console.error(err.stack);
+  logger.error(`${err.statusCode} - ${err.message}`, { stack: err.stack });
 
   if (process.env.NODE_ENV === "development") {
     res.status(err.statusCode).json({
@@ -201,7 +215,7 @@ app.use((err, req, res, next) => {
         message: err.message,
       });
     } else {
-      console.error("ERROR 💥", err);
+      logger.error("Unhandled error", err);
       res.status(500).json({
         status: "error",
         message: "Something went wrong!",

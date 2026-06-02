@@ -307,32 +307,29 @@ export const getClientHistory = async (req, res, next) => {
 
     if (!client) return next(new AppError("Client not found", 404));
 
-    // Get all bookings
+    // Get client history (capped per type to avoid large payloads)
     const bookings = await Booking.find({
       vendor: vendor._id,
       "customer.email": client.email,
-    }).sort({ eventDate: -1 });
+    }).sort({ eventDate: -1 }).limit(100).lean();
 
-    // Get all leads
     const Lead = (await import("../models/lead.model.js")).default;
     const leads = await Lead.find({
       vendor: vendor._id,
       "customer.email": client.email,
-    }).sort({ createdAt: -1 });
+    }).sort({ createdAt: -1 }).limit(100).lean();
 
-    // Get all quotes
     const Quote = (await import("../models/quote.model.js")).default;
     const quotes = await Quote.find({
       vendor: vendor._id,
       "customer.email": client.email,
-    }).sort({ createdAt: -1 });
+    }).sort({ createdAt: -1 }).limit(100).lean();
 
-    // Get all invoices
     const Invoice = (await import("../models/invoice.model.js")).default;
     const invoices = await Invoice.find({
       vendor: vendor._id,
       "customer.email": client.email,
-    }).sort({ createdAt: -1 });
+    }).sort({ createdAt: -1 }).limit(100).lean();
 
     res.status(200).json({
       status: "success",

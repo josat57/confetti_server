@@ -4,7 +4,6 @@ __pycache__/
 *.pyc
 venv/
 .env
-*.md
 
 # Build outputs
 dist/
@@ -30,8 +29,11 @@ coverage/
 
 # Environment variables
 .env
-.env.*
+.env.production
+.env.local
+.env.test
 !.env.example
+!.env.production.example
 
 # Logs
 logs/
@@ -42,4 +44,16 @@ yarn-error.log*
 
 # Temporary files
 tmp/
-temp/ 
+temp/
+
+# Allow important documentation and deployment files
+*.md
+SECURITY_ANALYSIS_REPORT.md
+TASK_COMPLETION_SUMMARY.md
+DIGITALOCEAN_DEPLOYMENT_GUIDE.md
+DEPLOYMENT_CHECKLIST.md
+docker-compose.prod.yml
+digitalocean-app.yaml
+deploy-to-digitalocean.sh
+nginx/
+k8s/ 

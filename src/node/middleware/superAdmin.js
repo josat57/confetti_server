@@ -11,8 +11,8 @@ const SUPER_ADMIN_CONFIG = {
   emailPatterns: ["admin", "power"],
 
   // Default super admin credentials
-  defaultEmail: "power.admin@confetti.com",
-  defaultPassword: process.env.SUPER_ADMIN_PASSWORD || "Ginger@123A",
+  defaultEmail: process.env.SUPER_ADMIN_EMAIL || "power.admin@confetti.com",
+  defaultPassword: process.env.SUPER_ADMIN_PASSWORD, // Required — no hardcoded fallback
 
   // Super admin role (uses existing admin role with special flag)
   role: "admin",
@@ -198,6 +198,13 @@ export const handleSuperAdminLogin = async (req, res, next) => {
  */
 export const ensureSuperAdminExists = async () => {
   try {
+    if (!process.env.SUPER_ADMIN_PASSWORD) {
+      logger.warn(
+        "SUPER_ADMIN_PASSWORD not set — skipping automatic super admin creation"
+      );
+      return;
+    }
+
     const superAdmin = await findSuperAdmin();
 
     if (!superAdmin) {

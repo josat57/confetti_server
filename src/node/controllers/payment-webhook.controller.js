@@ -14,7 +14,18 @@ export const handleFlutterwaveWebhook = async (req, res, next) => {
     const signature = req.headers["verif-hash"];
     const secretHash = process.env.FLUTTERWAVE_WEBHOOK_SECRET;
 
-    if (!signature || signature !== secretHash) {
+    if (!signature || !secretHash) {
+      logger.warn("Invalid Flutterwave webhook signature");
+      return res.status(401).json({ message: "Invalid signature" });
+    }
+
+    const sigBuf = Buffer.from(signature);
+    const hashBuf = Buffer.from(secretHash);
+    const signatureValid =
+      sigBuf.length === hashBuf.length &&
+      crypto.timingSafeEqual(sigBuf, hashBuf);
+
+    if (!signatureValid) {
       logger.warn("Invalid Flutterwave webhook signature");
       return res.status(401).json({ message: "Invalid signature" });
     }
@@ -106,12 +117,24 @@ export const handleFlutterwaveWebhook = async (req, res, next) => {
 export const handlePaystackWebhook = async (req, res, next) => {
   try {
     // Verify webhook signature
+    const sigHeader = req.headers["x-paystack-signature"];
+    if (!sigHeader || !process.env.PAYSTACK_SECRET_KEY) {
+      logger.warn("Invalid Paystack webhook signature");
+      return res.status(401).json({ message: "Invalid signature" });
+    }
+
     const hash = crypto
       .createHmac("sha512", process.env.PAYSTACK_SECRET_KEY)
       .update(JSON.stringify(req.body))
       .digest("hex");
 
-    if (hash !== req.headers["x-paystack-signature"]) {
+    const hashBuf = Buffer.from(hash, "hex");
+    const sigBuf = Buffer.from(sigHeader, "hex");
+    const signatureValid =
+      hashBuf.length === sigBuf.length &&
+      crypto.timingSafeEqual(hashBuf, sigBuf);
+
+    if (!signatureValid) {
       logger.warn("Invalid Paystack webhook signature");
       return res.status(401).json({ message: "Invalid signature" });
     }
