@@ -368,16 +368,100 @@ class DocumentService {
     }
   }
 
-  // Process video document
+  // Process video document — extract metadata and generate a poster thumbnail via ffmpeg
   async processVideo(document) {
-    // TODO: Implement video processing (generate thumbnail, extract metadata)
-    logger.info("Video processing not implemented yet");
+    try {
+      const { execFile } = await import("child_process");
+      const { promisify } = await import("util");
+      const execFileAsync = promisify(execFile);
+
+      // Extract video metadata using ffprobe
+      const { stdout } = await execFileAsync("ffprobe", [
+        "-v", "quiet",
+        "-print_format", "json",
+        "-show_streams",
+        "-show_format",
+        document.filePath,
+      ]);
+
+      const info = JSON.parse(stdout);
+      const videoStream = (info.streams || []).find((s) => s.codec_type === "video");
+      const format = info.format || {};
+
+      document.metadata = {
+        duration: parseFloat(format.duration) || 0,
+        size: parseInt(format.size) || document.size,
+        bitrate: parseInt(format.bit_rate) || 0,
+        width: videoStream?.width,
+        height: videoStream?.height,
+        codec: videoStream?.codec_name,
+        fps: videoStream?.r_frame_rate,
+      };
+
+      // Generate thumbnail at 5-second mark (or 10% of duration)
+      const seekTime = Math.min(5, (document.metadata.duration || 10) * 0.1);
+      const thumbnailPath = document.filePath.replace(/\.[^.]+$/, "_thumb.jpg");
+
+      await execFileAsync("ffmpeg", [
+        "-ss", String(seekTime),
+        "-i", document.filePath,
+        "-vframes", "1",
+        "-q:v", "2",
+        "-y",
+        thumbnailPath,
+      ]);
+
+      document.thumbnail = thumbnailPath;
+      await document.save();
+
+      logger.info("Video processed successfully", { documentId: document._id });
+    } catch (error) {
+      logger.warn("Video processing failed (ffmpeg may not be installed):", error.message);
+    }
   }
 
-  // Process document file
+  // Process document file — extract text content and generate a preview snippet
   async processDocument(document) {
-    // TODO: Implement document processing (extract text, generate preview)
-    logger.info("Document processing not implemented yet");
+    try {
+      const ext = path.extname(document.filePath).toLowerCase();
+
+      if (ext === ".pdf") {
+        // Use pdf-parse if available
+        try {
+          const { default: pdfParse } = await import("pdf-parse");
+          const buffer = await fs.readFile(document.filePath);
+          const data = await pdfParse(buffer);
+
+          document.metadata = {
+            pageCount: data.numpages,
+            wordCount: (data.text || "").split(/\s+/).filter(Boolean).length,
+            extractedText: data.text?.substring(0, 2000) || "",
+          };
+          document.preview = data.text?.substring(0, 500) || "";
+          await document.save();
+        } catch (pdfError) {
+          logger.warn("pdf-parse not available:", pdfError.message);
+        }
+      } else if ([".txt", ".md", ".csv"].includes(ext)) {
+        const content = await fs.readFile(document.filePath, "utf-8");
+        document.metadata = {
+          wordCount: content.split(/\s+/).filter(Boolean).length,
+          lineCount: content.split("\n").length,
+          extractedText: content.substring(0, 2000),
+        };
+        document.preview = content.substring(0, 500);
+        await document.save();
+      } else {
+        // For other document types (docx, xlsx, etc.) record file stats only
+        const stats = await fs.stat(document.filePath);
+        document.metadata = { size: stats.size, type: ext.replace(".", "") };
+        await document.save();
+      }
+
+      logger.info("Document processed successfully", { documentId: document._id });
+    } catch (error) {
+      logger.warn("Document processing failed:", error.message);
+    }
   }
 
   // Delete file from storage

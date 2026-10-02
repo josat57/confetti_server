@@ -282,41 +282,275 @@ class ReportService {
     }
   }
 
-  // Notify recipients
+  // Notify recipients of scheduled report completion
   async notifyRecipients(report) {
-    // TODO: Implement notification logic
-    logger.info('Notification not implemented yet');
+    try {
+      const User = (await import('../models/user.model.js')).default;
+      const { sendEmailDirect } = await import('../utils/email.js');
+
+      const recipients = report.schedule?.recipients || [];
+      // Always include the report creator
+      const creator = await User.findById(report.generatedBy).select('email firstName name').lean();
+      if (creator) recipients.push(creator.email);
+
+      const uniqueEmails = [...new Set(recipients.filter(Boolean))];
+
+      for (const email of uniqueEmails) {
+        await sendEmailDirect({
+          to: email,
+          subject: `Your scheduled report is ready: ${report.name || report.type}`,
+          html: `
+            <h2>Scheduled Report Ready</h2>
+            <p>Hi there,</p>
+            <p>Your scheduled <strong>${report.type}</strong> report has been generated and is ready to download.</p>
+            <table style="width:100%;border-collapse:collapse;margin:12px 0;">
+              <tr><td style="padding:8px;border:1px solid #e5e7eb;"><strong>Report Type</strong></td><td style="padding:8px;border:1px solid #e5e7eb;">${report.type}</td></tr>
+              <tr><td style="padding:8px;border:1px solid #e5e7eb;"><strong>Format</strong></td><td style="padding:8px;border:1px solid #e5e7eb;">${report.format?.toUpperCase()}</td></tr>
+              <tr><td style="padding:8px;border:1px solid #e5e7eb;"><strong>Records</strong></td><td style="padding:8px;border:1px solid #e5e7eb;">${report.metadata?.recordCount || 0}</td></tr>
+              <tr><td style="padding:8px;border:1px solid #e5e7eb;"><strong>Generated At</strong></td><td style="padding:8px;border:1px solid #e5e7eb;">${new Date().toLocaleString()}</td></tr>
+            </table>
+            <p><a href="${process.env.FRONTEND_URL}/reports/${report._id}" style="display:inline-block;padding:12px 24px;background:#6366f1;color:#fff;text-decoration:none;border-radius:6px;">Download Report</a></p>
+          `,
+        }).catch(() => {});
+      }
+
+      logger.info('Report recipients notified', { reportId: report._id, count: uniqueEmails.length });
+    } catch (error) {
+      logger.error('Failed to notify report recipients:', error.message);
+    }
   }
 
   // Data fetching methods
   async fetchEventData(report) {
-    // TODO: Implement event data fetching
-    return [];
+    try {
+      const Event = (await import('../models/event.model.js')).default;
+      const filter = {};
+      if (report.filters?.startDate && report.filters?.endDate) {
+        filter.createdAt = {
+          $gte: new Date(report.filters.startDate),
+          $lte: new Date(report.filters.endDate),
+        };
+      }
+      if (report.filters?.userId) filter.organizer = report.filters.userId;
+
+      const events = await Event.find(filter)
+        .select('name eventType status date budget createdAt')
+        .populate('organizer', 'email firstName lastName')
+        .lean();
+
+      return events.map((e) => ({
+        id: e._id,
+        name: e.name,
+        type: e.eventType,
+        status: e.status,
+        date: e.date,
+        budget: e.budget?.total || 0,
+        organizer: e.organizer ? `${e.organizer.firstName || ''} ${e.organizer.lastName || ''}`.trim() : 'N/A',
+        organizerEmail: e.organizer?.email || '',
+        createdAt: e.createdAt,
+      }));
+    } catch (error) {
+      logger.error('Error fetching event data:', error.message);
+      return [];
+    }
   }
 
   async fetchVendorData(report) {
-    // TODO: Implement vendor data fetching
-    return [];
+    try {
+      const Vendor = (await import('../models/vendor.model.js')).default;
+      const filter = {};
+      if (report.filters?.startDate && report.filters?.endDate) {
+        filter.createdAt = {
+          $gte: new Date(report.filters.startDate),
+          $lte: new Date(report.filters.endDate),
+        };
+      }
+      if (report.filters?.category) filter.category = report.filters.category;
+
+      const vendors = await Vendor.find(filter)
+        .select('businessName category status isVerified rating reviewCount createdAt')
+        .populate('owner', 'email firstName lastName')
+        .lean();
+
+      return vendors.map((v) => ({
+        id: v._id,
+        businessName: v.businessName,
+        category: v.category,
+        status: v.status,
+        verified: v.isVerified,
+        rating: v.rating || 0,
+        reviewCount: v.reviewCount || 0,
+        owner: v.owner ? `${v.owner.firstName || ''} ${v.owner.lastName || ''}`.trim() : 'N/A',
+        ownerEmail: v.owner?.email || '',
+        createdAt: v.createdAt,
+      }));
+    } catch (error) {
+      logger.error('Error fetching vendor data:', error.message);
+      return [];
+    }
   }
 
   async fetchBookingData(report) {
-    // TODO: Implement booking data fetching
-    return [];
+    try {
+      const Booking = (await import('../models/booking.model.js')).default;
+      const filter = {};
+      if (report.filters?.startDate && report.filters?.endDate) {
+        filter.createdAt = {
+          $gte: new Date(report.filters.startDate),
+          $lte: new Date(report.filters.endDate),
+        };
+      }
+      if (report.filters?.status) filter.status = report.filters.status;
+
+      const bookings = await Booking.find(filter)
+        .populate('event', 'name')
+        .populate('vendor', 'businessName')
+        .populate('client', 'email firstName lastName')
+        .lean();
+
+      return bookings.map((b) => ({
+        id: b._id,
+        event: b.event?.name || 'N/A',
+        vendor: b.vendor?.businessName || 'N/A',
+        client: b.client ? `${b.client.firstName || ''} ${b.client.lastName || ''}`.trim() : 'N/A',
+        clientEmail: b.client?.email || '',
+        status: b.status,
+        date: b.date,
+        amount: b.totalAmount || 0,
+        createdAt: b.createdAt,
+      }));
+    } catch (error) {
+      logger.error('Error fetching booking data:', error.message);
+      return [];
+    }
   }
 
   async fetchSystemData(report) {
-    // TODO: Implement system data fetching
-    return [];
+    try {
+      const ErrorLog = (await import('../models/errorLog.model.js')).default;
+      const filter = {};
+      if (report.filters?.startDate && report.filters?.endDate) {
+        filter.createdAt = {
+          $gte: new Date(report.filters.startDate),
+          $lte: new Date(report.filters.endDate),
+        };
+      }
+
+      const [errors, byType, bySeverity] = await Promise.all([
+        ErrorLog.find(filter).sort('-createdAt').limit(500).lean(),
+        ErrorLog.aggregate([{ $match: filter }, { $group: { _id: '$errorType', count: { $sum: 1 } } }]),
+        ErrorLog.aggregate([{ $match: filter }, { $group: { _id: '$severity', count: { $sum: 1 } } }]),
+      ]);
+
+      const summary = {
+        id: 'system_summary',
+        totalErrors: errors.length,
+        byType: Object.fromEntries(byType.map((b) => [b._id, b.count])),
+        bySeverity: Object.fromEntries(bySeverity.map((b) => [b._id, b.count])),
+        generatedAt: new Date(),
+      };
+
+      return [
+        summary,
+        ...errors.map((e) => ({
+          id: e._id,
+          type: e.errorType,
+          severity: e.severity,
+          message: e.message,
+          endpoint: e.endpoint || '',
+          resolved: e.resolved,
+          occurrenceCount: e.occurrenceCount,
+          createdAt: e.createdAt,
+        })),
+      ];
+    } catch (error) {
+      logger.error('Error fetching system data:', error.message);
+      return [];
+    }
   }
 
   async fetchFinancialData(report) {
-    // TODO: Implement financial data fetching
-    return [];
+    try {
+      const Payment = (await import('../models/payment.model.js')).default;
+      const filter = {};
+      if (report.filters?.startDate && report.filters?.endDate) {
+        filter.createdAt = {
+          $gte: new Date(report.filters.startDate),
+          $lte: new Date(report.filters.endDate),
+        };
+      }
+      if (report.filters?.status) filter.status = report.filters.status;
+
+      const payments = await Payment.find(filter)
+        .populate('user', 'email firstName lastName')
+        .sort('-createdAt')
+        .lean();
+
+      return payments.map((p) => ({
+        id: p._id,
+        reference: p.reference,
+        transactionId: p.transactionId,
+        user: p.user ? `${p.user.firstName || ''} ${p.user.lastName || ''}`.trim() : 'N/A',
+        userEmail: p.user?.email || '',
+        amount: p.amount,
+        currency: p.currency,
+        status: p.status,
+        paymentType: p.paymentType,
+        paymentMethod: p.paymentMethod,
+        refundAmount: p.refundDetails?.refundAmount || 0,
+        createdAt: p.createdAt,
+      }));
+    } catch (error) {
+      logger.error('Error fetching financial data:', error.message);
+      return [];
+    }
   }
 
   async fetchAnalyticsData(report) {
-    // TODO: Implement analytics data fetching
-    return [];
+    try {
+      const User = (await import('../models/user.model.js')).default;
+      const Event = (await import('../models/event.model.js')).default;
+      const Payment = (await import('../models/payment.model.js')).default;
+      const AIPlannerUsage = (await import('../models/ai-planner-usage.model.js')).default;
+
+      const dateFilter = {};
+      if (report.filters?.startDate && report.filters?.endDate) {
+        dateFilter.createdAt = {
+          $gte: new Date(report.filters.startDate),
+          $lte: new Date(report.filters.endDate),
+        };
+      }
+
+      const [totalUsers, newUsers, totalEvents, totalRevenue, aiUsage] = await Promise.all([
+        User.countDocuments(),
+        User.countDocuments(dateFilter),
+        Event.countDocuments(dateFilter),
+        Payment.aggregate([
+          { $match: { ...dateFilter, status: 'completed' } },
+          { $group: { _id: null, total: { $sum: '$amount' } } },
+        ]),
+        AIPlannerUsage.aggregate([
+          { $group: { _id: '$usageType', total: { $sum: '$count' } } },
+        ]),
+      ]);
+
+      return [{
+        id: 'analytics_summary',
+        totalUsers,
+        newUsers,
+        totalEvents,
+        totalRevenue: totalRevenue[0]?.total || 0,
+        aiPlannerUsage: Object.fromEntries(aiUsage.map((a) => [a._id, a.total])),
+        period: {
+          startDate: report.filters?.startDate,
+          endDate: report.filters?.endDate,
+        },
+        generatedAt: new Date(),
+      }];
+    } catch (error) {
+      logger.error('Error fetching analytics data:', error.message);
+      return [];
+    }
   }
 }
 

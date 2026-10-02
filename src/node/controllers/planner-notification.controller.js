@@ -2,7 +2,7 @@ import Notification from "../models/notification.model.js";
 import NotificationPreferences from "../models/notification-preferences.model.js";
 import { AppError } from "../utils/AppError.js";
 import { logger } from "../utils/logger.js";
-import { sendEmail } from "../utils/email.js";
+import notificationService from "../services/notification.service.js";
 
 /**
  * Controller for Planner Notifications
@@ -19,18 +19,19 @@ class PlannerNotificationController {
 
       logger.info("Fetching notifications", { userId });
 
-      const query = { user: userId };
+      const query = { recipient: userId };
 
       if (isRead !== undefined) {
         query.isRead = isRead === "true";
       }
 
       if (type) {
-        query.type = type;
+        // Accept either the severity type ("info") or the domain kind ("new_message")
+        query.$or = [{ type }, { kind: type }];
       }
 
       if (priority) {
-        query.priority = priority;
+        query.priority = priority === "medium" ? "normal" : priority;
       }
 
       const skip = (parseInt(page) - 1) * parseInt(limit);
@@ -100,7 +101,7 @@ class PlannerNotificationController {
 
       const notification = await Notification.findOne({
         _id: id,
-        user: userId,
+        recipient: userId,
       });
 
       if (!notification) {
@@ -160,7 +161,7 @@ class PlannerNotificationController {
 
       const notification = await Notification.findOneAndDelete({
         _id: id,
-        user: userId,
+        recipient: userId,
       });
 
       if (!notification) {
@@ -278,28 +279,9 @@ class PlannerNotificationController {
 
       logger.info("Creating notification", { userId, type });
 
-      // Get user preferences
-      const preferences = await NotificationPreferences.getOrCreate(userId);
-
-      // Determine which channels to use
-      const notificationChannels = {
-        inApp:
-          channels?.inApp !== false &&
-          preferences.shouldSendNotification(type, "inApp"),
-        email:
-          channels?.email === true &&
-          preferences.shouldSendNotification(type, "email"),
-        sms:
-          channels?.sms === true &&
-          preferences.shouldSendNotification(type, "sms"),
-        push:
-          channels?.push === true &&
-          preferences.shouldSendNotification(type, "push"),
-      };
-
-      // Create notification
-      const notification = await Notification.createNotification({
-        user: userId,
+      // Applies the user's channel preferences and delivers (email/SMS/push/in-app)
+      const notification = await notificationService.createNotification({
+        userId,
         type,
         title,
         message,
@@ -308,33 +290,8 @@ class PlannerNotificationController {
         actionText,
         relatedEntity,
         metadata,
-        channels: notificationChannels,
+        channels: channels || { inApp: true },
       });
-
-      // Send email if enabled
-      if (notificationChannels.email) {
-        try {
-          await sendEmail({
-            to: req.body.userEmail || userId, // Would need to fetch user email
-            subject: title,
-            template: "notification",
-            data: {
-              title,
-              message,
-              actionUrl,
-              actionText,
-            },
-          });
-          await notification.markEmailSent();
-        } catch (emailError) {
-          logger.error("Failed to send notification email", {
-            error: emailError,
-          });
-        }
-      }
-
-      // TODO: Send SMS if enabled
-      // TODO: Send push notification if enabled
 
       res.status(201).json({
         success: true,
@@ -358,8 +315,8 @@ class PlannerNotificationController {
 
       logger.info("Creating test notification", { userId });
 
-      const notification = await Notification.createNotification({
-        user: userId,
+      const notification = await notificationService.createNotification({
+        userId,
         type: "system",
         title: "Test Notification",
         message:

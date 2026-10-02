@@ -1,6 +1,7 @@
 import Guest from "../models/guest.model.js";
 import Event from "../models/event.model.js";
 import { AppError } from "../utils/AppError.js";
+import { escapeRegExp } from "../utils/escape-regex.js";
 
 /**
  * List guests for an event
@@ -15,8 +16,8 @@ export const listEventGuests = async (req, res, next) => {
     if (tableAssignment) query.tableAssignment = tableAssignment;
     if (search) {
       query.$or = [
-        { name: { $regex: search, $options: "i" } },
-        { email: { $regex: search, $options: "i" } },
+        { name: { $regex: escapeRegExp(search), $options: "i" } },
+        { email: { $regex: escapeRegExp(search), $options: "i" } },
       ];
     }
 

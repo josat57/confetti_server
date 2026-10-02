@@ -1,4 +1,5 @@
 import User from "../models/user.model.js";
+import { closeUserAccount } from "../services/account-closure.service.js";
 import Subscription from "../models/subscription.model.js";
 import { AppError } from "../utils/AppError.js";
 import { logger } from "../utils/logger.js";
@@ -975,16 +976,10 @@ export const deleteAccount = async (req, res, next) => {
       return next(new AppError("Incorrect password", 401));
     }
 
-    // Soft delete - mark as inactive
-    user.isActive = false;
-    user.deletedAt = new Date();
-    await user.save();
-
-    // In production, you might want to:
-    // 1. Cancel active subscriptions
-    // 2. Remove payment methods
-    // 3. Archive user data
-    // 4. Send confirmation email
+    // Deactivate, cancel subscriptions, remove cards, revoke sessions, email confirmation
+    await closeUserAccount(user, req.body.reason || "User deleted account");
+    res.clearCookie("accessToken");
+    res.clearCookie("refreshToken");
 
     res.status(200).json({
       status: "success",

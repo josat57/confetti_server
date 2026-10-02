@@ -27,13 +27,16 @@ const refreshTokenSchema = new mongoose.Schema({
     type: String,
     default: null
   },
+  // Defaults keep logins working for clients that send no User-Agent / IP
   ipAddress: {
     type: String,
-    required: true
+    required: true,
+    default: 'unknown'
   },
   userAgent: {
     type: String,
-    required: true
+    required: true,
+    default: 'unknown'
   }
 }, {
   timestamps: true

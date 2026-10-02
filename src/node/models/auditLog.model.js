@@ -1,5 +1,121 @@
 import mongoose from "mongoose";
 
+// Well-known values, kept for reference/UI filters. They are intentionally NOT
+// enforced as schema enums: an audit write must never fail (and abort) the
+// admin operation it is recording just because an action name is new.
+export const KNOWN_AUDIT_ACTIONS = [
+  "user_created",
+  "user_updated",
+  "user_deleted",
+  "user_status_changed",
+  "content_created",
+  "content_updated",
+  "content_deleted",
+  "content_moderated",
+  "system_config_updated",
+  "system_config_created",
+  "system_config_deleted",
+  "admin_created",
+  "admin_updated",
+  "admin_deleted",
+  "admin_permissions_updated",
+  "vendor_approved",
+  "vendor_rejected",
+  "payment_processed",
+  "ticket_responded",
+  "announcement_sent",
+  "security_event",
+  "financial_report_generated",
+  // Phase 10: System Configuration
+  "subscription_plan_created",
+  "subscription_plan_updated",
+  "subscription_plan_deleted",
+  "create_subscription_plan",
+  "update_subscription_plan",
+  "delete_subscription_plan",
+  "feature_flag_created",
+  "feature_flag_updated",
+  "feature_flag_deleted",
+  "feature_flag_toggled",
+  "email_template_created",
+  "email_template_updated",
+  "email_template_deleted",
+  "payment_gateway_config_updated",
+  "security_setting_updated",
+  // Phase 11: Notification Management
+  "notification_sent",
+  "notification_deleted",
+  "notification_template_created",
+  "notification_template_updated",
+  "notification_template_deleted",
+  // Phase 12: Audit & Compliance
+  "compliance_report_generated",
+  "data_retention_policy_created",
+  "data_retention_policy_updated",
+  "data_retention_policy_deleted",
+  "data_retention_policy_applied",
+  "gdpr_request_created",
+  "gdpr_request_processed",
+  "gdpr_request_rejected",
+  // Phase 13: Advanced Search
+  "saved_search_created",
+  "saved_search_updated",
+  "saved_search_deleted",
+  // Phase 14: Bulk Operations
+  "bulk_user_update",
+  "bulk_user_delete",
+  "bulk_vendor_update",
+  "bulk_content_moderation",
+  "bulk_notification_sent",
+  "bulk_ticket_update",
+  // Phase 16: Advanced Reporting
+  "report_template_created",
+  "report_template_updated",
+  "report_template_deleted",
+  "scheduled_report_created",
+  "scheduled_report_updated",
+  "scheduled_report_deleted",
+  "report_generated",
+  // Phase 17: System Monitoring
+  "system_alert_created",
+  "system_alert_resolved",
+  "error_resolved",
+];
+
+export const KNOWN_RESOURCE_TYPES = [
+  "user",
+  "content",
+  "admin",
+  "vendor",
+  "payment",
+  "ticket",
+  "announcement",
+  "system",
+  "security",
+  "financial",
+  "subscription_plan",
+  "feature_flag",
+  "email_template",
+  "notification",
+  "notification_template",
+  "compliance_report",
+  "data_retention_policy",
+  "gdpr_request",
+  "saved_search",
+  "report_template",
+  "scheduled_report",
+  "generated_report",
+  "system_alert",
+  "error_log",
+];
+
+const toSnakeCase = (value) =>
+  String(value)
+    .trim()
+    .replace(/([a-z0-9])([A-Z])/g, "$1_$2")
+    .replace(/[\s-]+/g, "_")
+    .toLowerCase();
+
 const auditLogSchema = new mongoose.Schema(
   {
     admin: {
@@ -10,120 +126,28 @@ const auditLogSchema = new mongoose.Schema(
     action: {
       type: String,
       required: true,
-      enum: [
-        "user_created",
-        "user_updated",
-        "user_deleted",
-        "user_status_changed",
-        "content_created",
-        "content_updated",
-        "content_deleted",
-        "content_moderated",
-        "system_config_updated",
-        "system_config_created",
-        "system_config_deleted",
-        "admin_created",
-        "admin_updated",
-        "admin_deleted",
-        "admin_permissions_updated",
-        "vendor_approved",
-        "vendor_rejected",
-        "payment_processed",
-        "ticket_responded",
-        "announcement_sent",
-        "security_event",
-        "financial_report_generated",
-        // Phase 10: System Configuration
-        "subscription_plan_created",
-        "subscription_plan_updated",
-        "subscription_plan_deleted",
-        "create_subscription_plan",
-        "update_subscription_plan",
-        "delete_subscription_plan",
-        "feature_flag_created",
-        "feature_flag_updated",
-        "feature_flag_deleted",
-        "feature_flag_toggled",
-        "email_template_created",
-        "email_template_updated",
-        "email_template_deleted",
-        "payment_gateway_config_updated",
-        "security_setting_updated",
-        // Phase 11: Notification Management
-        "notification_sent",
-        "notification_deleted",
-        "notification_template_created",
-        "notification_template_updated",
-        "notification_template_deleted",
-        // Phase 12: Audit & Compliance
-        "compliance_report_generated",
-        "data_retention_policy_created",
-        "data_retention_policy_updated",
-        "data_retention_policy_deleted",
-        "data_retention_policy_applied",
-        "gdpr_request_created",
-        "gdpr_request_processed",
-        "gdpr_request_rejected",
-        // Phase 13: Advanced Search
-        "saved_search_created",
-        "saved_search_updated",
-        "saved_search_deleted",
-        // Phase 14: Bulk Operations
-        "bulk_user_update",
-        "bulk_user_delete",
-        "bulk_vendor_update",
-        "bulk_content_moderation",
-        "bulk_notification_sent",
-        "bulk_ticket_update",
-        // Phase 16: Advanced Reporting
-        "report_template_created",
-        "report_template_updated",
-        "report_template_deleted",
-        "scheduled_report_created",
-        "scheduled_report_updated",
-        "scheduled_report_deleted",
-        "report_generated",
-        // Phase 17: System Monitoring
-        "system_alert_created",
-        "system_alert_resolved",
-        "error_resolved",
-      ],
+      trim: true,
     },
+    // Normalised snake_case resource kind (e.g. "user", "generated_report").
+    // Derived from `resource` when a caller only supplies that.
     resourceType: {
       type: String,
-      required: true,
-      enum: [
-        "user",
-        "content",
-        "admin",
-        "vendor",
-        "payment",
-        "ticket",
-        "announcement",
-        "system",
-        "security",
-        "financial",
-        "subscription_plan",
-        "feature_flag",
-        "email_template",
-        "notification",
-        "notification_template",
-        "compliance_report",
-        "data_retention_policy",
-        "gdpr_request",
-        "saved_search",
-        "report_template",
-        "scheduled_report",
-        "generated_report",
-        "system_alert",
-        "error_log",
-      ],
+      trim: true,
+    },
+    // Free-form resource name as supplied by callers (e.g. "User", "GeneratedReport")
+    resource: {
+      type: String,
+      trim: true,
     },
     resourceId: {
       type: mongoose.Schema.Types.ObjectId,
       required: false,
     },
     details: {
+      type: mongoose.Schema.Types.Mixed,
+      required: false,
+    },
+    changes: {
       type: mongoose.Schema.Types.Mixed,
       required: false,
     },
@@ -144,6 +168,21 @@ const auditLogSchema = new mongoose.Schema(
     timestamps: true,
   }
 );
+
+// Normalise resource fields so both calling conventions
+// ({ resource: "User" } and { resourceType: "user" }) are stored consistently.
+auditLogSchema.pre("validate", function (next) {
+  if (!this.resourceType && this.resource) {
+    this.resourceType = toSnakeCase(this.resource);
+  }
+  if (!this.resource && this.resourceType) {
+    this.resource = this.resourceType;
+  }
+  if (!this.resourceType) {
+    this.resourceType = "system";
+  }
+  next();
+});
 
 // Index for efficient querying
 auditLogSchema.index({ admin: 1, timestamp: -1 });

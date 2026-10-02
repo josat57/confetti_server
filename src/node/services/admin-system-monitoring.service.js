@@ -1,4 +1,5 @@
 import os from "os";
+import fs from "fs";
 import SystemMetric from "../models/systemMetric.model.js";
 import ErrorLog from "../models/errorLog.model.js";
 import SystemAlert from "../models/systemAlert.model.js";
@@ -551,14 +552,30 @@ class AdminSystemMonitoringService {
     };
   }
 
+  /**
+   * Real filesystem usage of the volume the server writes to (backups, exports,
+   * uploads). Override the path with DISK_MONITOR_PATH. `percent` follows `df`:
+   * used / (used + available to unprivileged users).
+   */
   async getDiskUsage() {
-    // Mock implementation - would use actual disk monitoring in production
-    return {
-      total: 500 * 1024 * 1024 * 1024, // 500GB
-      used: 250 * 1024 * 1024 * 1024, // 250GB
-      free: 250 * 1024 * 1024 * 1024,
-      percent: 50,
-    };
+    const target = process.env.DISK_MONITOR_PATH || process.cwd();
+    try {
+      const st = await fs.promises.statfs(target);
+      const total = st.blocks * st.bsize;
+      const free = st.bavail * st.bsize;
+      const used = total - st.bfree * st.bsize;
+      const percent = used + free > 0 ? (used / (used + free)) * 100 : 0;
+      return {
+        path: target,
+        total,
+        used,
+        free,
+        percent: Math.round(percent * 100) / 100,
+      };
+    } catch (error) {
+      logger.warn(`Disk usage unavailable for ${target}: ${error.message}`);
+      return { path: target, total: null, used: null, free: null, percent: null, error: error.message };
+    }
   }
 
   getNetworkStats() {
@@ -640,6 +657,14 @@ class AdminSystemMonitoringService {
 
         await this.recordSystemMetric("cpu", cpuUsage.percent, "percent");
         await this.recordSystemMetric("memory", memoryUsage.percent, "percent");
+
+        const diskUsage = await this.getDiskUsage();
+        if (typeof diskUsage.percent === "number") {
+          await this.recordSystemMetric("disk", diskUsage.percent, "percent", {
+            path: diskUsage.path,
+            freeBytes: diskUsage.free,
+          });
+        }
       } catch (error) {
         logger.error("Monitoring error:", error);
       }

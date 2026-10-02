@@ -1,6 +1,12 @@
 import SupportTicket from "../models/supportTicket.model.js";
 import CannedResponse from "../models/cannedResponse.model.js";
 import User from "../models/user.model.js";
+import Admin from "../models/Admin.js";
+import { escapeRegExp } from "../utils/escape-regex.js";
+
+// Escape user-supplied values interpolated into HTML emails
+const esc = (v) =>
+  String(v ?? "").replace(/[&<>"]/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" })[c]);
 import AuditLog from "../models/auditLog.model.js";
 import { createError } from "../utils/error.js";
 
@@ -65,15 +71,15 @@ class AdminSupportTicketService {
       // Search by subject or user email
       const users = await User.find({
         $or: [
-          { email: { $regex: search, $options: "i" } },
-          { firstName: { $regex: search, $options: "i" } },
-          { lastName: { $regex: search, $options: "i" } },
+          { email: { $regex: escapeRegExp(search), $options: "i" } },
+          { firstName: { $regex: escapeRegExp(search), $options: "i" } },
+          { lastName: { $regex: escapeRegExp(search), $options: "i" } },
         ],
       }).select("_id");
 
       const searchQuery = {
         $or: [
-          { subject: { $regex: search, $options: "i" } },
+          { subject: { $regex: escapeRegExp(search), $options: "i" } },
           { user: { $in: users.map((u) => u._id) } },
         ],
       };
@@ -180,7 +186,30 @@ class AdminSupportTicketService {
       timestamp: new Date(),
     });
 
-    // TODO: Send notification to assigned admin
+    // Notify the assigned admin
+    try {
+      const assignedAdmin = await User.findById(adminId).select("email firstName name");
+      if (assignedAdmin?.email) {
+        const { sendEmailDirect } = await import("../utils/email.js");
+        await sendEmailDirect({
+          to: assignedAdmin.email,
+          subject: `Support ticket assigned to you: #${ticket.ticketNumber || ticketId}`,
+          html: `
+            <h2>Support Ticket Assigned</h2>
+            <p>Hi ${assignedAdmin.firstName || assignedAdmin.name || "there"},</p>
+            <p>A support ticket has been assigned to you.</p>
+            <table style="width:100%;border-collapse:collapse;margin:12px 0;">
+              <tr><td style="padding:8px;border:1px solid #e5e7eb;"><strong>Ticket</strong></td><td style="padding:8px;border:1px solid #e5e7eb;">#${ticket.ticketNumber || ticketId}</td></tr>
+              <tr><td style="padding:8px;border:1px solid #e5e7eb;"><strong>Subject</strong></td><td style="padding:8px;border:1px solid #e5e7eb;">${esc(ticket.subject || "N/A")}</td></tr>
+              <tr><td style="padding:8px;border:1px solid #e5e7eb;"><strong>Priority</strong></td><td style="padding:8px;border:1px solid #e5e7eb;">${ticket.priority}</td></tr>
+            </table>
+            <p><a href="${process.env.FRONTEND_URL}/admin/tickets/${ticketId}" style="display:inline-block;padding:12px 24px;background:#6366f1;color:#fff;text-decoration:none;border-radius:6px;">View Ticket</a></p>
+          `,
+        });
+      }
+    } catch (emailError) {
+      // Non-critical
+    }
 
     return ticket;
   }
@@ -227,7 +256,28 @@ class AdminSupportTicketService {
       timestamp: new Date(),
     });
 
-    // TODO: Send email notification to user
+    // Email the ticket submitter with the admin response
+    try {
+      const ticketUser = await User.findById(ticket.user).select("email firstName name");
+      if (ticketUser?.email) {
+        const { sendEmailDirect } = await import("../utils/email.js");
+        await sendEmailDirect({
+          to: ticketUser.email,
+          subject: `Update on your support ticket #${ticket.ticketNumber || ticketId}`,
+          html: `
+            <h2>Support Ticket Update</h2>
+            <p>Hi ${ticketUser.firstName || ticketUser.name || "there"},</p>
+            <p>Your support ticket has received a response:</p>
+            <blockquote style="border-left:4px solid #6366f1;padding:12px;margin:12px 0;background:#f5f3ff;">
+              ${content}
+            </blockquote>
+            <p><a href="${process.env.FRONTEND_URL}/support/tickets/${ticketId}" style="display:inline-block;padding:12px 24px;background:#6366f1;color:#fff;text-decoration:none;border-radius:6px;">View Ticket</a></p>
+          `,
+        });
+      }
+    } catch (emailError) {
+      // Non-critical
+    }
 
     return ticket;
   }
@@ -268,7 +318,27 @@ class AdminSupportTicketService {
       timestamp: new Date(),
     });
 
-    // TODO: Send closure notification to user
+    // Notify the user that their ticket has been closed
+    try {
+      const ticketUser = await User.findById(ticket.user).select("email firstName name");
+      if (ticketUser?.email) {
+        const { sendEmailDirect } = await import("../utils/email.js");
+        await sendEmailDirect({
+          to: ticketUser.email,
+          subject: `Your support ticket #${ticket.ticketNumber || ticketId} has been resolved`,
+          html: `
+            <h2>Support Ticket Closed</h2>
+            <p>Hi ${ticketUser.firstName || ticketUser.name || "there"},</p>
+            <p>Your support ticket has been resolved and closed.</p>
+            ${resolution ? `<p><strong>Resolution:</strong> ${resolution}</p>` : ""}
+            <p>If you need further assistance, please open a new ticket.</p>
+            <p><a href="${process.env.FRONTEND_URL}/support" style="display:inline-block;padding:12px 24px;background:#6366f1;color:#fff;text-decoration:none;border-radius:6px;">Go to Support</a></p>
+          `,
+        });
+      }
+    } catch (emailError) {
+      // Non-critical
+    }
 
     return ticket;
   }
@@ -309,7 +379,33 @@ class AdminSupportTicketService {
       timestamp: new Date(),
     });
 
-    // TODO: Send escalation notification to senior admins
+    // Notify senior admins of escalation
+    try {
+      // Admin accounts live in the Admin collection (not User)
+      const seniorAdmins = await Admin.find({ role: "super_admin", isActive: true }).select("email firstName").lean();
+
+      const { sendEmailDirect } = await import("../utils/email.js");
+      for (const admin of seniorAdmins) {
+        await sendEmailDirect({
+          to: admin.email,
+          subject: `Urgent: Support ticket escalated #${ticket.ticketNumber || ticketId}`,
+          html: `
+            <h2>Ticket Escalated</h2>
+            <p>Hi ${admin.firstName || admin.name || "there"},</p>
+            <p>A support ticket has been escalated and requires senior review.</p>
+            <table style="width:100%;border-collapse:collapse;margin:12px 0;">
+              <tr><td style="padding:8px;border:1px solid #e5e7eb;"><strong>Ticket</strong></td><td style="padding:8px;border:1px solid #e5e7eb;">#${ticket.ticketNumber || ticketId}</td></tr>
+              <tr><td style="padding:8px;border:1px solid #e5e7eb;"><strong>Subject</strong></td><td style="padding:8px;border:1px solid #e5e7eb;">${esc(ticket.subject || "N/A")}</td></tr>
+              <tr><td style="padding:8px;border:1px solid #e5e7eb;"><strong>Escalation Reason</strong></td><td style="padding:8px;border:1px solid #e5e7eb;">${esc(reason)}</td></tr>
+              <tr><td style="padding:8px;border:1px solid #e5e7eb;"><strong>Priority</strong></td><td style="padding:8px;border:1px solid #e5e7eb;">Urgent</td></tr>
+            </table>
+            <p><a href="${process.env.FRONTEND_URL}/admin/tickets/${ticketId}" style="display:inline-block;padding:12px 24px;background:#ef4444;color:#fff;text-decoration:none;border-radius:6px;">Review Ticket</a></p>
+          `,
+        }).catch(() => {});
+      }
+    } catch (emailError) {
+      // Non-critical
+    }
 
     return ticket;
   }
@@ -449,9 +545,9 @@ class AdminSupportTicketService {
 
     if (search) {
       query.$or = [
-        { title: { $regex: search, $options: "i" } },
-        { content: { $regex: search, $options: "i" } },
-        { tags: { $regex: search, $options: "i" } },
+        { title: { $regex: escapeRegExp(search), $options: "i" } },
+        { content: { $regex: escapeRegExp(search), $options: "i" } },
+        { tags: { $regex: escapeRegExp(search), $options: "i" } },
       ];
     }
 

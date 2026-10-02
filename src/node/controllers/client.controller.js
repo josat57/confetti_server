@@ -1,6 +1,7 @@
 import Client from "../models/client.model.js";
 import Event from "../models/event.model.js";
 import { AppError } from "../utils/AppError.js";
+import { escapeRegExp } from "../utils/escape-regex.js";
 
 /**
  * List all clients for planner
@@ -19,9 +20,9 @@ export const listClients = async (req, res, next) => {
 
     if (search) {
       query.$or = [
-        { name: { $regex: search, $options: "i" } },
-        { email: { $regex: search, $options: "i" } },
-        { company: { $regex: search, $options: "i" } },
+        { name: { $regex: escapeRegExp(search), $options: "i" } },
+        { email: { $regex: escapeRegExp(search), $options: "i" } },
+        { company: { $regex: escapeRegExp(search), $options: "i" } },
       ];
     }
 

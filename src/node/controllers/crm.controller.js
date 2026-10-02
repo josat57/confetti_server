@@ -2,6 +2,7 @@ import Client from "../models/client.model.js";
 import Vendor from "../models/vendor.model.js";
 import Booking from "../models/booking.model.js";
 import { AppError } from "../utils/AppError.js";
+import { escapeRegExp } from "../utils/escape-regex.js";
 
 /**
  * Get new client form metadata
@@ -81,10 +82,10 @@ export const getClients = async (req, res, next) => {
     // Search by name, email, company, or phone
     if (search) {
       query.$or = [
-        { name: { $regex: search, $options: "i" } },
-        { email: { $regex: search, $options: "i" } },
-        { company: { $regex: search, $options: "i" } },
-        { phone: { $regex: search, $options: "i" } },
+        { name: { $regex: escapeRegExp(search), $options: "i" } },
+        { email: { $regex: escapeRegExp(search), $options: "i" } },
+        { company: { $regex: escapeRegExp(search), $options: "i" } },
+        { phone: { $regex: escapeRegExp(search), $options: "i" } },
       ];
     }
 

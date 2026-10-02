@@ -4,6 +4,7 @@ import Subscription from "../models/subscription.model.js";
 import Event from "../models/event.model.js";
 import AuditLog from "../models/auditLog.model.js";
 import { createError } from "../utils/error.js";
+import { escapeRegExp } from "../utils/escape-regex.js";
 
 /**
  * Admin Transaction Management Service
@@ -73,14 +74,14 @@ class AdminTransactionManagementService {
       // Search by transaction ID, reference, or user email
       const searchQuery = {
         $or: [
-          { transactionId: { $regex: search, $options: "i" } },
-          { reference: { $regex: search, $options: "i" } },
+          { transactionId: { $regex: escapeRegExp(search), $options: "i" } },
+          { reference: { $regex: escapeRegExp(search), $options: "i" } },
         ],
       };
 
       // Also search by user email
       const users = await User.find({
-        email: { $regex: search, $options: "i" },
+        email: { $regex: escapeRegExp(search), $options: "i" },
       }).select("_id");
 
       if (users.length > 0) {
@@ -228,8 +229,28 @@ class AdminTransactionManagementService {
       timestamp: new Date(),
     });
 
-    // TODO: Process actual refund through payment gateway
-    // await this.processGatewayRefund(transaction, amount);
+    // Process refund via the payment gateway
+    try {
+      const { default: axios } = await import("axios");
+      const transactionRef = transaction.reference || transaction.transactionId;
+
+      if (transaction.paymentMethod === "flutterwave" && process.env.FLUTTERWAVE_SECRET_KEY && transactionRef) {
+        await axios.post(
+          `https://api.flutterwave.com/v3/transactions/${transactionRef}/refund`,
+          { amount },
+          { headers: { Authorization: `Bearer ${process.env.FLUTTERWAVE_SECRET_KEY}` } }
+        );
+      } else if (transaction.paymentMethod === "paystack" && process.env.PAYSTACK_SECRET_KEY && transactionRef) {
+        await axios.post(
+          "https://api.paystack.co/refund",
+          { transaction: transactionRef, amount: Math.round(amount * 100) },
+          { headers: { Authorization: `Bearer ${process.env.PAYSTACK_SECRET_KEY}` } }
+        );
+      }
+    } catch (gatewayError) {
+      const { logger } = await import("../utils/logger.js");
+      logger.error("Gateway refund failed:", { error: gatewayError.message, transactionId });
+    }
 
     return transaction;
   }
@@ -521,25 +542,75 @@ class AdminTransactionManagementService {
 
     const platformTransactions = await Payment.find(query).lean();
 
-    // TODO: Fetch transactions from payment gateway
-    // const gatewayTransactions = await this.fetchGatewayTransactions(paymentMethod, startDate, endDate);
+    // Fetch transactions from the payment gateway for comparison
+    let gatewayTransactions = [];
+    try {
+      const { default: axios } = await import("axios");
+      if (paymentMethod === "flutterwave" && process.env.FLUTTERWAVE_SECRET_KEY) {
+        const params = { status: "successful", currency: "NGN" };
+        if (startDate) params.from = new Date(startDate).toISOString();
+        if (endDate) params.to = new Date(endDate).toISOString();
 
-    // For now, return platform data
+        const { data } = await axios.get("https://api.flutterwave.com/v3/transactions", {
+          params,
+          headers: { Authorization: `Bearer ${process.env.FLUTTERWAVE_SECRET_KEY}` },
+        });
+        gatewayTransactions = data?.data || [];
+      } else if (paymentMethod === "paystack" && process.env.PAYSTACK_SECRET_KEY) {
+        const params = { status: "success", perPage: 100 };
+        if (startDate) params.from = new Date(startDate).toISOString();
+        if (endDate) params.to = new Date(endDate).toISOString();
+
+        const { data } = await axios.get("https://api.paystack.co/transaction", {
+          params,
+          headers: { Authorization: `Bearer ${process.env.PAYSTACK_SECRET_KEY}` },
+        });
+        gatewayTransactions = data?.data || [];
+      }
+    } catch (gatewayError) {
+      const { logger } = await import("../utils/logger.js");
+      logger.warn("Could not fetch gateway transactions for reconciliation:", gatewayError.message);
+    }
+
+    // Build sets for fast lookup
+    const platformRefs = new Set(platformTransactions.map((t) => t.reference || t.transactionId));
+    const gatewayRefs = new Set(
+      gatewayTransactions.map((t) => t.tx_ref || t.flw_ref || t.reference)
+    );
+
+    // Find discrepancies: in platform but not in gateway, or in gateway but not in platform
+    const discrepancies = [
+      ...platformTransactions
+        .filter((t) => !gatewayRefs.has(t.reference) && !gatewayRefs.has(t.transactionId))
+        .map((t) => ({ type: "missing_in_gateway", reference: t.reference, amount: t.amount })),
+      ...gatewayTransactions
+        .filter((t) => {
+          const ref = t.tx_ref || t.flw_ref || t.reference;
+          return ref && !platformRefs.has(ref);
+        })
+        .map((t) => ({
+          type: "missing_in_platform",
+          reference: t.tx_ref || t.flw_ref || t.reference,
+          amount: (t.amount || 0) / (paymentMethod === "paystack" ? 100 : 1),
+        })),
+    ];
+
     const report = {
       paymentMethod,
       period: { startDate, endDate },
       platform: {
         count: platformTransactions.length,
-        totalAmount: platformTransactions.reduce(
-          (sum, txn) => sum + txn.amount,
-          0
-        ),
+        totalAmount: platformTransactions.reduce((sum, txn) => sum + txn.amount, 0),
       },
       gateway: {
-        count: 0, // TODO: From gateway
-        totalAmount: 0, // TODO: From gateway
+        count: gatewayTransactions.length,
+        totalAmount: gatewayTransactions.reduce((sum, txn) => {
+          const amt = txn.amount || 0;
+          return sum + (paymentMethod === "paystack" ? amt / 100 : amt);
+        }, 0),
       },
-      discrepancies: [], // TODO: Compare and find discrepancies
+      discrepancies,
+      discrepancyCount: discrepancies.length,
     };
 
     return report;

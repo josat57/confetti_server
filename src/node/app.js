@@ -13,7 +13,8 @@ import { AppError } from "./utils/error.js";
 import adminRoutes from "./routes/admin.routes.js";
 import { checkEmailConfig } from "./utils/validateEmailConfig.js";
 import { setupSwagger } from "./config/swagger.config.js";
-import { generalLimiter, authLimiter, sanitizeData } from "./middleware/security.js";
+import { generalLimiter, authLimiter, sanitizeData, blockBlacklistedIPs } from "./middleware/security.js";
+import { requestMetricsMiddleware } from "./utils/request-metrics.js";
 // import authRoutes from './routes/auth.routes.js';
 // import oauthService from './services/oauth.service.js';
 
@@ -31,14 +32,26 @@ if (!sessionSecret) {
 // Create Express app
 const app = express();
 
+// Behind nginx / a load balancer the TCP peer is the proxy. Trust X-Forwarded-For
+// only from loopback/private peers (the proxy) so req.ip is the real client IP
+// (used by rate limiting, IP blocking and audit logs). Override with TRUST_PROXY
+// (e.g. "1" for one hop, "false" to disable).
+const trustProxy = process.env.TRUST_PROXY ?? "loopback, linklocal, uniquelocal";
+app.set(
+  "trust proxy",
+  trustProxy === "false" ? false : trustProxy === "true" ? true : /^\d+$/.test(trustProxy) ? Number(trustProxy) : trustProxy
+);
+
 // Middleware
 app.use(helmet());
+app.use(requestMetricsMiddleware);
 app.use(morgan("dev"));
 app.use(express.json());
 app.use(express.urlencoded({ extended: true }));
 
 // Security — NoSQL injection prevention and rate limiting
 app.use(sanitizeData);
+app.use("/api/v1", blockBlacklistedIPs);
 app.use("/api/v1", generalLimiter);
 app.use("/api/v1/auth", authLimiter);
 

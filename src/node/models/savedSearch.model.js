@@ -20,6 +20,7 @@ const savedSearchSchema = new mongoose.Schema(
     searchType: {
       type: String,
       enum: [
+        "planner",
         "global",
         "users",
         "vendors",

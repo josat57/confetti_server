@@ -4,6 +4,7 @@ import mongoSanitize from "express-mongo-sanitize";
 import { AppError } from "../utils/AppError.js";
 import { logger } from "../utils/logger.js";
 import User from "../models/user.model.js";
+import securityMonitor from "../services/security-monitor.service.js";
 
 /**
  * Security Middleware Collection
@@ -46,6 +47,7 @@ export const generalLimiter = rateLimit({
   standardHeaders: true,
   legacyHeaders: false,
   handler: (req, res) => {
+    securityMonitor.trackRateLimitViolation(req.ip, req.originalUrl || req.path, { limiter: "general" });
     logger.warn("Rate limit exceeded", {
       ip: req.ip,
       path: req.path,
@@ -67,10 +69,11 @@ export const authLimiter = rateLimit({
   skipSuccessfulRequests: true,
   message: "Too many authentication attempts, please try again later.",
   handler: (req, res) => {
+    securityMonitor.trackRateLimitViolation(req.ip, req.originalUrl || req.path, { limiter: "auth", email: req.body?.email });
     logger.warn("Auth rate limit exceeded", {
       ip: req.ip,
       path: req.path,
-      email: req.body.email,
+      email: req.body?.email,
     });
     res.status(429).json({
       success: false,
@@ -88,6 +91,7 @@ export const searchLimiter = rateLimit({
   max: 30, // 30 requests per minute
   message: "Too many search requests, please slow down.",
   handler: (req, res) => {
+    securityMonitor.trackRateLimitViolation(req.ip, req.originalUrl || req.path, { limiter: "search", userId: req.user?._id });
     logger.warn("Search rate limit exceeded", {
       ip: req.ip,
       userId: req.user?._id,
@@ -258,69 +262,87 @@ export const requireRecentAuth = (maxAge = 30 * 60 * 1000) => {
 };
 
 /**
- * Track failed authentication attempts
+ * Track failed authentication attempts (persisted; alerts + IP auto-block)
  */
-export const trackFailedAuth = async (email, ip) => {
+export const trackFailedAuth = async (email, ip, reason) => {
   try {
-    logger.warn("Failed authentication attempt", {
-      email,
-      ip,
-      timestamp: new Date(),
-    });
-
-    // In production, you might want to:
-    // 1. Store in a separate FailedAuth collection
-    // 2. Implement IP-based blocking
-    // 3. Send alerts after threshold
-    // 4. Implement CAPTCHA after multiple failures
+    await securityMonitor.trackFailedLogin(email, ip, reason);
   } catch (error) {
     logger.error("Error tracking failed auth:", error);
   }
 };
 
 /**
- * Detect suspicious activity
+ * Reject requests from blocked IPs (cached lookup; fails open on DB errors).
+ */
+export const blockBlacklistedIPs = async (req, res, next) => {
+  try {
+    if (await securityMonitor.isBlacklisted(req.ip)) {
+      securityMonitor.recordBlockedHit(req.ip);
+      return res.status(403).json({
+        success: false,
+        message: "Access from your network has been blocked. Contact support if you believe this is a mistake.",
+      });
+    }
+  } catch (error) {
+    logger.error("Blocklist middleware error:", error);
+  }
+  next();
+};
+
+// Per-user request timestamps and recent IPs (in-process, bounded)
+const SUSPICIOUS_RPM = Number(process.env.SUSPICIOUS_REQUESTS_PER_MINUTE) || 120;
+const userActivity = new Map();
+const MAX_TRACKED_USERS = 50000;
+
+/**
+ * Detect suspicious activity for authenticated users:
+ *  - request bursts above SUSPICIOUS_REQUESTS_PER_MINUTE
+ *  - the same session switching IP address within a few minutes
+ * Findings are recorded (at most once a minute per user) — requests are not blocked.
  */
 export const detectSuspiciousActivity = async (req, res, next) => {
   try {
-    if (!req.user) {
+    const userId = req.user?._id || req.user?.id;
+    if (!userId) {
       return next();
     }
 
-    const suspiciousPatterns = [
-      // Multiple rapid requests
-      {
-        check: () => {
-          // This would need a more sophisticated implementation
-          // with request tracking per user
-          return false;
-        },
-        message: "Unusual request pattern detected",
-      },
-      // Access from unusual location
-      {
-        check: () => {
-          // Would need geolocation tracking
-          return false;
-        },
-        message: "Access from unusual location",
-      },
-    ];
+    const key = String(userId);
+    const now = Date.now();
+    let entry = userActivity.get(key);
+    if (!entry) {
+      if (userActivity.size >= MAX_TRACKED_USERS) {
+        userActivity.delete(userActivity.keys().next().value); // evict oldest
+      }
+      entry = { hits: [], lastIp: null, lastIpAt: 0, lastFlagAt: 0 };
+      userActivity.set(key, entry);
+    }
 
-    for (const pattern of suspiciousPatterns) {
-      if (pattern.check()) {
-        logger.warn("Suspicious activity detected", {
-          userId: req.user._id,
-          pattern: pattern.message,
+    entry.hits = entry.hits.filter((t) => now - t < 60 * 1000);
+    entry.hits.push(now);
+
+    const findings = [];
+    if (entry.hits.length > SUSPICIOUS_RPM) {
+      findings.push(`Unusual request pattern detected (${entry.hits.length} requests in the last minute)`);
+    }
+    if (entry.lastIp && entry.lastIp !== req.ip && now - entry.lastIpAt < 5 * 60 * 1000) {
+      findings.push(`IP address changed from ${entry.lastIp} to ${req.ip} within 5 minutes`);
+    }
+    entry.lastIp = req.ip;
+    entry.lastIpAt = now;
+
+    if (findings.length && now - entry.lastFlagAt > 60 * 1000) {
+      entry.lastFlagAt = now;
+      for (const message of findings) {
+        logger.warn("Suspicious activity detected", { userId: key, pattern: message, ip: req.ip, path: req.path });
+        securityMonitor.logEvent("suspicious_activity", {
+          userId: key,
           ip: req.ip,
-          path: req.path,
+          userAgent: req.headers["user-agent"],
+          path: req.originalUrl || req.path,
+          pattern: message,
         });
-
-        // In production, you might want to:
-        // 1. Send email alert to user
-        // 2. Require additional verification
-        // 3. Temporarily lock account
-        // 4. Log to security monitoring system
       }
     }
 
@@ -425,6 +447,7 @@ export default {
   verifyRole,
   requireRecentAuth,
   trackFailedAuth,
+  blockBlacklistedIPs,
   detectSuspiciousActivity,
   validateSession,
   validateInput,

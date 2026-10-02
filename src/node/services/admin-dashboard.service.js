@@ -271,14 +271,23 @@ class AdminDashboardService {
       // Get database stats
       const dbStats = await mongoose.connection.db.stats();
 
-      // Calculate API response time (simplified - in production use APM tools)
+      // Database round-trip latency
       const startTime = Date.now();
-      await User.findOne().limit(1);
-      const responseTime = Date.now() - startTime;
+      await mongoose.connection.db.admin().ping();
+      const dbLatencyMs = Date.now() - startTime;
 
-      // Get error rate (last hour) - simplified
+      // Real API latency / 5xx rate over the last hour (utils/request-metrics.js)
+      const { getRequestStats } = await import("../utils/request-metrics.js");
+      const requestStats = getRequestStats();
+      const responseTime = requestStats.avgMs ?? dbLatencyMs;
+
+      // Unresolved errors logged in the last hour
       const oneHourAgo = new Date(Date.now() - 60 * 60 * 1000);
-      const errorCount = 0; // TODO: Implement error logging and counting
+      const ErrorLog = (await import("../models/errorLog.model.js")).default;
+      const errorCount = await ErrorLog.countDocuments({
+        createdAt: { $gte: oneHourAgo },
+        resolved: false,
+      });
 
       return {
         database: {
@@ -290,6 +299,10 @@ class AdminDashboardService {
         api: {
           responseTime: `${responseTime}ms`,
           errorRate: errorCount,
+          p95ResponseTime: requestStats.p95Ms === null ? null : `${requestStats.p95Ms}ms`,
+          requestsLastHour: requestStats.requests,
+          serverErrorRatePercent: requestStats.errorRatePercent,
+          databaseLatency: `${dbLatencyMs}ms`,
         },
         uptime: process.uptime(),
         memory: {

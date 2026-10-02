@@ -3,7 +3,44 @@ import ComplianceReport from "../models/complianceReport.model.js";
 import DataRetentionPolicy from "../models/dataRetentionPolicy.model.js";
 import GDPRRequest from "../models/gdprRequest.model.js";
 import User from "../models/user.model.js";
+import Admin from "../models/Admin.js";
+import Payment from "../models/payment.model.js";
+import SecurityLog from "../models/SecurityLog.model.js";
+import DataExport from "../models/DataExport.model.js";
 import { createError } from "../utils/error.js";
+import { renderReport, formatDateRange, REPORT_FORMATS } from "../utils/report-renderer.js";
+import { applyRetentionPolicy } from "./data-retention.service.js";
+import { escapeRegExp } from "../utils/escape-regex.js";
+
+const COMPLIANCE_REPORT_TYPES = [
+  "gdpr",
+  "data_export",
+  "data_deletion",
+  "access_log",
+  "security_audit",
+  "user_activity",
+  "financial_audit",
+];
+
+const AUDIT_EXPORT_LIMIT = 50000;
+
+const dateQuery = (field, dateRange) => {
+  const range = {};
+  if (dateRange?.startDate) range.$gte = new Date(dateRange.startDate);
+  if (dateRange?.endDate) range.$lte = new Date(dateRange.endDate);
+  return Object.keys(range).length ? { [field]: range } : {};
+};
+
+const countBy = (items, key) =>
+  Object.entries(
+    items.reduce((acc, item) => {
+      const k = (typeof key === "function" ? key(item) : item[key]) ?? "unknown";
+      acc[k] = (acc[k] || 0) + 1;
+      return acc;
+    }, {})
+  )
+    .map(([value, count]) => ({ value, count }))
+    .sort((a, b) => b.count - a.count);
 
 class AdminAuditComplianceService {
   // ==================== Audit Logs ====================
@@ -26,7 +63,7 @@ class AdminAuditComplianceService {
 
     if (admin) query.admin = admin;
     if (action) query.action = action;
-    if (resource) query.resource = resource;
+    if (resource) query.$and = [{ $or: [{ resource }, { resourceType: resource }] }];
 
     if (startDate || endDate) {
       query.createdAt = {};
@@ -36,12 +73,15 @@ class AdminAuditComplianceService {
 
     if (search) {
       query.$or = [
-        { action: { $regex: search, $options: "i" } },
-        { resource: { $regex: search, $options: "i" } },
+        { action: { $regex: escapeRegExp(search), $options: "i" } },
+        { resource: { $regex: escapeRegExp(search), $options: "i" } },
+        { resourceType: { $regex: escapeRegExp(search), $options: "i" } },
       ];
     }
 
-    const skip = (page - 1) * limit;
+    const pageNum = Math.max(1, parseInt(page, 10) || 1);
+    const limitNum = Math.max(1, parseInt(limit, 10) || 50);
+    const skip = (pageNum - 1) * limitNum;
     const sort = { [sortBy]: sortOrder === "asc" ? 1 : -1 };
 
     const [logs, total] = await Promise.all([
@@ -49,7 +89,7 @@ class AdminAuditComplianceService {
         .populate("admin", "firstName lastName email")
         .sort(sort)
         .skip(skip)
-        .limit(limit)
+        .limit(limitNum)
         .lean(),
       AuditLog.countDocuments(query),
     ]);
@@ -57,10 +97,10 @@ class AdminAuditComplianceService {
     return {
       logs,
       pagination: {
-        page,
-        limit,
+        page: pageNum,
+        limit: limitNum,
         total,
-        pages: Math.ceil(total / limit),
+        pages: Math.ceil(total / limitNum),
       },
     };
   }
@@ -124,16 +164,61 @@ class AdminAuditComplianceService {
     };
   }
 
-  async exportAuditLogs(filters = {}, format = "csv") {
-    const { logs } = await this.getAuditLogs({ ...filters, limit: 10000 });
+  auditExportRows(logs) {
+    return logs.map((l) => ({
+      timestamp: l.timestamp || l.createdAt,
+      admin: l.admin?.email || (l.admin ? String(l.admin._id || l.admin) : ""),
+      action: l.action,
+      resourceType: l.resourceType || l.resource,
+      resourceId: l.resourceId ? String(l.resourceId) : "",
+      ipAddress: l.ipAddress || "",
+      details: l.details || l.changes ? JSON.stringify(l.details || l.changes) : "",
+    }));
+  }
 
-    // In production, this would generate actual file
+  /**
+   * Describe an audit-log export; the file itself is streamed from
+   * GET /api/v1/admin/audit-logs/export/file with the same query string.
+   */
+  async exportAuditLogs(filters = {}, format = "csv") {
+    if (!REPORT_FORMATS.includes(format)) {
+      throw createError(400, `format must be one of: ${REPORT_FORMATS.join(", ")}`);
+    }
+    const { logs, pagination } = await this.getAuditLogs({ ...filters, page: 1, limit: 1 });
+    const params = new URLSearchParams();
+    for (const [k, v] of Object.entries(filters)) {
+      if (v !== undefined && v !== null && v !== "" && !["page", "limit"].includes(k)) params.set(k, v);
+    }
+    params.set("format", format);
     return {
       format,
-      recordCount: logs.length,
-      downloadUrl: `/exports/audit-logs-${Date.now()}.${format}`,
-      expiresAt: new Date(Date.now() + 24 * 60 * 60 * 1000), // 24 hours
+      recordCount: Math.min(pagination.total, AUDIT_EXPORT_LIMIT),
+      truncated: pagination.total > AUDIT_EXPORT_LIMIT,
+      downloadUrl: `/api/v1/admin/audit-logs/export/file?${params.toString()}`,
+      expiresAt: null, // generated on demand from current data
     };
+  }
+
+  async renderAuditLogExport(filters = {}, format = "csv") {
+    if (!REPORT_FORMATS.includes(format)) {
+      throw createError(400, `format must be one of: ${REPORT_FORMATS.join(", ")}`);
+    }
+    const { logs, pagination } = await this.getAuditLogs({
+      ...filters,
+      page: 1,
+      limit: AUDIT_EXPORT_LIMIT,
+    });
+    return renderReport({
+      title: "Audit log export",
+      format,
+      data: { auditLogs: this.auditExportRows(logs) },
+      meta: {
+        "Date range": formatDateRange(filters) || "All time",
+        Records: logs.length,
+        Truncated: pagination.total > logs.length ? `yes (${pagination.total} total)` : undefined,
+        "Exported at": new Date(),
+      },
+    });
   }
 
   // ==================== Compliance Reports ====================
@@ -200,11 +285,29 @@ class AdminAuditComplianceService {
     const { reportType, title, description, dateRange, filters, format } =
       reportData;
 
+    if (!COMPLIANCE_REPORT_TYPES.includes(reportType)) {
+      throw createError(400, `reportType must be one of: ${COMPLIANCE_REPORT_TYPES.join(", ")}`);
+    }
+    if (format && !REPORT_FORMATS.includes(format)) {
+      throw createError(400, `format must be one of: ${REPORT_FORMATS.join(", ")}`);
+    }
+    const range = {};
+    for (const key of ["startDate", "endDate"]) {
+      if (dateRange?.[key]) {
+        const d = new Date(dateRange[key]);
+        if (isNaN(d)) throw createError(400, `Invalid dateRange.${key}`);
+        range[key] = d;
+      }
+    }
+    if (range.startDate && range.endDate && range.startDate > range.endDate) {
+      throw createError(400, "dateRange.startDate must be before dateRange.endDate");
+    }
+
     const report = await ComplianceReport.create({
       reportType,
-      title,
+      title: title || `${reportType.replace(/_/g, " ")} report`,
       description,
-      dateRange,
+      dateRange: range,
       filters,
       format,
       requestedBy: adminId,
@@ -212,10 +315,35 @@ class AdminAuditComplianceService {
       expiresAt: new Date(Date.now() + 30 * 24 * 60 * 60 * 1000), // 30 days
     });
 
-    // Queue report generation (would be async in production)
     await this.processComplianceReport(report._id);
 
-    return report;
+    return ComplianceReport.findById(report._id).lean();
+  }
+
+  complianceReportFileUrl(reportId) {
+    return `/api/v1/admin/compliance-reports/${reportId}/file`;
+  }
+
+  async renderComplianceReport(report) {
+    return renderReport({
+      title: report.title,
+      format: report.format,
+      data: report.results,
+      meta: {
+        "Report type": report.reportType,
+        "Date range": formatDateRange(report.dateRange) || "All time",
+        "Completed at": report.completedAt,
+      },
+    });
+  }
+
+  async getComplianceReportFile(reportId) {
+    const report = await ComplianceReport.findById(reportId).lean();
+    if (!report) throw createError(404, "Compliance report not found");
+    if (report.status !== "completed") {
+      throw createError(400, "Compliance report is not ready for download");
+    }
+    return { report, file: await this.renderComplianceReport(report) };
   }
 
   async processComplianceReport(reportId) {
@@ -229,42 +357,26 @@ class AdminAuditComplianceService {
     await report.save();
 
     try {
-      // Generate report based on type
-      let results;
-      switch (report.reportType) {
-        case "gdpr":
-          results = await this.generateGDPRReport(
-            report.dateRange,
-            report.filters
-          );
-          break;
-        case "data_export":
-          results = await this.generateDataExportReport(
-            report.dateRange,
-            report.filters
-          );
-          break;
-        case "security_audit":
-          results = await this.generateSecurityAuditReport(
-            report.dateRange,
-            report.filters
-          );
-          break;
-        case "user_activity":
-          results = await this.generateUserActivityReport(
-            report.dateRange,
-            report.filters
-          );
-          break;
-        default:
-          results = { totalRecords: 0, summary: {}, findings: [] };
-      }
+      const generators = {
+        gdpr: this.generateGDPRReport,
+        data_export: this.generateDataExportReport,
+        data_deletion: this.generateDataDeletionReport,
+        access_log: this.generateAccessLogReport,
+        security_audit: this.generateSecurityAuditReport,
+        user_activity: this.generateUserActivityReport,
+        financial_audit: this.generateFinancialAuditReport,
+      };
+      const generator = generators[report.reportType];
+      if (!generator) throw new Error(`Unsupported report type: ${report.reportType}`);
 
-      report.results = results;
+      report.results = await generator.call(this, report.dateRange, report.filters);
       report.status = "completed";
       report.completedAt = new Date();
-      report.fileUrl = `/reports/${report._id}.${report.format}`;
-      report.fileSize = Math.floor(Math.random() * 1000000); // Mock file size
+      report.error = undefined;
+
+      const file = await this.renderComplianceReport(report);
+      report.fileUrl = this.complianceReportFileUrl(report._id);
+      report.fileSize = file.buffer.length;
 
       await report.save();
     } catch (error) {
@@ -361,7 +473,7 @@ class AdminAuditComplianceService {
     return { message: "Data retention policy deleted successfully" };
   }
 
-  async applyDataRetentionPolicy(policyId, adminId) {
+  async applyDataRetentionPolicy(policyId, adminId, options = {}) {
     const policy = await DataRetentionPolicy.findById(policyId);
 
     if (!policy) {
@@ -372,37 +484,27 @@ class AdminAuditComplianceService {
       throw createError("Cannot apply inactive policy", 400);
     }
 
-    // Calculate cutoff date
-    const cutoffDate = new Date();
-    if (policy.retentionPeriod.unit === "days") {
-      cutoffDate.setDate(cutoffDate.getDate() - policy.retentionPeriod.value);
-    } else if (policy.retentionPeriod.unit === "months") {
-      cutoffDate.setMonth(cutoffDate.getMonth() - policy.retentionPeriod.value);
-    } else if (policy.retentionPeriod.unit === "years") {
-      cutoffDate.setFullYear(
-        cutoffDate.getFullYear() - policy.retentionPeriod.value
-      );
+    let result;
+    try {
+      result = await applyRetentionPolicy(policy, { dryRun: options.dryRun });
+    } catch (error) {
+      throw createError(error.statusCode || 400, error.message);
     }
 
-    // Apply policy based on data type (mock implementation)
-    let recordsAffected = 0;
+    await AuditLog.create({
+      admin: adminId,
+      action: "data_retention_policy_applied",
+      resourceType: "data_retention_policy",
+      resourceId: policy._id,
+      details: {
+        dataType: result.dataType,
+        mode: result.mode,
+        recordsAffected: result.recordsAffected,
+        archiveFile: result.archiveFile,
+      },
+    });
 
-    // In production, this would actually delete/archive data
-    // For now, just simulate
-    recordsAffected = Math.floor(Math.random() * 100);
-
-    policy.lastApplied = new Date();
-    policy.recordsAffected = recordsAffected;
-    await policy.save();
-
-    return {
-      policyId: policy._id,
-      dataType: policy.dataType,
-      cutoffDate,
-      recordsAffected,
-      archived: policy.archiveBeforeDelete ? recordsAffected : 0,
-      deleted: policy.autoDelete ? recordsAffected : 0,
-    };
+    return result;
   }
 
   // ==================== GDPR Requests ====================
@@ -646,91 +748,426 @@ class AdminAuditComplianceService {
   // ==================== Helper Methods ====================
 
   async generateGDPRReport(dateRange, filters) {
-    const requests = await GDPRRequest.find({
-      createdAt: {
-        $gte: dateRange.startDate,
-        $lte: dateRange.endDate,
-      },
-    });
+    const query = dateQuery("createdAt", dateRange);
+    const requests = await GDPRRequest.find(query)
+      .populate("user", "email")
+      .lean();
+    const now = new Date();
+    const open = (r) => !["completed", "rejected", "cancelled"].includes(r.status);
+    const overdue = requests.filter((r) => open(r) && r.dueDate && r.dueDate < now);
+    const averageProcessingDays = await this.calculateAverageProcessingTime(query);
+
+    const recommendations = [];
+    if (overdue.length) {
+      recommendations.push(`Resolve ${overdue.length} overdue request(s); GDPR requires a response within one month`);
+    }
+    if (averageProcessingDays > 30) {
+      recommendations.push("Average processing time exceeds the 30-day GDPR deadline");
+    }
+    const unverified = requests.filter((r) => open(r) && r.verificationStatus !== "verified").length;
+    if (unverified) {
+      recommendations.push(`${unverified} open request(s) still awaiting identity verification`);
+    }
 
     return {
       totalRecords: requests.length,
       summary: {
         totalRequests: requests.length,
-        completedRequests: requests.filter((r) => r.status === "completed")
-          .length,
+        completedRequests: requests.filter((r) => r.status === "completed").length,
         pendingRequests: requests.filter((r) => r.status === "pending").length,
-        averageProcessingTime: "5 days",
+        inProgressRequests: requests.filter((r) => r.status === "in_progress").length,
+        rejectedRequests: requests.filter((r) => r.status === "rejected").length,
+        overdueRequests: overdue.length,
+        averageProcessingDays,
+        byType: countBy(requests, "requestType"),
       },
-      findings: [
-        {
-          type: "access",
-          count: requests.filter((r) => r.requestType === "access").length,
-        },
-        {
-          type: "erasure",
-          count: requests.filter((r) => r.requestType === "erasure").length,
-        },
-      ],
-      recommendations: [
-        "Implement automated verification process",
-        "Reduce average processing time to 3 days",
-      ],
+      findings: overdue.map((r) => ({
+        severity: "high",
+        type: "overdue_request",
+        requestId: String(r._id),
+        requestType: r.requestType,
+        user: r.user?.email || String(r.user || ""),
+        status: r.status,
+        dueDate: r.dueDate,
+      })),
+      recommendations,
     };
   }
 
   async generateDataExportReport(dateRange, filters) {
+    const query = dateQuery("createdAt", dateRange);
+    const [exports, portability, exportEvents] = await Promise.all([
+      DataExport.find(query).populate("createdBy", "email").sort({ createdAt: -1 }).lean(),
+      GDPRRequest.find({
+        ...query,
+        requestType: { $in: ["access", "portability"] },
+      })
+        .populate("user", "email")
+        .lean(),
+      SecurityLog.countDocuments({ ...query, event: "data_export" }),
+    ]);
+
+    const completed = exports.filter((e) => e.status === "completed");
+    const findings = exports.map((e) => ({
+      type: "admin_export",
+      name: e.name,
+      dataType: e.type,
+      format: e.format,
+      status: e.status,
+      rows: e.rowCount || 0,
+      sizeBytes: e.fileSize || 0,
+      exportedBy: e.createdBy?.email || String(e.createdBy || ""),
+      createdAt: e.createdAt,
+    }));
+    for (const r of portability) {
+      findings.push({
+        type: `gdpr_${r.requestType}`,
+        name: `GDPR ${r.requestType} request`,
+        dataType: "user_data",
+        format: r.dataExported?.format || "",
+        status: r.status,
+        rows: 0,
+        sizeBytes: r.dataExported?.fileSize || 0,
+        exportedBy: r.user?.email || String(r.user || ""),
+        createdAt: r.createdAt,
+      });
+    }
+
+    const recommendations = [];
+    const bulkUserExports = exports.filter((e) => ["users", "full"].includes(e.type)).length;
+    if (bulkUserExports) {
+      recommendations.push(`Review ${bulkUserExports} bulk export(s) containing personal data`);
+    }
+
     return {
-      totalRecords: 1000,
+      totalRecords: findings.length,
       summary: {
-        usersExported: 500,
-        dataSize: "2.5 GB",
-        exportFormat: "JSON",
+        adminExports: exports.length,
+        completedExports: completed.length,
+        failedExports: exports.filter((e) => e.status === "failed").length,
+        rowsExported: completed.reduce((s, e) => s + (e.rowCount || 0), 0),
+        bytesExported: completed.reduce((s, e) => s + (e.fileSize || 0), 0),
+        gdprDataRequests: portability.length,
+        securityLogExportEvents: exportEvents,
+        byType: countBy(exports, "type"),
       },
-      findings: [],
-      recommendations: [],
+      findings,
+      recommendations,
+    };
+  }
+
+  async generateDataDeletionReport(dateRange, filters) {
+    const query = dateQuery("createdAt", dateRange);
+    const deletionActions = /delete|erasure|anonymi/i;
+    const [erasures, deletionLogs, deletedUsers, retention] = await Promise.all([
+      GDPRRequest.find({ ...query, requestType: "erasure" }).populate("user", "email").lean(),
+      AuditLog.find({ ...query, action: deletionActions })
+        .populate("admin", "email")
+        .sort({ createdAt: -1 })
+        .lean(),
+      User.countDocuments({ status: "deleted", ...dateQuery("updatedAt", dateRange) }),
+      DataRetentionPolicy.find({ lastApplied: { $exists: true }, ...dateQuery("lastApplied", dateRange) }).lean(),
+    ]);
+
+    const now = new Date();
+    const pendingErasures = erasures.filter((r) => !["completed", "rejected", "cancelled"].includes(r.status));
+    const findings = [
+      ...pendingErasures.map((r) => ({
+        severity: r.dueDate && r.dueDate < now ? "high" : "medium",
+        type: "pending_erasure",
+        reference: String(r._id),
+        subject: r.user?.email || String(r.user || ""),
+        detail: `Status: ${r.status}`,
+        date: r.dueDate || r.createdAt,
+      })),
+      ...deletionLogs.map((l) => ({
+        severity: "info",
+        type: l.action,
+        reference: l.resourceId ? String(l.resourceId) : "",
+        subject: l.resourceType || l.resource || "",
+        detail: `By ${l.admin?.email || l.admin || "system"}`,
+        date: l.timestamp || l.createdAt,
+      })),
+    ];
+
+    return {
+      totalRecords: findings.length,
+      summary: {
+        erasureRequests: erasures.length,
+        completedErasures: erasures.filter((r) => r.status === "completed").length,
+        pendingErasures: pendingErasures.length,
+        recordsDeletedViaGDPR: erasures.reduce((s, r) => s + (r.dataDeleted?.recordsDeleted || 0), 0),
+        adminDeletionActions: deletionLogs.length,
+        accountsDeletedOrAnonymised: deletedUsers,
+        retentionPoliciesApplied: retention.length,
+        recordsRemovedByRetention: retention.reduce((s, p) => s + (p.recordsAffected || 0), 0),
+      },
+      findings,
+      recommendations: pendingErasures.length
+        ? [`Complete ${pendingErasures.length} pending erasure request(s)`]
+        : [],
+    };
+  }
+
+  async generateAccessLogReport(dateRange, filters) {
+    const query = dateQuery("createdAt", dateRange);
+    const [total, byAdmin, byAction, byResource, recent] = await Promise.all([
+      AuditLog.countDocuments(query),
+      AuditLog.aggregate([
+        { $match: query },
+        { $group: { _id: "$admin", actions: { $sum: 1 }, lastActivity: { $max: "$createdAt" } } },
+        { $sort: { actions: -1 } },
+        { $limit: 50 },
+      ]),
+      AuditLog.aggregate([
+        { $match: query },
+        { $group: { _id: "$action", count: { $sum: 1 } } },
+        { $sort: { count: -1 } },
+        { $limit: 25 },
+      ]),
+      AuditLog.aggregate([
+        { $match: query },
+        { $group: { _id: { $ifNull: ["$resourceType", "$resource"] }, count: { $sum: 1 } } },
+        { $sort: { count: -1 } },
+      ]),
+      AuditLog.find(query).populate("admin", "email").sort({ createdAt: -1 }).limit(500).lean(),
+    ]);
+
+    const admins = await Admin.find({ _id: { $in: byAdmin.map((a) => a._id) } })
+      .select("email role")
+      .lean();
+    const adminById = new Map(admins.map((a) => [String(a._id), a]));
+
+    return {
+      totalRecords: total,
+      summary: {
+        totalActions: total,
+        activeAdmins: byAdmin.length,
+        byAction: byAction.map((a) => ({ action: a._id, count: a.count })),
+        byResource: byResource.map((r) => ({ resource: r._id || "unknown", count: r.count })),
+        byAdmin: byAdmin.map((a) => ({
+          admin: adminById.get(String(a._id))?.email || String(a._id),
+          role: adminById.get(String(a._id))?.role || "",
+          actions: a.actions,
+          lastActivity: a.lastActivity,
+        })),
+      },
+      findings: this.auditExportRows(recent),
+      recommendations: total > recent.length ? [`Showing the latest ${recent.length} of ${total} entries; export audit logs for the full list`] : [],
     };
   }
 
   async generateSecurityAuditReport(dateRange, filters) {
-    const logs = await AuditLog.find({
-      createdAt: {
-        $gte: dateRange.startDate,
-        $lte: dateRange.endDate,
-      },
-    });
+    const query = dateQuery("createdAt", dateRange);
+    const now = new Date();
+    const [events, failedByIp, criticalActions, lockedUsers, admins] = await Promise.all([
+      SecurityLog.aggregate([
+        { $match: query },
+        { $group: { _id: { event: "$event", status: "$status", severity: "$severity" }, count: { $sum: 1 } } },
+        { $sort: { count: -1 } },
+      ]),
+      SecurityLog.aggregate([
+        { $match: { ...query, event: "failed_login" } },
+        { $group: { _id: "$ipAddress", count: { $sum: 1 }, last: { $max: "$createdAt" } } },
+        { $sort: { count: -1 } },
+        { $limit: 50 },
+      ]),
+      AuditLog.find({
+        ...query,
+        action: /delete|permission|role|security|refund|config/i,
+      })
+        .populate("admin", "email")
+        .sort({ createdAt: -1 })
+        .limit(200)
+        .lean(),
+      User.countDocuments({ lockUntil: { $gt: now } }),
+      Admin.find({ isActive: true }).select("email role twoFactorEnabled lastLogin").lean(),
+    ]);
+
+    const total = (pred) => events.filter((e) => pred(e._id)).reduce((s, e) => s + e.count, 0);
+    const failedLogins = total((e) => e.event === "failed_login");
+    const highSeverity = total((e) => ["high", "critical"].includes(e.severity));
+    const adminsWithout2FA = admins.filter((a) => !a.twoFactorEnabled);
+    const staleAdmins = admins.filter(
+      (a) => !a.lastLogin || now - new Date(a.lastLogin) > 90 * 24 * 60 * 60 * 1000
+    );
+
+    const findings = [];
+    for (const ip of failedByIp.filter((i) => i.count >= 10)) {
+      findings.push({
+        severity: ip.count >= 50 ? "high" : "medium",
+        description: `${ip.count} failed logins from ${ip._id || "unknown IP"}`,
+        lastSeen: ip.last,
+      });
+    }
+    for (const a of adminsWithout2FA) {
+      findings.push({
+        severity: a.role === "super_admin" ? "high" : "medium",
+        description: `Admin ${a.email} (${a.role}) does not have two-factor authentication enabled`,
+      });
+    }
+    for (const a of staleAdmins) {
+      findings.push({
+        severity: "low",
+        description: `Active admin ${a.email} has not logged in for over 90 days`,
+        lastSeen: a.lastLogin || null,
+      });
+    }
+    if (lockedUsers) {
+      findings.push({ severity: "medium", description: `${lockedUsers} user account(s) currently locked after failed logins` });
+    }
+
+    const recommendations = [];
+    if (adminsWithout2FA.length) recommendations.push("Enable two-factor authentication for all admins");
+    if (staleAdmins.length) recommendations.push("Deactivate admin accounts that are no longer used");
+    if (failedByIp.some((i) => i.count >= 10)) recommendations.push("Block or rate-limit IPs with repeated failed logins");
 
     return {
-      totalRecords: logs.length,
+      totalRecords: events.reduce((s, e) => s + e.count, 0) + criticalActions.length,
       summary: {
-        totalActions: logs.length,
-        uniqueAdmins: new Set(logs.map((l) => l.admin?.toString())).size,
-        criticalActions: logs.filter((l) => l.action.includes("delete")).length,
+        securityEvents: events.reduce((s, e) => s + e.count, 0),
+        failedLogins,
+        highSeverityEvents: highSeverity,
+        lockedUserAccounts: lockedUsers,
+        activeAdmins: admins.length,
+        adminsWithout2FA: adminsWithout2FA.length,
+        criticalAdminActions: criticalActions.length,
+        uniqueAdminsWithCriticalActions: new Set(criticalActions.map((l) => String(l.admin?._id || l.admin))).size,
+        eventBreakdown: events.map((e) => ({ ...e._id, count: e.count })),
       },
-      findings: [
-        {
-          severity: "high",
-          description: "Multiple failed login attempts detected",
-        },
-        { severity: "medium", description: "Unusual admin activity pattern" },
-      ],
-      recommendations: [
-        "Enable two-factor authentication for all admins",
-        "Review and update access permissions",
-      ],
+      findings,
+      recommendations,
     };
   }
 
   async generateUserActivityReport(dateRange, filters) {
+    const created = dateQuery("createdAt", dateRange);
+    const loginRange = dateQuery("lastLogin", dateRange);
+    const [newUsers, activeUsers, deletedUsers, suspendedUsers, byRole, logins, totalUsers] = await Promise.all([
+      User.countDocuments(created),
+      User.countDocuments(Object.keys(loginRange).length ? loginRange : { lastLogin: { $exists: true } }),
+      User.countDocuments({ status: "deleted", ...dateQuery("updatedAt", dateRange) }),
+      User.countDocuments({ status: "suspended" }),
+      User.aggregate([
+        { $match: created },
+        { $group: { _id: "$role", count: { $sum: 1 } } },
+        { $sort: { count: -1 } },
+      ]),
+      SecurityLog.aggregate([
+        { $match: { ...created, event: { $in: ["login", "failed_login"] }, user: { $exists: true } } },
+        {
+          $group: {
+            _id: { $dateToString: { format: "%Y-%m-%d", date: "$createdAt" } },
+            logins: { $sum: { $cond: [{ $eq: ["$event", "login"] }, 1, 0] } },
+            failedLogins: { $sum: { $cond: [{ $eq: ["$event", "failed_login"] }, 1, 0] } },
+          },
+        },
+        { $sort: { _id: 1 } },
+      ]),
+      User.countDocuments({}),
+    ]);
+
     return {
-      totalRecords: 5000,
+      totalRecords: newUsers,
       summary: {
-        activeUsers: 1200,
-        newUsers: 150,
-        deletedUsers: 10,
+        totalUsers,
+        newUsers,
+        activeUsers,
+        suspendedUsers,
+        deletedUsers,
+        newUsersByRole: byRole.map((r) => ({ role: r._id, count: r.count })),
       },
-      findings: [],
+      findings: logins.map((d) => ({ date: d._id, logins: d.logins, failedLogins: d.failedLogins })),
       recommendations: [],
+    };
+  }
+
+  async generateFinancialAuditReport(dateRange, filters) {
+    const query = dateQuery("createdAt", dateRange);
+    const staleCutoff = new Date(Date.now() - 24 * 60 * 60 * 1000);
+    const [byStatus, byCurrency, missingTxn, stalePending, refunds, unverified, duplicateRefs] = await Promise.all([
+      Payment.aggregate([
+        { $match: query },
+        { $group: { _id: "$status", count: { $sum: 1 }, amount: { $sum: "$amount" } } },
+        { $sort: { count: -1 } },
+      ]),
+      Payment.aggregate([
+        { $match: { ...query, status: "completed" } },
+        { $group: { _id: "$currency", total: { $sum: "$amount" }, count: { $sum: 1 } } },
+      ]),
+      Payment.find({
+        ...query,
+        status: "completed",
+        $or: [{ transactionId: { $exists: false } }, { transactionId: null }, { transactionId: "" }],
+      })
+        .select("reference amount currency createdAt")
+        .lean(),
+      Payment.find({ status: "pending", createdAt: { ...(query.createdAt || {}), $lt: staleCutoff } })
+        .select("reference amount currency createdAt")
+        .lean(),
+      Payment.find({ ...query, status: "refunded" }).select("reference amount currency refundDetails createdAt").lean(),
+      Payment.countDocuments({ ...query, status: "completed", webhookReceived: { $ne: true } }),
+      Payment.aggregate([
+        { $match: { ...query, reference: { $exists: true, $ne: null } } },
+        { $group: { _id: "$reference", count: { $sum: 1 } } },
+        { $match: { count: { $gt: 1 } } },
+      ]),
+    ]);
+
+    const findings = [
+      ...missingTxn.map((p) => ({
+        severity: "high",
+        issue: "Completed payment without gateway transaction ID",
+        reference: p.reference,
+        amount: p.amount,
+        currency: p.currency,
+        date: p.createdAt,
+      })),
+      ...duplicateRefs.map((d) => ({
+        severity: "high",
+        issue: `Payment reference used ${d.count} times`,
+        reference: d._id,
+        amount: "",
+        currency: "",
+        date: "",
+      })),
+      ...stalePending.map((p) => ({
+        severity: "medium",
+        issue: "Payment pending for more than 24 hours",
+        reference: p.reference,
+        amount: p.amount,
+        currency: p.currency,
+        date: p.createdAt,
+      })),
+      ...refunds.map((p) => ({
+        severity: "info",
+        issue: `Refunded${p.refundDetails?.refundReason ? `: ${p.refundDetails.refundReason}` : ""}`,
+        reference: p.reference,
+        amount: p.refundDetails?.refundAmount ?? p.amount,
+        currency: p.currency,
+        date: p.refundDetails?.refundedAt || p.createdAt,
+      })),
+    ];
+
+    const recommendations = [];
+    if (missingTxn.length) recommendations.push("Reconcile completed payments that have no gateway transaction ID");
+    if (stalePending.length) recommendations.push("Re-query or expire payments stuck in pending");
+    if (duplicateRefs.length) recommendations.push("Investigate duplicated payment references");
+    if (unverified) recommendations.push(`${unverified} completed payment(s) were not confirmed by a gateway webhook`);
+
+    return {
+      totalRecords: byStatus.reduce((s, b) => s + b.count, 0),
+      summary: {
+        byStatus: byStatus.map((b) => ({ status: b._id, count: b.count, amount: b.amount })),
+        completedByCurrency: byCurrency.map((c) => ({ currency: c._id, total: c.total, count: c.count })),
+        completedWithoutTransactionId: missingTxn.length,
+        completedWithoutWebhook: unverified,
+        stalePending: stalePending.length,
+        refunds: refunds.length,
+        duplicateReferences: duplicateRefs.length,
+      },
+      findings,
+      recommendations,
     };
   }
 

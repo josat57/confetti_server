@@ -342,7 +342,32 @@ class MessageService {
         throw new AppError('Recipient not found', 404);
       }
 
-      // TODO: Implement notification logic (e.g., push notification, email)
+      // Send in-app + push notification for the new message
+      try {
+        const notificationService = (await import("./notification.service.js")).default;
+        await notificationService.createNotification({
+          userId: recipient._id,
+          type: "new_message",
+          title: "New Message",
+          message: `${message.senderName || "Someone"}: ${(message.content || "").substring(0, 80)}${(message.content || "").length > 80 ? "…" : ""}`,
+          priority: "medium",
+          actionUrl: `/messages/${message.conversationId || message._id}`,
+          actionText: "View Message",
+          relatedEntity: { type: "message", id: message._id },
+          channels: { inApp: true, push: true },
+        });
+      } catch (notifError) {
+        // Fallback: send plain email notification
+        try {
+          const { sendMessageNotification } = await import("../utils/email.js");
+          const sender = await User.findById(message.sender).select("firstName username email").lean();
+          if (sender) {
+            await sendMessageNotification(recipient, sender, message);
+          }
+        } catch (_) {
+          // Non-critical
+        }
+      }
       logger.info(`Notification sent to user ${recipient._id} for new message`);
     } catch (error) {
       logger.error('Error notifying recipient:', error);

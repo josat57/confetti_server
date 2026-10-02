@@ -1,6 +1,7 @@
 import express from "express";
 import { validateRequest } from "../middleware/validation.js";
 import { authenticateAdmin, authorizeAdmin } from "../middleware/auth.js";
+import { authorizeAdminCreation } from "../middleware/superAdmin.js";
 import {
   createAdmin,
   getAdmins,
@@ -42,6 +43,8 @@ import {
   getSecurityLogs,
   getSecurityMetrics,
   getBlockedIPs,
+  blockIP,
+  unblockIP,
   performSecurityAudit,
   getFinancialReports,
   getDashboardMetrics,
@@ -234,6 +237,9 @@ import {
   generateReport,
   deleteGeneratedReport,
   downloadReport,
+  downloadGeneratedReportFile,
+  downloadComplianceReportFile,
+  downloadAuditLogExportFile,
   getSystemMetrics,
   getCurrentSystemMetrics,
   getMetricStatistics,
@@ -247,12 +253,18 @@ import {
   resolveSystemAlert,
   getAlertStatistics,
   getSystemHealth,
+  changeAdminPassword,
 } from "../controllers/admin.controller.js";
 
 const router = express.Router();
 
 // Public routes
-router.post("/super-admin", validateRequest("createAdmin"), createAdmin);
+router.post(
+  "/super-admin",
+  authorizeAdminCreation,
+  validateRequest("createAdmin"),
+  createAdmin
+);
 router.post("/login", validateRequest("login"), login);
 router.post("/logout", logout);
 router.post("/refresh", refreshToken);
@@ -1137,6 +1149,16 @@ router.get(
   getBlockedIPs
 );
 router.post(
+  "/security/blocked-ips",
+  authorizeAdmin(["security_compliance"]),
+  blockIP
+);
+router.delete(
+  "/security/blocked-ips/:ip",
+  authorizeAdmin(["security_compliance"]),
+  unblockIP
+);
+router.post(
   "/security/audit",
   authorizeAdmin(["security_compliance"]),
   performSecurityAudit
@@ -1507,6 +1529,11 @@ router.get(
   exportAuditLogs
 );
 router.get(
+  "/audit-logs/export/file",
+  authorizeAdmin(["audit_compliance"]),
+  downloadAuditLogExportFile
+);
+router.get(
   "/audit-logs/:logId",
   authorizeAdmin(["audit_compliance"]),
   getAuditLogById
@@ -1522,6 +1549,11 @@ router.get(
   "/compliance-reports/:reportId",
   authorizeAdmin(["audit_compliance"]),
   getComplianceReportById
+);
+router.get(
+  "/compliance-reports/:reportId/file",
+  authorizeAdmin(["audit_compliance"]),
+  downloadComplianceReportFile
 );
 router.post(
   "/compliance-reports/generate",
@@ -1885,6 +1917,11 @@ router.get(
   authorizeAdmin(["analytics"]),
   downloadReport
 );
+router.get(
+  "/generated-reports/:reportId/file",
+  authorizeAdmin(["analytics"]),
+  downloadGeneratedReportFile
+);
 
 // ==================== Phase 17: System Monitoring ====================
 
@@ -1967,6 +2004,7 @@ router.get("/:id", getAdminById);
 router.put("/:id", validateRequest("updateAdmin"), updateAdmin);
 router.delete("/:id", deleteAdmin);
 router.patch("/:id/status", validateRequest("updateStatus"), updateAdminStatus);
+router.put("/:id/password", changeAdminPassword);
 router.get("/:id/permissions", getAdminPermissions);
 router.put(
   "/:id/permissions",

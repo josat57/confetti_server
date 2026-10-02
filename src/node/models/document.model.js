@@ -27,6 +27,10 @@ const documentSchema = new mongoose.Schema({
   thumbnail: {
     type: String
   },
+  // Storage provider id (e.g. Cloudinary public_id) used to delete the file
+  cloudinaryId: {
+    type: String
+  },
   owner: {
     type: mongoose.Schema.Types.ObjectId,
     ref: 'User',

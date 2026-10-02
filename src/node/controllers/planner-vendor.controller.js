@@ -1,6 +1,7 @@
 import Vendor from "../models/vendor.model.js";
 import VendorBooking from "../models/vendor-booking.model.js";
 import User from "../models/user.model.js";
+import { escapeRegExp } from "../utils/escape-regex.js";
 
 export const searchVendors = async (req, res) => {
   try {
@@ -34,14 +35,14 @@ export const searchVendors = async (req, res) => {
 
     if (search) {
       query.$or = [
-        { name: { $regex: search, $options: "i" } },
-        { businessName: { $regex: search, $options: "i" } },
-        { description: { $regex: search, $options: "i" } },
+        { name: { $regex: escapeRegExp(search), $options: "i" } },
+        { businessName: { $regex: escapeRegExp(search), $options: "i" } },
+        { description: { $regex: escapeRegExp(search), $options: "i" } },
       ];
     }
 
     if (location) {
-      query["address.city"] = { $regex: location, $options: "i" };
+      query["address.city"] = { $regex: escapeRegExp(location), $options: "i" };
     }
 
     let sortOptions = {};

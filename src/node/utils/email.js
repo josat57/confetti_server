@@ -286,6 +286,20 @@ const replaceTemplateVariables = (template, variables) => {
   return result;
 };
 
+// Render a template, falling back to minimal inline HTML if the file can't be loaded
+const renderTemplate = async (templateName, variables, fallbackHtml) => {
+  try {
+    const template = await loadTemplate(templateName);
+    return replaceTemplateVariables(template, {
+      ...variables,
+      frontendUrl: process.env.FRONTEND_URL,
+    });
+  } catch (error) {
+    logger.warn(`Using inline fallback HTML for ${templateName} email`);
+    return fallbackHtml;
+  }
+};
+
 // Direct email sending function (used by queue service)
 export const sendEmailDirect = async (emailData) => {
   try {
@@ -303,6 +317,9 @@ export const sendEmailDirect = async (emailData) => {
       html: emailData.html,
       text: emailData.text,
     };
+    if (emailData.attachments?.length) {
+      mailOptions.attachments = emailData.attachments;
+    }
 
     const info = await transporter.sendMail(mailOptions);
 
@@ -382,15 +399,20 @@ export const sendWelcomeEmail = async (user) => {
     userId: user._id || user.id,
   };
 
+  const firstName = user.firstName || user.username;
   const emailData = {
     to: user.email,
     subject: "Welcome to Confetti!",
-    html: `
+    html: await renderTemplate(
+      "welcome",
+      { firstName },
+      `
       <h1>Welcome to Confetti!</h1>
-      <p>Hi ${user.firstName || user.username},</p>
+      <p>Hi ${firstName},</p>
       <p>Thank you for joining Confetti. We're excited to have you on board!</p>
       <p>Get started by exploring our features and creating your first event.</p>
-    `,
+    `
+    ),
   };
 
   try {
@@ -436,12 +458,16 @@ export const sendVerificationEmail = async (user, otp, token) => {
     hasToken: !!token,
   };
 
+  const firstName = user.firstName || user.username;
   const emailData = {
     to: user.email,
     subject: "Verify Your Email",
-    html: `
+    html: await renderTemplate(
+      "verification",
+      { firstName, otp, token, email: encodeURIComponent(user.email) },
+      `
       <h1>Verify Your Email</h1>
-      <p>Hi ${user.firstName || user.username},</p>
+      <p>Hi ${firstName},</p>
       <p>Your verification code is: <strong>${otp}</strong></p>
       <p>Or click the link below to verify your email:</p>
       <a href="${
@@ -449,7 +475,8 @@ export const sendVerificationEmail = async (user, otp, token) => {
       }/verify-email?token=${token}&otp=${otp}">
         Verify Email
       </a>
-    `,
+    `
+    ),
   };
 
   try {
@@ -498,12 +525,16 @@ export const sendPasswordResetEmail = async (user, otp, token) => {
     hasToken: !!token,
   };
 
+  const firstName = user.firstName || user.username;
   const emailData = {
     to: user.email,
     subject: "Reset Your Password",
-    html: `
+    html: await renderTemplate(
+      "password-reset",
+      { firstName, otp, token, email: encodeURIComponent(user.email) },
+      `
       <h1>Reset Your Password</h1>
-      <p>Hi ${user.firstName || user.username},</p>
+      <p>Hi ${firstName},</p>
       <p>Your password reset code is: <strong>${otp}</strong></p>
       <p>Or click the link below to reset your password:</p>
       <a href="${
@@ -511,7 +542,8 @@ export const sendPasswordResetEmail = async (user, otp, token) => {
       }/reset-password?token=${token}&otp=${otp}">
         Reset Password
       </a>
-    `,
+    `
+    ),
   };
 
   try {

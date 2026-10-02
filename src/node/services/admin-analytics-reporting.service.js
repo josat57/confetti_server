@@ -305,20 +305,35 @@ class AdminAnalyticsReportingService {
    * @returns {Number} Retention rate percentage
    */
   async calculateRetentionRate(startDate, endDate) {
-    // Simplified retention calculation
-    // In production, implement cohort-based retention
-    const thirtyDaysAgo = new Date(Date.now() - 30 * 24 * 60 * 60 * 1000);
+    // 30-day cohort retention: of users who signed up in the period (and have
+    // had at least 30 days since signing up), the share still active 30+ days later.
+    const THIRTY_DAYS = 30 * 24 * 60 * 60 * 1000;
+    const latestEligible = new Date(Date.now() - THIRTY_DAYS);
+    const end = endDate ? new Date(Math.min(new Date(endDate).getTime(), latestEligible.getTime())) : latestEligible;
+    const start = startDate ? new Date(startDate) : new Date(end.getTime() - 90 * 24 * 60 * 60 * 1000);
+    if (isNaN(start) || isNaN(end) || start > end) return 0;
 
-    const [totalUsers, activeUsers] = await Promise.all([
-      User.countDocuments({ createdAt: { $lte: thirtyDaysAgo } }),
-      User.countDocuments({
-        createdAt: { $lte: thirtyDaysAgo },
-        lastLogin: { $gte: thirtyDaysAgo },
-      }),
+    const [row] = await User.aggregate([
+      { $match: { createdAt: { $gte: start, $lte: end } } },
+      {
+        $group: {
+          _id: null,
+          cohort: { $sum: 1 },
+          retained: {
+            $sum: {
+              $cond: [
+                { $and: [{ $ne: ["$lastLogin", null] }, { $gte: ["$lastLogin", { $add: ["$createdAt", THIRTY_DAYS] }] }] },
+                1,
+                0,
+              ],
+            },
+          },
+        },
+      },
     ]);
 
-    if (totalUsers === 0) return 0;
-    return Math.round((activeUsers / totalUsers) * 100 * 100) / 100;
+    if (!row?.cohort) return 0;
+    return Math.round((row.retained / row.cohort) * 100 * 100) / 100;
   }
 
   /**
@@ -638,9 +653,45 @@ class AdminAnalyticsReportingService {
    * @returns {Number} Average session duration in minutes
    */
   async calculateAverageSessionDuration() {
-    // TODO: Implement session tracking
-    // For now, return placeholder
-    return 0;
+    try {
+      // Derive session duration from AuditLog login/logout pairs per user
+      const AuditLog = (await import("../models/auditLog.model.js")).default;
+      const thirtyDaysAgo = new Date(Date.now() - 30 * 24 * 60 * 60 * 1000);
+
+      const sessions = await AuditLog.aggregate([
+        {
+          $match: {
+            action: { $in: ["login", "logout"] },
+            timestamp: { $gte: thirtyDaysAgo },
+          },
+        },
+        { $sort: { resource: 1, timestamp: 1 } },
+        {
+          $group: {
+            _id: "$resource",
+            events: { $push: { action: "$action", timestamp: "$timestamp" } },
+          },
+        },
+      ]);
+
+      const durations = [];
+      for (const session of sessions) {
+        const events = session.events;
+        for (let i = 0; i < events.length - 1; i++) {
+          if (events[i].action === "login" && events[i + 1].action === "logout") {
+            const durationMs = new Date(events[i + 1].timestamp) - new Date(events[i].timestamp);
+            if (durationMs > 0 && durationMs < 24 * 60 * 60 * 1000) {
+              durations.push(durationMs / 60000); // convert to minutes
+            }
+          }
+        }
+      }
+
+      if (!durations.length) return 0;
+      return Math.round((durations.reduce((a, b) => a + b, 0) / durations.length) * 100) / 100;
+    } catch {
+      return 0;
+    }
   }
 
   /**
@@ -651,12 +702,33 @@ class AdminAnalyticsReportingService {
     const [eventsCreated, vendorsBooked, aiPlannerUsed, guestsManaged] =
       await Promise.all([
         Event.countDocuments(),
-        // TODO: Implement booking tracking
-        Promise.resolve(0),
-        // TODO: Implement AI planner usage tracking
-        Promise.resolve(0),
-        // TODO: Implement guest management tracking
-        Promise.resolve(0),
+        // Count total confirmed/completed bookings
+        (async () => {
+          try {
+            const Booking = (await import("../models/booking.model.js")).default;
+            return await Booking.countDocuments({ status: { $in: ["confirmed", "completed"] } });
+          } catch { return 0; }
+        })(),
+        // Sum all AI planner usage counts
+        (async () => {
+          try {
+            const AIPlannerUsage = (await import("../models/ai-planner-usage.model.js")).default;
+            const result = await AIPlannerUsage.aggregate([
+              { $group: { _id: null, total: { $sum: "$count" } } },
+            ]);
+            return result[0]?.total || 0;
+          } catch { return 0; }
+        })(),
+        // Count guests across all events
+        (async () => {
+          try {
+            const result = await Event.aggregate([
+              { $project: { guestCount: { $size: { $ifNull: ["$guests", []] } } } },
+              { $group: { _id: null, total: { $sum: "$guestCount" } } },
+            ]);
+            return result[0]?.total || 0;
+          } catch { return 0; }
+        })(),
       ]);
 
     return {

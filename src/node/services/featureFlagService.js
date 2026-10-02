@@ -3,6 +3,7 @@ import ABTest from "../models/ABTest.js";
 import ABTestParticipant from "../models/ABTestParticipant.js";
 import FeatureUsage from "../models/FeatureUsage.js";
 import crypto from "crypto";
+import { escapeRegExp } from "../utils/escape-regex.js";
 
 class FeatureFlagService {
   // ==================== FEATURE FLAGS ====================
@@ -23,9 +24,9 @@ class FeatureFlagService {
 
     if (filters.search) {
       query.$or = [
-        { name: { $regex: filters.search, $options: "i" } },
-        { key: { $regex: filters.search, $options: "i" } },
-        { description: { $regex: filters.search, $options: "i" } },
+        { name: { $regex: escapeRegExp(filters.search), $options: "i" } },
+        { key: { $regex: escapeRegExp(filters.search), $options: "i" } },
+        { description: { $regex: escapeRegExp(filters.search), $options: "i" } },
       ];
     }
 
@@ -316,9 +317,9 @@ class FeatureFlagService {
 
     if (filters.search) {
       query.$or = [
-        { name: { $regex: filters.search, $options: "i" } },
-        { key: { $regex: filters.search, $options: "i" } },
-        { description: { $regex: filters.search, $options: "i" } },
+        { name: { $regex: escapeRegExp(filters.search), $options: "i" } },
+        { key: { $regex: escapeRegExp(filters.search), $options: "i" } },
+        { description: { $regex: escapeRegExp(filters.search), $options: "i" } },
       ];
     }
 

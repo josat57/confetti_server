@@ -270,18 +270,43 @@ class PlannerCalendarController {
         action,
       });
 
-      // TODO: Implement actual calendar sync with Google/Outlook APIs
-      // This is a placeholder for the integration
+      // Build the OAuth authorization URL for the requested provider
+      const state = Buffer.from(JSON.stringify({ plannerId, provider, action })).toString("base64");
+      let authUrl;
+
+      if (provider === "google") {
+        const clientId = process.env.GOOGLE_CLIENT_ID;
+        const redirectUri = encodeURIComponent(`${process.env.BACKEND_URL || process.env.FRONTEND_URL}/api/v1/planner/calendar/oauth/callback`);
+        const scope = encodeURIComponent("https://www.googleapis.com/auth/calendar");
+        authUrl = clientId
+          ? `https://accounts.google.com/o/oauth2/v2/auth?client_id=${clientId}&redirect_uri=${redirectUri}&response_type=code&scope=${scope}&access_type=offline&state=${state}`
+          : null;
+      } else if (provider === "outlook") {
+        const clientId = process.env.MICROSOFT_CLIENT_ID;
+        const tenantId = process.env.MICROSOFT_TENANT_ID || "common";
+        const redirectUri = encodeURIComponent(`${process.env.BACKEND_URL || process.env.FRONTEND_URL}/api/v1/planner/calendar/oauth/callback`);
+        const scope = encodeURIComponent("https://graph.microsoft.com/Calendars.ReadWrite offline_access");
+        authUrl = clientId
+          ? `https://login.microsoftonline.com/${tenantId}/oauth2/v2.0/authorize?client_id=${clientId}&redirect_uri=${redirectUri}&response_type=code&scope=${scope}&state=${state}`
+          : null;
+      }
+
+      if (!authUrl) {
+        return res.status(200).json({
+          success: true,
+          message: `${provider} calendar sync is not yet configured`,
+          data: { provider, action, status: "not_configured" },
+        });
+      }
 
       res.status(200).json({
         success: true,
-        message: `Calendar sync with ${provider} initiated`,
+        message: `Redirect to ${provider} to authorize calendar access`,
         data: {
           provider,
           action,
-          status: "pending",
-          message:
-            "Calendar sync feature coming soon. Integration with Google Calendar and Outlook Calendar will be available in the next release.",
+          status: "oauth_required",
+          authUrl,
         },
       });
     } catch (error) {

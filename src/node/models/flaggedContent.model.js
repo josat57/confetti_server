@@ -100,7 +100,8 @@ const flaggedContentSchema = new mongoose.Schema(
     screenshots: [String],
     additionalEvidence: [
       {
-        type: String,
+        // object form: bare `type: String` would turn this into [String]
+        type: { type: String },
         url: String,
         description: String,
       },
@@ -195,6 +196,14 @@ flaggedContentSchema.statics.getStatistics = async function () {
 // Ensure virtuals are included in JSON
 flaggedContentSchema.set("toJSON", { virtuals: true });
 flaggedContentSchema.set("toObject", { virtuals: true });
+
+// Entries stored before this field was a subdocument are plain strings;
+// convert them on load so they are not hydrated as character-indexed objects.
+flaggedContentSchema.pre("init", function (doc) {
+  if (Array.isArray(doc?.additionalEvidence)) {
+    doc.additionalEvidence = doc.additionalEvidence.map((v) => (typeof v === "string" ? { url: v } : v));
+  }
+});
 
 const FlaggedContent = mongoose.model("FlaggedContent", flaggedContentSchema);
 

@@ -152,6 +152,23 @@ const vendorSchema = new mongoose.Schema(
       default: false,
     },
     featuredUntil: Date,
+    // Admin investigation flags
+    isFlagged: {
+      type: Boolean,
+      default: false,
+      index: true,
+    },
+    flags: [
+      {
+        reason: String,
+        flaggedBy: { type: mongoose.Schema.Types.ObjectId, ref: "Admin" },
+        flaggedAt: { type: Date, default: Date.now },
+        resolved: { type: Boolean, default: false },
+        resolvedBy: { type: mongoose.Schema.Types.ObjectId, ref: "Admin" },
+        resolvedAt: Date,
+        resolution: String,
+      },
+    ],
 
     // Active Status
     isActive: {

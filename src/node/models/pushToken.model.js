@@ -18,6 +18,16 @@ const pushTokenSchema = new mongoose.Schema(
       enum: ["ios", "android", "web"],
       required: true,
     },
+    // "fcm" = Firebase registration token; "webpush" = browser Push API subscription
+    kind: {
+      type: String,
+      enum: ["fcm", "webpush"],
+      default: "fcm",
+    },
+    // Web Push subscription ({ endpoint, keys: { p256dh, auth } }) when kind = "webpush"
+    subscription: {
+      type: mongoose.Schema.Types.Mixed,
+    },
     deviceId: {
       type: String,
     },

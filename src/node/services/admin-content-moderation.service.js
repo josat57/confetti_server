@@ -229,7 +229,25 @@ class AdminContentModerationService {
       timestamp: new Date(),
     });
 
-    // TODO: Send notification to reporter
+    // Notify the reporter that the content was reviewed and not removed
+    try {
+      const reporter = await User.findById(flaggedItem.reportedBy).select("email firstName name").lean();
+      if (reporter?.email) {
+        const { sendEmailDirect } = await import("../utils/email.js");
+        await sendEmailDirect({
+          to: reporter.email,
+          subject: "Update on your content report",
+          html: `
+            <h2>Content Report Update</h2>
+            <p>Hi ${reporter.firstName || reporter.name || "there"},</p>
+            <p>Thank you for your report. After review, our team determined that the content does not violate our policies and no action will be taken at this time.</p>
+            <p>If you believe this decision is incorrect, please submit a new report with additional context.</p>
+          `,
+        });
+      }
+    } catch (emailError) {
+      // Non-critical
+    }
 
     return flaggedItem;
   }
@@ -277,8 +295,42 @@ class AdminContentModerationService {
       timestamp: new Date(),
     });
 
-    // TODO: Send notification to content owner
-    // TODO: Send notification to reporter
+    // Notify both the content owner and the reporter
+    try {
+      const { sendEmailDirect } = await import("../utils/email.js");
+      const [owner, reporter] = await Promise.all([
+        flaggedItem.contentOwnerId ? User.findById(flaggedItem.contentOwnerId).select("email firstName name").lean() : null,
+        flaggedItem.reportedBy ? User.findById(flaggedItem.reportedBy).select("email firstName name").lean() : null,
+      ]);
+
+      if (owner?.email) {
+        await sendEmailDirect({
+          to: owner.email,
+          subject: "Your content has been removed",
+          html: `
+            <h2>Content Removed</h2>
+            <p>Hi ${owner.firstName || owner.name || "there"},</p>
+            <p>Your content has been reviewed and removed from Confetti for violating our community guidelines.</p>
+            ${reason ? `<p><strong>Reason:</strong> ${reason}</p>` : ""}
+            <p>If you believe this is a mistake, please contact our support team.</p>
+          `,
+        }).catch(() => {});
+      }
+
+      if (reporter?.email) {
+        await sendEmailDirect({
+          to: reporter.email,
+          subject: "Your content report has been actioned",
+          html: `
+            <h2>Content Report Update</h2>
+            <p>Hi ${reporter.firstName || reporter.name || "there"},</p>
+            <p>Thank you for your report. After review, the reported content has been removed from our platform.</p>
+          `,
+        }).catch(() => {});
+      }
+    } catch (emailError) {
+      // Non-critical
+    }
 
     return flaggedItem;
   }
@@ -369,9 +421,50 @@ class AdminContentModerationService {
       timestamp: new Date(),
     });
 
-    // TODO: Revoke all active sessions
-    // TODO: Send notification to user
-    // TODO: Send notification to reporter
+    // Revoke all active sessions for the banned user
+    try {
+      const RefreshToken = (await import("../models/refreshToken.model.js")).default;
+      await RefreshToken.deleteMany({ user: flaggedItem.contentOwnerId });
+    } catch {
+      // Non-critical
+    }
+
+    // Notify the banned user and the reporter
+    try {
+      const { sendEmailDirect } = await import("../utils/email.js");
+      const [bannedUser, reporter] = await Promise.all([
+        flaggedItem.contentOwnerId ? User.findById(flaggedItem.contentOwnerId).select("email firstName name").lean() : null,
+        flaggedItem.reportedBy ? User.findById(flaggedItem.reportedBy).select("email firstName name").lean() : null,
+      ]);
+
+      if (bannedUser?.email) {
+        await sendEmailDirect({
+          to: bannedUser.email,
+          subject: "Your Confetti account has been suspended",
+          html: `
+            <h2>Account Suspended</h2>
+            <p>Hi ${bannedUser.firstName || bannedUser.name || "there"},</p>
+            <p>Your account has been suspended due to a violation of our community guidelines.</p>
+            ${reason ? `<p><strong>Reason:</strong> ${reason}</p>` : ""}
+            <p>If you believe this is a mistake, please contact our support team.</p>
+          `,
+        }).catch(() => {});
+      }
+
+      if (reporter?.email) {
+        await sendEmailDirect({
+          to: reporter.email,
+          subject: "Update on your content report",
+          html: `
+            <h2>Content Report Update</h2>
+            <p>Hi ${reporter.firstName || reporter.name || "there"},</p>
+            <p>Thank you for your report. We have reviewed the content and taken action against the responsible account.</p>
+          `,
+        }).catch(() => {});
+      }
+    } catch (emailError) {
+      // Non-critical
+    }
 
     return flaggedItem;
   }
@@ -406,7 +499,29 @@ class AdminContentModerationService {
       timestamp: new Date(),
     });
 
-    // TODO: Send warning notification to content owner
+    // Send warning email to the content owner
+    try {
+      const owner = flaggedItem.contentOwnerId
+        ? await User.findById(flaggedItem.contentOwnerId).select("email firstName name").lean()
+        : null;
+      if (owner?.email) {
+        const { sendEmailDirect } = await import("../utils/email.js");
+        await sendEmailDirect({
+          to: owner.email,
+          subject: "Warning: Content policy violation on Confetti",
+          html: `
+            <h2>Content Policy Warning</h2>
+            <p>Hi ${owner.firstName || owner.name || "there"},</p>
+            <p>Your content has been reviewed and found to be in violation of our community guidelines. This is an official warning.</p>
+            ${warningMessage ? `<p><strong>Details:</strong> ${warningMessage}</p>` : ""}
+            <p>Please review our <a href="${process.env.FRONTEND_URL}/community-guidelines">community guidelines</a> to avoid further action.</p>
+            <p>Repeated violations may result in suspension of your account.</p>
+          `,
+        });
+      }
+    } catch (emailError) {
+      // Non-critical
+    }
 
     return flaggedItem;
   }

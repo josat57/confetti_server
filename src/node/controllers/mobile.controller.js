@@ -5,6 +5,8 @@ import Client from "../models/client.model.js";
 import Task from "../models/task.model.js";
 import pwaConfig from "../config/pwa.config.js";
 import imageOptimizationService from "../services/image-optimization.service.js";
+import PushToken from "../models/pushToken.model.js";
+import { uploadToCloudinary, streamStoredFile } from "../utils/cloudinary.js";
 
 /**
  * Mobile API Controller
@@ -179,14 +181,21 @@ export const uploadImage = async (req, res, next) => {
     // Get metadata
     const metadata = await imageOptimizationService.getMetadata(imageBuffer);
 
-    // In production, upload to cloud storage (S3, Cloudinary, etc.)
-    // For now, return metadata and base64 for demo
-    const base64 = imageBuffer.toString("base64");
+    // Store (Cloudinary when configured, otherwise GridFS served by GET /mobile/images/:fileId)
+    const stored = await uploadToCloudinary(imageBuffer, {
+      folder: "mobile-uploads",
+      resource_type: "image",
+      filename: `mobile-${req.user._id}-${Date.now()}.${metadata.format}`,
+      mimetype: `image/${metadata.format}`,
+      metadata: { owner: String(req.user._id), source: "mobile" },
+    });
+    const fileId = String(stored.public_id).startsWith("gridfs:") ? String(stored.public_id).slice(7) : null;
 
     res.status(200).json({
       success: true,
       data: {
-        url: `data:image/${metadata.format};base64,${base64}`,
+        url: stored.secure_url || `/api/v1/mobile/images/${fileId}`,
+        fileId: fileId || stored.public_id,
         metadata: {
           format: metadata.format,
           width: metadata.width,
@@ -252,10 +261,37 @@ export const subscribePush = async (req, res, next) => {
       return next(new AppError("Subscription data required", 400));
     }
 
-    // In production, store subscription in database
+    let endpoint;
+    try {
+      endpoint = new URL(subscription.endpoint);
+    } catch {
+      return next(new AppError("subscription.endpoint must be a valid URL", 400));
+    }
+    if (endpoint.protocol !== "https:") {
+      return next(new AppError("subscription.endpoint must use https", 400));
+    }
+
+    // One record per browser subscription; re-subscribing moves it to this user
+    await PushToken.findOneAndUpdate(
+      { token: subscription.endpoint },
+      {
+        $set: {
+          user: userId,
+          platform: "web",
+          kind: "webpush",
+          subscription: { endpoint: subscription.endpoint, keys: subscription.keys || {} },
+          deviceName: req.headers["user-agent"]?.slice(0, 200),
+          isActive: true,
+          lastUsedAt: new Date(),
+          expiresAt: subscription.expirationTime ? new Date(subscription.expirationTime) : null,
+        },
+      },
+      { upsert: true, new: true, setDefaultsOnInsert: true }
+    );
+
     logger.info("Push subscription registered", {
       userId,
-      endpoint: subscription.endpoint,
+      endpoint: endpoint.origin,
     });
 
     res.status(200).json({
@@ -358,4 +394,21 @@ export default {
   getMobileConfig,
   subscribePush,
   checkCapabilities,
+};
+
+/**
+ * Serve a GridFS-stored mobile upload (owner only)
+ * GET /api/v1/mobile/images/:fileId
+ */
+export const getUploadedImage = async (req, res, next) => {
+  try {
+    const { fileId } = req.params;
+    const { getFileMetadata } = await import("../services/file-storage.service.js");
+    const meta = await getFileMetadata(fileId).catch(() => null);
+    if (!meta || meta.metadata?.source !== "mobile") return next(new AppError("Image not found", 404));
+    if (String(meta.metadata?.owner) !== String(req.user._id)) return next(new AppError("Image not found", 404));
+    await streamStoredFile(`gridfs:${fileId}`, res, { filename: meta.filename, mimeType: meta.contentType, inline: true });
+  } catch (error) {
+    next(error);
+  }
 };

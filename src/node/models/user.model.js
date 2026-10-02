@@ -44,7 +44,8 @@ const userSchema = new mongoose.Schema(
     },
     status: {
       type: String,
-      enum: ["pending_payment", "pending_verification", "active", "suspended"],
+      // "deleted" = soft-deleted/anonymised by an admin or retention policy
+      enum: ["pending_payment", "pending_verification", "active", "suspended", "deleted"],
       default: "pending_verification",
     },
     subscription: {
@@ -145,6 +146,9 @@ const userSchema = new mongoose.Schema(
       default: false, // Changed to false - users must verify payment/email before activation
     },
     lastLogin: Date,
+    // Set when the user closes their account; data is purged 30 days later
+    deletedAt: Date,
+    accountDisabledReason: String,
     loginAttempts: {
       type: Number,
       default: 0,

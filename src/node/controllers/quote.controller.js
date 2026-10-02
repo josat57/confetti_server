@@ -3,6 +3,8 @@ import Vendor from "../models/vendor.model.js";
 import Lead from "../models/lead.model.js";
 import { AppError } from "../utils/AppError.js";
 import { logger } from "../utils/logger.js";
+import { sendEmailDirect } from "../utils/email.js";
+import { escapeRegExp } from "../utils/escape-regex.js";
 
 /**
  * Get all quotes
@@ -32,9 +34,9 @@ export const getQuotes = async (req, res, next) => {
     // Search in customer name, email, or quote number
     if (search) {
       query.$or = [
-        { "customer.name": new RegExp(search, "i") },
-        { "customer.email": new RegExp(search, "i") },
-        { quoteNumber: new RegExp(search, "i") },
+        { "customer.name": new RegExp(escapeRegExp(search), "i") },
+        { "customer.email": new RegExp(escapeRegExp(search), "i") },
+        { quoteNumber: new RegExp(escapeRegExp(search), "i") },
       ];
     }
 
@@ -304,7 +306,57 @@ export const sendQuote = async (req, res, next) => {
 
     await quote.send(req.user._id);
 
-    // TODO: Send email to customer with quote
+    // Send quote email to customer
+    try {
+      const customerEmail = quote.client?.email || quote.customerEmail;
+      const customerName = quote.client?.name || quote.customerName || "Customer";
+      if (customerEmail) {
+        const validUntil = quote.validUntil
+          ? new Date(quote.validUntil).toLocaleDateString("en-US", { year: "numeric", month: "long", day: "numeric" })
+          : "30 days from today";
+        const itemsHtml = (quote.items || [])
+          .map(
+            (item) =>
+              `<tr>
+                <td style="padding:8px;border:1px solid #e5e7eb;">${item.description || item.name}</td>
+                <td style="padding:8px;border:1px solid #e5e7eb;text-align:right;">${quote.currency || "NGN"} ${((item.quantity || 1) * (item.unitPrice || 0)).toLocaleString()}</td>
+              </tr>`
+          )
+          .join("");
+        await sendEmailDirect({
+          to: customerEmail,
+          subject: `Quote #${quote.quoteNumber} from ${vendor.businessName || vendor.displayName}`,
+          html: `
+            <h2>Quote from ${vendor.businessName || vendor.displayName}</h2>
+            <p>Hi ${customerName},</p>
+            <p>Please find your quote below:</p>
+            <table style="width:100%;border-collapse:collapse;margin:16px 0;">
+              <thead>
+                <tr style="background:#f9fafb;">
+                  <th style="padding:8px;border:1px solid #e5e7eb;text-align:left;">Description</th>
+                  <th style="padding:8px;border:1px solid #e5e7eb;text-align:right;">Amount</th>
+                </tr>
+              </thead>
+              <tbody>${itemsHtml}</tbody>
+              <tfoot>
+                <tr>
+                  <td style="padding:8px;border:1px solid #e5e7eb;"><strong>Total</strong></td>
+                  <td style="padding:8px;border:1px solid #e5e7eb;text-align:right;"><strong>${quote.currency || "NGN"} ${(quote.total || 0).toLocaleString()}</strong></td>
+                </tr>
+              </tfoot>
+            </table>
+            <p><strong>Quote Number:</strong> #${quote.quoteNumber}</p>
+            <p><strong>Valid Until:</strong> ${validUntil}</p>
+            ${quote.notes ? `<p><strong>Notes:</strong> ${quote.notes}</p>` : ""}
+            <p>To accept this quote or ask questions, please contact us.</p>
+            <p>Thank you for considering our services!</p>
+            <p><em>${vendor.businessName || vendor.displayName}</em></p>
+          `,
+        });
+      }
+    } catch (emailError) {
+      logger.error("Failed to send quote email:", emailError.message);
+    }
 
     res.status(200).json({
       status: "success",

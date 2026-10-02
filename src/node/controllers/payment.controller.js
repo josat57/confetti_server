@@ -2,6 +2,8 @@ import Invoice from "../models/invoice.model.js";
 import Vendor from "../models/vendor.model.js";
 import Payment from "../models/payment.model.js";
 import { AppError } from "../utils/AppError.js";
+import { sendEmailDirect } from "../utils/email.js";
+import { logger } from "../utils/logger.js";
 
 /**
  * Get all invoices
@@ -118,7 +120,36 @@ export const sendInvoice = async (req, res, next) => {
 
     await invoice.send(req.user._id);
 
-    // TODO: Send email to customer
+    // Send invoice email to customer
+    try {
+      const customerEmail = invoice.client?.email || invoice.customerEmail;
+      const customerName = invoice.client?.name || invoice.customerName || "Customer";
+      if (customerEmail) {
+        const dueDate = invoice.dueDate
+          ? new Date(invoice.dueDate).toLocaleDateString("en-US", { year: "numeric", month: "long", day: "numeric" })
+          : "Upon receipt";
+        await sendEmailDirect({
+          to: customerEmail,
+          subject: `Invoice #${invoice.invoiceNumber} from ${vendor.businessName || vendor.displayName}`,
+          html: `
+            <h2>Invoice from ${vendor.businessName || vendor.displayName}</h2>
+            <p>Hi ${customerName},</p>
+            <p>Please find your invoice below:</p>
+            <table style="width:100%;border-collapse:collapse;margin:16px 0;">
+              <tr><td style="padding:8px;border:1px solid #e5e7eb;"><strong>Invoice Number</strong></td><td style="padding:8px;border:1px solid #e5e7eb;">#${invoice.invoiceNumber}</td></tr>
+              <tr><td style="padding:8px;border:1px solid #e5e7eb;"><strong>Amount Due</strong></td><td style="padding:8px;border:1px solid #e5e7eb;">${invoice.currency || "NGN"} ${(invoice.total || 0).toLocaleString()}</td></tr>
+              <tr><td style="padding:8px;border:1px solid #e5e7eb;"><strong>Due Date</strong></td><td style="padding:8px;border:1px solid #e5e7eb;">${dueDate}</td></tr>
+            </table>
+            <p>Please make payment by the due date to avoid any late fees.</p>
+            <p>If you have any questions about this invoice, please contact us.</p>
+            <p>Thank you for your business!</p>
+            <p><em>${vendor.businessName || vendor.displayName}</em></p>
+          `,
+        });
+      }
+    } catch (emailError) {
+      logger.error("Failed to send invoice email:", emailError.message);
+    }
 
     res.status(200).json({
       status: "success",

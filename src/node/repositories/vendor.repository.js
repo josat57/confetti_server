@@ -1,4 +1,7 @@
 import Vendor from "../models/vendor.model.js";
+
+// Case-insensitive match on user-supplied text (escaped: never treated as a pattern)
+const ciRegex = (value) => new RegExp(String(value ?? "").replace(/[.*+?^${}()|[\]\\]/g, "\\$&"), "i");
 import { logger } from "../utils/logger.js";
 
 /**
@@ -97,8 +100,8 @@ class VendorRepository {
     try {
       const query = {
         $or: [
-          { "address.city": new RegExp(city, "i") },
-          { "address.state": new RegExp(state, "i") },
+          { "address.city": ciRegex(city) },
+          { "address.state": ciRegex(state) },
         ],
         status: filters.status || "approved",
         isVerified: true,
@@ -176,8 +179,8 @@ class VendorRepository {
         status: "approved",
         isVerified: true,
         $or: [
-          { "address.city": new RegExp(city, "i") },
-          { "address.state": new RegExp(state, "i") },
+          { "address.city": ciRegex(city) },
+          { "address.state": ciRegex(state) },
         ],
       };
 
@@ -255,8 +258,8 @@ class VendorRepository {
         status: "approved",
         isVerified: true,
         $or: [
-          { "address.city": new RegExp(city, "i") },
-          { "address.state": new RegExp(state, "i") },
+          { "address.city": ciRegex(city) },
+          { "address.state": ciRegex(state) },
         ],
       };
 
@@ -378,6 +381,31 @@ class VendorRepository {
       throw error;
     }
   }
+
+  /**
+   * Other cities in the same state that have approved, verified vendors,
+   * ranked by vendor count (used when a city has too few vendors).
+   */
+  async findNearbyCities(city, state, { eventType, limit = 5 } = {}) {
+    if (!state) return [];
+    const match = {
+      "address.state": ciRegex(state),
+      "address.city": { $exists: true, $ne: null, $not: new RegExp(`^${String(city ?? "").replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}$`, "i") },
+      status: "approved",
+      isVerified: true,
+    };
+    if (eventType) {
+      match.$or = [{ eventTypes: eventType }, { eventTypes: { $exists: false } }, { eventTypes: { $size: 0 } }];
+    }
+    const rows = await Vendor.aggregate([
+      { $match: match },
+      { $group: { _id: { $toLower: "$address.city" }, city: { $first: "$address.city" }, vendorCount: { $sum: 1 } } },
+      { $sort: { vendorCount: -1 } },
+      { $limit: limit },
+    ]);
+    return rows.map((r) => ({ city: r.city, state, vendorCount: r.vendorCount }));
+  }
+
 }
 
 export default new VendorRepository();

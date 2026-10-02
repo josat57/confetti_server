@@ -18,7 +18,16 @@ const securityLogSchema = new mongoose.Schema({
       'api_access',
       'file_access',
       'data_export',
-      'data_import'
+      'data_import',
+      'ip_blocked',
+      'ip_unblocked',
+      'unauthorized_access',
+      'sensitive_operation',
+      'data_access',
+      'two_factor',
+      'rate_limit',
+      'new_device_login',
+      'security_audit'
     ]
   },
   user: {
@@ -61,6 +70,7 @@ securityLogSchema.index({ event: 1, createdAt: -1 });
 securityLogSchema.index({ user: 1, createdAt: -1 });
 securityLogSchema.index({ admin: 1, createdAt: -1 });
 securityLogSchema.index({ status: 1, severity: 1 });
+securityLogSchema.index({ ipAddress: 1, event: 1, createdAt: -1 });
 
 const SecurityLog = mongoose.model('SecurityLog', securityLogSchema);
 

@@ -10,13 +10,17 @@ class CurrencyService {
     this.baseCurrency = "NGN";
     this.cacheTTL = 3600; // 1 hour
 
-    // Fallback exchange rates (updated periodically)
+    // Static last-resort rates (approximate, 1 NGN = x). Used only when the live
+    // API and the last successfully fetched rates are both unavailable.
     this.fallbackRates = {
       NGN: 1,
-      USD: 0.0013, // 1 NGN = 0.0013 USD (approx 770 NGN/USD)
-      EUR: 0.0012, // 1 NGN = 0.0012 EUR
-      GBP: 0.001, // 1 NGN = 0.0010 GBP
+      USD: 0.00065, // ≈ 1,540 NGN/USD
+      EUR: 0.00057, // ≈ 1,750 NGN/EUR
+      GBP: 0.00049, // ≈ 2,050 NGN/GBP
     };
+    // Last live rate tables per base currency: { [base]: { rates, fetchedAt } }
+    this.lastKnownRates = new Map();
+    this.apiTimeoutMs = 8000;
   }
 
   /**
@@ -85,10 +89,19 @@ class CurrencyService {
       try {
         rate = await this.fetchExchangeRateFromAPI(fromCurrency, toCurrency);
       } catch (apiError) {
-        logger.warn("API fetch failed, using fallback rates", {
-          error: apiError.message,
-        });
+        const lastKnown = this.getLastKnownRate(fromCurrency, toCurrency);
+        logger.warn(
+          lastKnown ? "API fetch failed, using last known live rate" : "API fetch failed, using static fallback rates",
+          { error: apiError.message, fromCurrency, toCurrency }
+        );
+        if (lastKnown) {
+          // Short cache so we retry the API soon
+          await CacheService.set(cacheKey, lastKnown, 300);
+          return lastKnown;
+        }
         rate = this.getFallbackRate(fromCurrency, toCurrency);
+        await CacheService.set(cacheKey, rate, 300);
+        return rate;
       }
 
       // Cache the rate
@@ -114,12 +127,58 @@ class CurrencyService {
    * @returns {Promise<number>} Exchange rate
    */
   async fetchExchangeRateFromAPI(fromCurrency, toCurrency) {
-    // In production, integrate with a real exchange rate API
-    // For now, use fallback rates
-    // Example APIs: exchangerate-api.com, fixer.io, openexchangerates.org
+    const table = await this.fetchRateTable(fromCurrency);
+    const rate = table[toCurrency];
+    if (!Number.isFinite(rate) || rate <= 0) {
+      throw new Error(`No live rate for ${fromCurrency}/${toCurrency}`);
+    }
+    return rate;
+  }
 
-    // Placeholder for API integration
-    throw new Error("Exchange rate API not configured");
+  /**
+   * Live rate table for a base currency (1 base = rates[X]).
+   * Provider: exchangerate-api.com with EXCHANGE_RATE_API_KEY, otherwise its
+   * free keyless endpoint (open.er-api.com). Set EXCHANGE_RATES_DISABLED=true to
+   * use static rates only. Tables are cached for cacheTTL.
+   */
+  async fetchRateTable(base) {
+    if (process.env.EXCHANGE_RATES_DISABLED === "true") {
+      throw new Error("Live exchange rates disabled");
+    }
+    const code = String(base || "").toUpperCase();
+    if (!/^[A-Z]{3}$/.test(code)) throw new Error(`Invalid currency code: ${base}`);
+
+    // In-process copy first (works even when Redis is unavailable)
+    const memo = this.lastKnownRates.get(code);
+    if (memo && Date.now() - memo.fetchedAt.getTime() < this.cacheTTL * 1000) return memo.rates;
+
+    const cacheKey = `exchange-rates:${code}`;
+    const cached = await CacheService.get(cacheKey);
+    if (cached && typeof cached === "object") return cached;
+
+    const { default: axios } = await import("axios");
+    const key = process.env.EXCHANGE_RATE_API_KEY;
+    const url = key
+      ? `https://v6.exchangerate-api.com/v6/${encodeURIComponent(key)}/latest/${code}`
+      : `https://open.er-api.com/v6/latest/${code}`;
+    const res = await axios.get(url, { timeout: this.apiTimeoutMs });
+    const rates = res.data?.conversion_rates || res.data?.rates;
+    if (res.data?.result !== "success" || !rates || typeof rates !== "object") {
+      throw new Error(`Exchange rate API error: ${res.data?.["error-type"] || "unexpected response"}`);
+    }
+
+    this.lastKnownRates.set(code, { rates, fetchedAt: new Date() });
+    await CacheService.set(cacheKey, rates, this.cacheTTL);
+    return rates;
+  }
+
+  /** Most recent live rate fetched this process (used when the API is down). */
+  getLastKnownRate(fromCurrency, toCurrency) {
+    const direct = this.lastKnownRates.get(fromCurrency)?.rates?.[toCurrency];
+    if (Number.isFinite(direct) && direct > 0) return direct;
+    const inverse = this.lastKnownRates.get(toCurrency)?.rates?.[fromCurrency];
+    if (Number.isFinite(inverse) && inverse > 0) return 1 / inverse;
+    return null;
   }
 
   /**

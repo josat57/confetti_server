@@ -1,6 +1,7 @@
 import Guest from "../models/guest.model.js";
 import Event from "../models/event.model.js";
 import User from "../models/user.model.js";
+import { escapeRegExp } from "../utils/escape-regex.js";
 
 export const createGuest = async (req, res) => {
   try {
@@ -90,8 +91,8 @@ export const getGuests = async (req, res) => {
     if (rsvpStatus) query.rsvpStatus = rsvpStatus;
     if (search) {
       query.$or = [
-        { name: { $regex: search, $options: "i" } },
-        { email: { $regex: search, $options: "i" } },
+        { name: { $regex: escapeRegExp(search), $options: "i" } },
+        { email: { $regex: escapeRegExp(search), $options: "i" } },
       ];
     }
 

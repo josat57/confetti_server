@@ -1,7 +1,7 @@
-import Notification from "../models/notification.model.js";
+import Notification, { normalizeChannels } from "../models/notification.model.js";
 import NotificationPreferences from "../models/notification-preferences.model.js";
 import { logger } from "../utils/logger.js";
-import { sendEmail } from "../utils/email.js";
+import { deliverNotification, queueForDelivery } from "./notification-delivery.service.js";
 
 /**
  * Notification Service
@@ -9,164 +9,113 @@ import { sendEmail } from "../utils/email.js";
  */
 class NotificationService {
   /**
-   * Create and send notification
+   * Create a notification and deliver it on the channels the user allows.
+   * Accepts userId/user/recipient, domain types (e.g. "new_message"),
+   * priority "medium", and channels as an object ({ inApp, email, sms, push }) or array.
    */
-  async createNotification({
-    userId,
-    type,
-    title,
-    message,
-    priority = "medium",
-    actionUrl,
-    actionText,
-    relatedEntity,
-    metadata,
-    channels = {},
-  }) {
+  async createNotification(input = {}) {
+    const userId = input.userId || input.user || input.recipient;
+    const { type, title, message } = input;
+    if (!userId || !title || !message) {
+      throw new Error("userId, title and message are required");
+    }
     try {
-      // Get user preferences
-      const preferences = await NotificationPreferences.getOrCreate(userId);
+      const requested = normalizeChannels(input.channels ?? { inApp: true });
+      const allowed = await this.filterChannelsByPreferences(userId, type || "info", requested);
 
-      // Determine which channels to use based on preferences
-      const notificationChannels = {
-        inApp:
-          channels.inApp !== false &&
-          preferences.shouldSendNotification(type, "inApp"),
-        email:
-          channels.email === true &&
-          preferences.shouldSendNotification(type, "email"),
-        sms:
-          channels.sms === true &&
-          preferences.shouldSendNotification(type, "sms"),
-        push:
-          channels.push === true &&
-          preferences.shouldSendNotification(type, "push"),
-      };
-
-      // Create notification
-      const notification = await Notification.create({
-        user: userId,
-        type,
-        title,
-        message,
-        priority,
-        actionUrl,
-        actionText,
-        relatedEntity,
-        metadata,
-        channels: notificationChannels,
+      const notification = await Notification.createNotification({
+        ...input,
+        recipient: userId,
+        channels: allowed.length ? allowed : ["in-app"],
       });
 
-      // Send via enabled channels
-      if (notificationChannels.email) {
-        await this.sendEmailNotification(notification);
-      }
-
-      if (notificationChannels.sms) {
-        await this.sendSmsNotification(notification);
-      }
-
-      if (notificationChannels.push) {
-        await this.sendPushNotification(notification);
+      const external = allowed.filter((c) => c !== "in-app");
+      if (external.length || allowed.includes("in-app")) {
+        await queueForDelivery(notification);
       }
 
       logger.info("Notification created", {
         notificationId: notification._id,
         userId,
         type,
+        channels: notification.channels,
       });
 
       return notification;
     } catch (error) {
-      logger.error("Failed to create notification", { error, userId, type });
+      logger.error("Failed to create notification", { error: error.message, userId, type });
       throw error;
     }
   }
 
-  /**
-   * Send email notification
-   */
+  /** Drop channels the user has disabled (preferences failures fall back to "allow"). */
+  async filterChannelsByPreferences(userId, type, channels) {
+    try {
+      const preferences = await NotificationPreferences.getOrCreate(userId);
+      const prefKey = { "in-app": "inApp", email: "email", sms: "sms", push: "push" };
+      return channels.filter((c) => preferences.shouldSendNotification(type, prefKey[c]));
+    } catch (error) {
+      logger.warn("Notification preferences unavailable, using requested channels", {
+        error: error.message,
+        userId,
+      });
+      return channels;
+    }
+  }
+
   async sendEmailNotification(notification) {
-    try {
-      const User = (await import("../models/user.model.js")).default;
-      const user = await User.findById(notification.user).select(
-        "email firstName"
-      );
-
-      if (!user || !user.email) {
-        logger.warn("User email not found for notification", {
-          notificationId: notification._id,
-        });
-        return;
-      }
-
-      await sendEmail({
-        to: user.email,
-        subject: notification.title,
-        template: "notification",
-        data: {
-          firstName: user.firstName,
-          title: notification.title,
-          message: notification.message,
-          actionUrl: notification.actionUrl,
-          actionText: notification.actionText,
-          priority: notification.priority,
-        },
-      });
-
-      await notification.markEmailSent();
-      logger.info("Email notification sent", {
-        notificationId: notification._id,
-      });
-    } catch (error) {
-      logger.error("Failed to send email notification", {
-        error,
-        notificationId: notification._id,
-      });
-    }
+    return deliverNotification(notification, { channels: ["email"] });
   }
 
-  /**
-   * Send SMS notification (Professional+ tier)
-   */
   async sendSmsNotification(notification) {
-    try {
-      // TODO: Implement SMS sending via Twilio or similar
-      // Check user subscription tier (Professional+ required)
-
-      logger.info("SMS notification placeholder", {
-        notificationId: notification._id,
-        message: "SMS integration coming soon",
-      });
-
-      // await notification.markSmsSent();
-    } catch (error) {
-      logger.error("Failed to send SMS notification", {
-        error,
-        notificationId: notification._id,
-      });
-    }
+    return deliverNotification(notification, { channels: ["sms"] });
   }
 
-  /**
-   * Send push notification
-   */
   async sendPushNotification(notification) {
-    try {
-      // TODO: Implement push notification via Firebase Cloud Messaging or similar
+    return deliverNotification(notification, { channels: ["push"] });
+  }
 
-      logger.info("Push notification placeholder", {
-        notificationId: notification._id,
-        message: "Push notification integration coming soon",
-      });
-
-      // await notification.markPushSent();
-    } catch (error) {
-      logger.error("Failed to send push notification", {
-        error,
-        notificationId: notification._id,
-      });
+  async updateNotification(id, updates = {}) {
+    const allowed = ["title", "message", "priority", "actionUrl", "actionText", "data", "isArchived", "scheduledFor", "expiresAt", "category"];
+    const $set = {};
+    for (const key of allowed) {
+      if (updates[key] !== undefined) $set[key] = updates[key];
     }
+    if ($set.priority === "medium") $set.priority = "normal";
+    const notification = await Notification.findByIdAndUpdate(id, { $set }, { new: true, runValidators: true });
+    if (!notification) throw new Error("Notification not found");
+    return notification;
+  }
+
+  async markAsSent(id, channel = "in-app") {
+    const notification = await Notification.findById(id);
+    if (!notification) throw new Error("Notification not found");
+    notification.recordDelivery(normalizeChannels([channel])[0], "sent");
+    return notification.save();
+  }
+
+  async markAsDelivered(id, channel = "in-app") {
+    const notification = await Notification.findById(id);
+    if (!notification) throw new Error("Notification not found");
+    notification.recordDelivery(normalizeChannels([channel])[0], "delivered");
+    return notification.save();
+  }
+
+  async markAsRead(id) {
+    const notification = await Notification.findById(id);
+    if (!notification) throw new Error("Notification not found");
+    return notification.markAsRead();
+  }
+
+  async markAsFailed(id, channel, error) {
+    const notification = await Notification.findById(id);
+    if (!notification) throw new Error("Notification not found");
+    if (channel) notification.recordDelivery(normalizeChannels([channel])[0], "failed", error);
+    notification.status = "failed";
+    notification.error = error || notification.error;
+    notification.failedAt = new Date();
+    notification.queuedForDelivery = false;
+    return notification.save();
   }
 
   /**
@@ -299,7 +248,8 @@ class NotificationService {
    */
   async cleanupOldNotifications(daysOld = 30) {
     try {
-      const result = await Notification.deleteOldNotifications(daysOld);
+      const cutoff = new Date(Date.now() - daysOld * 24 * 60 * 60 * 1000);
+      const result = await Notification.deleteMany({ createdAt: { $lt: cutoff }, isRead: true });
       logger.info("Old notifications cleaned up", {
         deletedCount: result.deletedCount,
         daysOld,

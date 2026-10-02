@@ -2,6 +2,7 @@ import Lead from "../models/lead.model.js";
 import Vendor from "../models/vendor.model.js";
 import { AppError } from "../utils/AppError.js";
 import { logger } from "../utils/logger.js";
+import { escapeRegExp } from "../utils/escape-regex.js";
 
 /**
  * Get all leads
@@ -37,9 +38,9 @@ export const getLeads = async (req, res, next) => {
     // Search in customer name, email, or event type
     if (search) {
       query.$or = [
-        { "customer.name": new RegExp(search, "i") },
-        { "customer.email": new RegExp(search, "i") },
-        { "eventDetails.type": new RegExp(search, "i") },
+        { "customer.name": new RegExp(escapeRegExp(search), "i") },
+        { "customer.email": new RegExp(escapeRegExp(search), "i") },
+        { "eventDetails.type": new RegExp(escapeRegExp(search), "i") },
       ];
     }
 

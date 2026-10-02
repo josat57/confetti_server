@@ -72,7 +72,8 @@ const announcementSchema = new mongoose.Schema(
       {
         name: String,
         url: String,
-        type: String,
+        // object form: bare `type: String` would turn attachments into [String]
+        type: { type: String },
       },
     ],
   },
@@ -85,6 +86,14 @@ const announcementSchema = new mongoose.Schema(
 announcementSchema.index({ status: 1, startDate: 1, endDate: 1 });
 announcementSchema.index({ targetAudience: 1 });
 announcementSchema.index({ createdBy: 1, createdAt: -1 });
+
+// Entries stored before this field was a subdocument are plain strings;
+// convert them on load so they are not hydrated as character-indexed objects.
+announcementSchema.pre("init", function (doc) {
+  if (Array.isArray(doc?.attachments)) {
+    doc.attachments = doc.attachments.map((v) => (typeof v === "string" ? { url: v, name: v } : v));
+  }
+});
 
 const Announcement = mongoose.model("Announcement", announcementSchema);
 

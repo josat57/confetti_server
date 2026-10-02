@@ -126,28 +126,81 @@ class AdminBulkOperationsService {
     if (!userIds || userIds.length === 0) {
       throw createError("No users selected", 400);
     }
+    if (!["csv", "json"].includes(format)) {
+      throw createError("format must be csv or json", 400);
+    }
 
-    const users = await User.find({ _id: { $in: userIds } })
-      .select(fields || "-password")
-      .lean();
+    // Never export credentials or security secrets, whatever fields are requested
+    const SENSITIVE = new Set([
+      "password", "twoFactorSecret", "resetPasswordToken", "resetPasswordExpires", "passwordResetToken",
+      "verificationToken", "emailVerificationToken", "emailVerificationOTP", "otp", "refreshTokens",
+      "paymentMethods", "loginAttempts", "lockUntil",
+    ]);
+    const DEFAULT_FIELDS = ["_id", "email", "firstName", "lastName", "username", "role", "status", "isActive", "phone", "createdAt", "lastLogin"];
+    const requested = (Array.isArray(fields) ? fields : typeof fields === "string" ? fields.split(/[\s,]+/) : DEFAULT_FIELDS)
+      .map((f) => String(f).trim())
+      .filter((f) => f && !f.startsWith("-") && !SENSITIVE.has(f) && !SENSITIVE.has(f.split(".")[0]));
+    const exportFields = requested.length ? [...new Set(requested)] : DEFAULT_FIELDS;
 
-    // In production, this would generate actual file
-    const exportData = {
+    const users = await User.find({ _id: { $in: userIds } }).select(exportFields.join(" ")).lean();
+    const rows = users.map((u) =>
+      Object.fromEntries(exportFields.map((f) => [f, f.split(".").reduce((v, k) => v?.[k], u)]))
+    );
+
+    // Write the file and register it as a data export (24h download window)
+    const fs = (await import("fs")).default;
+    const path = (await import("path")).default;
+    const { fileURLToPath } = await import("url");
+    const DataExport = (await import("../models/DataExport.model.js")).default;
+    const exportDir = path.join(path.dirname(fileURLToPath(import.meta.url)), "../../../data/exports");
+    if (!fs.existsSync(exportDir)) fs.mkdirSync(exportDir, { recursive: true });
+
+    let content;
+    if (format === "json") {
+      content = Buffer.from(JSON.stringify(rows, null, 2), "utf8");
+    } else {
+      // Plain table CSV (no report header) for spreadsheet import
+      const cell = (v) => {
+        let s = v === null || v === undefined ? "" : v instanceof Date ? v.toISOString() : typeof v === "object" ? String(v) : String(v);
+        if (/^[=+\-@\t\r]/.test(s) && !/^-?\d+(\.\d+)?$/.test(s)) s = `'${s}`;
+        return /[",\n\r]/.test(s) ? `"${s.replace(/"/g, '""')}"` : s;
+      };
+      content = Buffer.from(
+        "\uFEFF" + [exportFields.join(","), ...rows.map((r) => exportFields.map((f) => cell(r[f])).join(","))].join("\r\n") + "\r\n",
+        "utf8"
+      );
+    }
+
+    const expiresAt = new Date(Date.now() + 24 * 60 * 60 * 1000);
+    const record = await DataExport.create({
+      name: `users-bulk-${new Date().toISOString().slice(0, 10)}`,
+      type: "users",
       format,
-      recordCount: users.length,
-      downloadUrl: `/exports/users-bulk-${Date.now()}.${format}`,
-      expiresAt: new Date(Date.now() + 24 * 60 * 60 * 1000), // 24 hours
-    };
+      filters: { userIds: userIds.length, fields: exportFields },
+      status: "processing",
+      createdBy: adminId,
+      expiresAt,
+    });
+    const filePath = path.join(exportDir, `export-${record._id}.${format}`);
+    await fs.promises.writeFile(filePath, content);
+    record.set({ status: "completed", filePath, fileSize: content.length, rowCount: rows.length, completedAt: new Date() });
+    await record.save();
 
     // Audit log
     await AuditLog.create({
       admin: adminId,
       action: "bulk_export_users",
       resource: "User",
-      details: { count: users.length, format },
+      details: { count: users.length, format, fields: exportFields },
     });
 
-    return exportData;
+    return {
+      format,
+      recordCount: users.length,
+      exportId: record._id,
+      downloadUrl: `/api/v1/admin/backups/exports/${record._id}/download`,
+      expiresAt,
+    };
   }
 
   async bulkAssignRole(data, adminId) {

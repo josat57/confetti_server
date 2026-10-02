@@ -313,19 +313,69 @@ class PlannerReportsController {
           throw new AppError("Invalid report type", 400);
       }
 
-      // TODO: Implement actual PDF/Excel generation
-      // For now, return JSON data with export info
-      res.status(200).json({
-        success: true,
-        message: `Report export in ${format} format coming soon`,
-        data: {
-          reportType,
-          format,
-          dateRange,
-          data,
-          exportUrl: `/exports/${reportType}-${Date.now()}.${format}`,
-        },
-      });
+      const fileName = `${reportType}-report-${Date.now()}`;
+
+      if (format === "json") {
+        res.setHeader("Content-Disposition", `attachment; filename="${fileName}.json"`);
+        res.setHeader("Content-Type", "application/json");
+        return res.status(200).json({ reportType, dateRange, data });
+      }
+
+      if (format === "csv") {
+        const { Parser } = await import("json2csv");
+        const rows = Array.isArray(data) ? data : [data];
+        const parser = new Parser();
+        const csv = parser.parse(rows);
+        res.setHeader("Content-Disposition", `attachment; filename="${fileName}.csv"`);
+        res.setHeader("Content-Type", "text/csv");
+        return res.status(200).send(csv);
+      }
+
+      if (format === "excel") {
+        const ExcelJS = (await import("exceljs")).default;
+        const workbook = new ExcelJS.Workbook();
+        const worksheet = workbook.addWorksheet(reportType);
+        const rows = Array.isArray(data) ? data : [data];
+        if (rows.length > 0) {
+          worksheet.columns = Object.keys(rows[0]).map((key) => ({
+            header: key,
+            key,
+            width: 20,
+          }));
+          rows.forEach((row) => worksheet.addRow(row));
+        }
+        res.setHeader("Content-Disposition", `attachment; filename="${fileName}.xlsx"`);
+        res.setHeader("Content-Type", "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet");
+        await workbook.xlsx.write(res);
+        return res.end();
+      }
+
+      if (format === "pdf") {
+        const PDFDocument = (await import("pdfkit")).default;
+        const doc = new PDFDocument({ margin: 40 });
+        res.setHeader("Content-Disposition", `attachment; filename="${fileName}.pdf"`);
+        res.setHeader("Content-Type", "application/pdf");
+        doc.pipe(res);
+
+        doc.fontSize(18).text(`${reportType.toUpperCase()} REPORT`, { align: "center" });
+        doc.moveDown();
+        doc.fontSize(10).text(`Generated: ${new Date().toLocaleString()}`, { align: "center" });
+        doc.moveDown(2);
+
+        const rows = Array.isArray(data) ? data : [data];
+        rows.forEach((row, i) => {
+          if (i > 0) doc.moveDown();
+          Object.entries(row).forEach(([key, value]) => {
+            doc.fontSize(10).text(`${key}: ${value ?? ""}`, { continued: false });
+          });
+        });
+
+        doc.end();
+        return;
+      }
+
+      // Fallback for unsupported formats
+      res.status(400).json({ success: false, message: `Unsupported format: ${format}` });
     } catch (error) {
       next(error);
     }

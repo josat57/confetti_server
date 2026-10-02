@@ -238,43 +238,54 @@ const authenticateAdmin = async (req, res, next) => {
 
     const decoded = jwt.verify(token, process.env.JWT_ACCESS_SECRET);
 
-    // Verify token type
-    if (decoded.type !== "admin") {
-      throw createError(401, "Invalid token type");
-    }
+    // Accept dedicated admin tokens (type: "admin")
+    if (decoded.type === "admin") {
+      const admin = await Admin.findById(decoded.id);
 
-    const admin = await Admin.findById(decoded.id);
-
-    if (!admin) {
-      throw createError(401, "Admin not found");
-    }
-
-    if (!admin.isActive) {
-      throw createError(403, "Account is deactivated");
-    }
-
-    if (admin.twoFactorEnabled) {
-      const twoFactorToken = req.header("X-2FA-Token");
-      if (!twoFactorToken) {
-        throw createError(401, "Two-factor authentication required");
+      if (!admin) {
+        throw createError(401, "Admin not found");
       }
 
-      const verified = speakeasy.totp.verify({
-        secret: admin.twoFactorSecret,
-        encoding: "base32",
-        token: twoFactorToken,
-      });
+      if (!admin.isActive) {
+        throw createError(403, "Account is deactivated");
+      }
 
-      if (!verified) {
-        throw createError(401, "Invalid two-factor token");
+      if (admin.twoFactorEnabled) {
+        const twoFactorToken = req.header("X-2FA-Token");
+        if (!twoFactorToken) {
+          throw createError(401, "Two-factor authentication required");
+        }
+
+        const verified = speakeasy.totp.verify({
+          secret: admin.twoFactorSecret,
+          encoding: "base32",
+          token: twoFactorToken,
+        });
+
+        if (!verified) {
+          throw createError(401, "Invalid two-factor token");
+        }
+      }
+
+      req.admin = admin;
+      return next();
+    }
+
+    // Also accept regular user tokens for users with admin or super_admin role
+    if (decoded.type === "access" || decoded.type === "user" || !decoded.type) {
+      const user = await User.findById(decoded.id).select("+role +isActive");
+      if (user && user.isActive && ["admin", "super_admin"].includes(user.role)) {
+        // Expose the user as req.admin so verifyAdmin and other handlers work
+        req.admin = user;
+        req.user = user;
+        return next();
       }
     }
 
-    req.admin = admin;
-    next();
+    throw createError(401, "Admin access required");
   } catch (error) {
-    if (error.name === "JsonWebTokenError") {
-      next(createError(401, "Invalid token"));
+    if (error.name === "JsonWebTokenError" || error.name === "TokenExpiredError") {
+      next(createError(401, "Invalid or expired token"));
     } else {
       next(error);
     }

@@ -8,6 +8,7 @@ import {
   ValidationError,
   InvalidSessionError,
 } from "../utils/ai-planner-errors.js";
+import { escapeRegExp } from "../utils/escape-regex.js";
 
 /**
  * Controller for AI Event Planner endpoints
@@ -119,15 +120,42 @@ class AIEventPlannerController {
         sessionToken,
       });
 
-      // TODO: Implement save functionality
-      // This will be implemented when we add the full plan generation
+      // Link the guest session plan to the authenticated user
+      const AIEventPlanResult = (await import("../models/ai-event-plan-result.model.js")).default;
+      const planResult = await AIEventPlanResult.findOneAndUpdate(
+        { sessionToken },
+        { $set: { userId } },
+        { new: true }
+      );
+
+      if (!planResult) {
+        throw new AppError("Session not found or already expired", 404);
+      }
+
+      // Persist as a named AI plan linked to the user
+      const AIPlan = (await import("../models/ai-plan.model.js")).default;
+      const { v4: uuidv4 } = await import("uuid");
+
+      const savedPlan = await AIPlan.create({
+        userId,
+        userType: "user",
+        planId: uuidv4(),
+        title: planResult.teaserData?.eventSummary?.eventType
+          ? `${planResult.teaserData.eventSummary.eventType} Plan`
+          : "My Event Plan",
+        sessionId: sessionToken,
+        teaserData: planResult.teaserData,
+        fullData: planResult.fullData || null,
+        status: "active",
+      });
 
       res.status(200).json({
         status: "success",
         message: "Event plan saved successfully",
         data: {
-          eventId: "placeholder", // Will be actual ID
-          message: "Sign up complete! Your event plan has been saved.",
+          eventId: savedPlan._id,
+          planId: savedPlan.planId,
+          message: "Your event plan has been saved to your account.",
         },
       });
     } catch (error) {
@@ -153,14 +181,44 @@ class AIEventPlannerController {
         eventId,
       });
 
-      // TODO: Implement full plan retrieval
-      // This will include vendor details, contact info, etc.
+      // Retrieve the full saved plan with vendor details
+      const AIPlan = (await import("../models/ai-plan.model.js")).default;
+      const plan = await AIPlan.findOne({ _id: eventId, userId }).lean();
+
+      if (!plan) {
+        throw new AppError("Event plan not found", 404);
+      }
+
+      // Enrich vendor categories with real vendor profiles if available
+      let enrichedVendors = [];
+      if (plan.teaserData?.vendorCategories?.length) {
+        const Vendor = (await import("../models/vendor.model.js")).default;
+        enrichedVendors = await Promise.all(
+          plan.teaserData.vendorCategories.map(async (cat) => {
+            const vendors = await Vendor.find({
+              category: { $regex: escapeRegExp(cat.name), $options: "i" },
+              isVerified: true,
+              isActive: true,
+            })
+              .select("businessName category rating reviewCount contact location")
+              .limit(3)
+              .lean();
+            return { ...cat, suggestedVendors: vendors };
+          })
+        );
+      }
 
       res.status(200).json({
         status: "success",
         data: {
           fullPlan: {
-            message: "Full plan feature coming soon",
+            ...plan,
+            teaserData: {
+              ...plan.teaserData,
+              vendorCategories: enrichedVendors.length
+                ? enrichedVendors
+                : plan.teaserData?.vendorCategories || [],
+            },
           },
         },
       });

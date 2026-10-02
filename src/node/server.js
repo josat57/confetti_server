@@ -114,6 +114,57 @@ const startServer = async () => {
       );
     }
 
+    // Initialize Backup Scheduler (runs due backup schedules, recovers interrupted jobs)
+    try {
+      const { startBackupScheduler } = await import(
+        "./services/backup.service.js"
+      );
+      await startBackupScheduler(60000);
+      logger.info("Backup scheduler initialized successfully");
+    } catch (error) {
+      logger.error("Backup scheduler initialization failed:", error.message);
+      logger.warn(
+        "Server will continue startup, but scheduled backups will not run"
+      );
+    }
+
+    // Initialize Scheduled Reports runner
+    try {
+      const adminAdvancedReportingService = (
+        await import("./services/admin-advanced-reporting.service.js")
+      ).default;
+      adminAdvancedReportingService.startReportScheduler(60000);
+      logger.info("Scheduled report runner initialized successfully");
+    } catch (error) {
+      logger.error("Scheduled report runner initialization failed:", error.message);
+      logger.warn("Server will continue startup, but scheduled reports will not run");
+    }
+
+    // Initialize Notification dispatcher (email / SMS / push / in-app, scheduled + retries)
+    try {
+      const { startNotificationDispatcher, dispatchDueNotifications } = await import(
+        "./services/notification-delivery.service.js"
+      );
+      startNotificationDispatcher(30000);
+      dispatchDueNotifications().catch(() => {});
+      logger.info("Notification dispatcher initialized successfully");
+    } catch (error) {
+      logger.error("Notification dispatcher initialization failed:", error.message);
+      logger.warn("Server will continue startup, but queued notifications will not be delivered");
+    }
+
+    // Initialize Data Retention enforcement (hourly check, each policy at most daily)
+    try {
+      const { startRetentionScheduler } = await import(
+        "./services/data-retention.service.js"
+      );
+      startRetentionScheduler(60 * 60 * 1000);
+      logger.info("Data retention scheduler initialized successfully");
+    } catch (error) {
+      logger.error("Data retention scheduler initialization failed:", error.message);
+      logger.warn("Server will continue startup, but retention policies will not auto-apply");
+    }
+
     // Attach WebSocket upgrade handler
     // server.js
     server.on("upgrade", (request, socket, head) => {

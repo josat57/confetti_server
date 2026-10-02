@@ -2,6 +2,7 @@ import Coupon from "../models/Coupon.js";
 import CouponUsage from "../models/CouponUsage.js";
 import Promotion from "../models/Promotion.js";
 import crypto from "crypto";
+import { escapeRegExp } from "../utils/escape-regex.js";
 
 class CouponService {
   // ==================== COUPON MANAGEMENT ====================
@@ -55,9 +56,9 @@ class CouponService {
 
     if (filters.search) {
       query.$or = [
-        { code: { $regex: filters.search, $options: "i" } },
-        { name: { $regex: filters.search, $options: "i" } },
-        { description: { $regex: filters.search, $options: "i" } },
+        { code: { $regex: escapeRegExp(filters.search), $options: "i" } },
+        { name: { $regex: escapeRegExp(filters.search), $options: "i" } },
+        { description: { $regex: escapeRegExp(filters.search), $options: "i" } },
       ];
     }
 
@@ -491,8 +492,8 @@ class CouponService {
 
     if (filters.search) {
       query.$or = [
-        { name: { $regex: filters.search, $options: "i" } },
-        { description: { $regex: filters.search, $options: "i" } },
+        { name: { $regex: escapeRegExp(filters.search), $options: "i" } },
+        { description: { $regex: escapeRegExp(filters.search), $options: "i" } },
       ];
     }
 

@@ -8,6 +8,7 @@ import SupportTicket from "../models/supportTicket.model.js";
 import Notification from "../models/notification.model.js";
 import AuditLog from "../models/auditLog.model.js";
 import { createError } from "../utils/error.js";
+import { escapeRegExp } from "../utils/escape-regex.js";
 
 class AdminAdvancedSearchService {
   // ==================== Global Search ====================
@@ -20,7 +21,7 @@ class AdminAdvancedSearchService {
       throw createError("Search query must be at least 2 characters", 400);
     }
 
-    const searchRegex = { $regex: query, $options: "i" };
+    const searchRegex = { $regex: escapeRegExp(query), $options: "i" };
 
     // Search across multiple collections
     const [users, vendors, events, transactions, tickets, notifications] =
@@ -264,9 +265,9 @@ class AdminAdvancedSearchService {
 
     if (query) {
       searchQuery.$or = [
-        { firstName: { $regex: query, $options: "i" } },
-        { lastName: { $regex: query, $options: "i" } },
-        { email: { $regex: query, $options: "i" } },
+        { firstName: { $regex: escapeRegExp(query), $options: "i" } },
+        { lastName: { $regex: escapeRegExp(query), $options: "i" } },
+        { email: { $regex: escapeRegExp(query), $options: "i" } },
       ];
     }
 
@@ -311,9 +312,9 @@ class AdminAdvancedSearchService {
 
     if (query) {
       searchQuery.$or = [
-        { name: { $regex: query, $options: "i" } },
-        { businessName: { $regex: query, $options: "i" } },
-        { category: { $regex: query, $options: "i" } },
+        { name: { $regex: escapeRegExp(query), $options: "i" } },
+        { businessName: { $regex: escapeRegExp(query), $options: "i" } },
+        { category: { $regex: escapeRegExp(query), $options: "i" } },
       ];
     }
 
@@ -353,8 +354,8 @@ class AdminAdvancedSearchService {
 
     if (query) {
       searchQuery.$or = [
-        { title: { $regex: query, $options: "i" } },
-        { description: { $regex: query, $options: "i" } },
+        { title: { $regex: escapeRegExp(query), $options: "i" } },
+        { description: { $regex: escapeRegExp(query), $options: "i" } },
       ];
     }
 
@@ -397,8 +398,8 @@ class AdminAdvancedSearchService {
 
     if (query) {
       searchQuery.$or = [
-        { transactionId: { $regex: query, $options: "i" } },
-        { reference: { $regex: query, $options: "i" } },
+        { transactionId: { $regex: escapeRegExp(query), $options: "i" } },
+        { reference: { $regex: escapeRegExp(query), $options: "i" } },
       ];
     }
 
@@ -448,8 +449,8 @@ class AdminAdvancedSearchService {
 
     if (query) {
       searchQuery.$or = [
-        { subject: { $regex: query, $options: "i" } },
-        { description: { $regex: query, $options: "i" } },
+        { subject: { $regex: escapeRegExp(query), $options: "i" } },
+        { description: { $regex: escapeRegExp(query), $options: "i" } },
       ];
     }
 
@@ -489,8 +490,8 @@ class AdminAdvancedSearchService {
 
     if (query) {
       searchQuery.$or = [
-        { action: { $regex: query, $options: "i" } },
-        { resource: { $regex: query, $options: "i" } },
+        { action: { $regex: escapeRegExp(query), $options: "i" } },
+        { resource: { $regex: escapeRegExp(query), $options: "i" } },
       ];
     }
 

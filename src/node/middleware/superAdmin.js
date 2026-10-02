@@ -1,91 +1,60 @@
-import User from "../models/user.model.js";
-import crypto from "crypto";
+import Admin from "../models/Admin.js";
 import { logger } from "../utils/logger.js";
 
-/**
- * Super Admin Configuration
- */
 const SUPER_ADMIN_CONFIG = {
-  // Email patterns that trigger super admin check
-  // Detects emails containing "admin" OR "power" (e.g., power.admin@confetti.com)
   emailPatterns: ["admin", "power"],
-
-  // Default super admin credentials
   defaultEmail: process.env.SUPER_ADMIN_EMAIL || "power.admin@confetti.com",
-  defaultPassword: process.env.SUPER_ADMIN_PASSWORD, // Required — no hardcoded fallback
-
-  // Super admin role (uses existing admin role with special flag)
-  role: "admin",
-  isSuperAdmin: true,
+  defaultPassword: process.env.SUPER_ADMIN_PASSWORD,
+  role: "super_admin",
 };
 
-/**
- * Check if email or username contains admin/power keywords
- * @param {string} email - User email
- * @param {string} username - Username
- * @returns {boolean}
- */
 const containsAdminKeyword = (email, username) => {
   const emailLower = (email || "").toLowerCase();
   const usernameLower = (username || "").toLowerCase();
-
   return SUPER_ADMIN_CONFIG.emailPatterns.some(
     (pattern) => emailLower.includes(pattern) || usernameLower.includes(pattern)
   );
 };
 
-/**
- * Find existing super admin in database
- * @returns {Promise<User|null>}
- */
 const findSuperAdmin = async () => {
   try {
-    // Look for user with isSuperAdmin flag
-    const superAdmin = await User.findOne({
-      role: "admin",
-      "metadata.isSuperAdmin": true,
-    }).select("+password");
-
-    return superAdmin;
+    return await Admin.findOne({ role: "super_admin" }).select("+password");
   } catch (error) {
     logger.error("Error finding super admin:", error);
     return null;
   }
 };
 
-/**
- * Create super admin account
- * @param {string} email - Email for super admin
- * @param {string} password - Password for super admin
- * @returns {Promise<User>}
- */
 const createSuperAdmin = async (email, password) => {
   try {
     logger.info("Creating super admin account...");
 
-    // Check if super admin already exists
-    const existingSuperAdmin = await findSuperAdmin();
-    if (existingSuperAdmin) {
+    const existing = await findSuperAdmin();
+    if (existing) {
       logger.warn("Super admin already exists. Cannot create another one.");
-      return existingSuperAdmin;
+      return existing;
     }
 
-    // Create super admin user
-    const superAdmin = await User.create({
+    const superAdmin = await Admin.create({
       email: email || SUPER_ADMIN_CONFIG.defaultEmail,
       password: password || SUPER_ADMIN_CONFIG.defaultPassword,
-      username: "poweradmin",
       firstName: "Power",
       lastName: "Admin",
-      role: SUPER_ADMIN_CONFIG.role,
-      status: "active",
+      role: "super_admin",
       isActive: true,
-      isEmailVerified: true,
-      metadata: {
-        isSuperAdmin: true,
-        createdAt: new Date(),
-        autoCreated: true,
-      },
+      permissions: [
+        "user_management",
+        "content_management",
+        "system_configuration",
+        "moderation",
+        "support_tickets",
+        "audit_logs",
+        "analytics",
+        "vendor_management",
+        "communication_management",
+        "security_compliance",
+        "financial_oversight",
+      ],
     });
 
     logger.info(`Super admin created successfully: ${superAdmin.email}`);
@@ -97,222 +66,125 @@ const createSuperAdmin = async (email, password) => {
 };
 
 /**
- * Middleware to handle super admin login/creation
- * This should be used in the login route
+ * Previously this created a super admin from the credentials submitted to the
+ * public user sign-in endpoint (when none existed) and disclosed the super
+ * admin's email to any caller. Admin accounts are never created from public
+ * requests now: the super admin is bootstrapped from SUPER_ADMIN_EMAIL /
+ * SUPER_ADMIN_PASSWORD at startup, or via POST /admin/super-admin (see
+ * authorizeAdminCreation). Kept as a pass-through for route compatibility.
  */
-export const handleSuperAdminLogin = async (req, res, next) => {
-  try {
-    const { email, username } = req.body;
+export const handleSuperAdminLogin = async (req, res, next) => next();
 
-    // Check if email/username contains admin keywords
-    if (!containsAdminKeyword(email, username)) {
-      // Not an admin login attempt, proceed normally
+/**
+ * Guards POST /admin/super-admin:
+ *  - when admins exist: only an authenticated, active super admin may create admins
+ *  - when no admin exists (first run): allowed outside production, or in
+ *    production only with the X-Bootstrap-Token header matching ADMIN_BOOTSTRAP_TOKEN
+ */
+export const authorizeAdminCreation = async (req, res, next) => {
+  try {
+    const adminCount = await Admin.estimatedDocumentCount();
+    if (adminCount === 0) {
+      const expected = process.env.ADMIN_BOOTSTRAP_TOKEN;
+      const provided = req.get("X-Bootstrap-Token");
+      const isProduction = process.env.NODE_ENV === "production";
+      if (isProduction && (!expected || provided !== expected)) {
+        return res.status(403).json({
+          success: false,
+          message: "Initial admin creation requires a valid bootstrap token",
+        });
+      }
+      req.body.role = "super_admin"; // the first admin is the super admin
+      req.isAdminBootstrap = true;
       return next();
     }
 
-    logger.info(`Admin login attempt detected: ${email || username}`);
-
-    // Check if super admin exists
-    let superAdmin = await findSuperAdmin();
-
-    if (!superAdmin) {
-      // No super admin exists, create one
-      logger.info("No super admin found. Creating super admin account...");
-
-      try {
-        superAdmin = await createSuperAdmin(email, req.body.password);
-
-        // Attach super admin to request for login processing
-        req.superAdminCreated = true;
-        req.superAdmin = superAdmin;
-
-        logger.info(
-          `Super admin account created successfully: ${superAdmin.email}`
-        );
-        logger.info("Proceeding with login...");
-      } catch (error) {
-        logger.error("Failed to create super admin:", error);
-
-        // Check if error is due to duplicate email
-        if (error.code === 11000 || error.message.includes("duplicate")) {
-          logger.info(
-            "Super admin with this email already exists. Proceeding with login..."
-          );
-          // Try to find the user with this email
-          const existingUser = await User.findOne({ email }).select(
-            "+password"
-          );
-          if (existingUser) {
-            req.superAdmin = existingUser;
-            return next();
-          }
-        }
-
-        return res.status(500).json({
-          success: false,
-          message: "Failed to create super admin account",
-          error: error.message,
-        });
+    const { authenticateAdmin } = await import("./auth.js");
+    return authenticateAdmin(req, res, (err) => {
+      if (err) return next(err);
+      if (req.admin?.role !== "super_admin") {
+        return res.status(403).json({ success: false, message: "Only a super admin can create admin accounts" });
       }
-    } else {
-      // Super admin exists, check if trying to login with different email
-      if (email && email.toLowerCase() !== superAdmin.email.toLowerCase()) {
-        logger.warn(`Login attempt with different admin email: ${email}`);
-        logger.warn(`Existing super admin: ${superAdmin.email}`);
-
-        // Check if a user with this email exists
-        const userWithEmail = await User.findOne({ email }).select("+password");
-
-        if (!userWithEmail) {
-          return res.status(400).json({
-            success: false,
-            message: `Super admin already exists with email: ${superAdmin.email}. Only one super admin is allowed. Please use the existing super admin email to login.`,
-          });
-        }
-
-        // User exists with this email, check if they're an admin
-        if (userWithEmail.role === "admin") {
-          logger.info(
-            "Admin user found with this email. Proceeding with login..."
-          );
-          req.superAdmin = userWithEmail;
-        }
-      } else {
-        // Super admin exists with same email
-        logger.info("Super admin found. Proceeding with login...");
-        req.superAdmin = superAdmin;
-      }
-    }
-
-    // Continue to normal login flow
-    next();
+      next();
+    });
   } catch (error) {
-    logger.error("Error in super admin middleware:", error);
+    logger.error("Error authorizing admin creation:", error);
     next(error);
   }
 };
 
-/**
- * Helper function to ensure super admin exists
- * Can be called during app initialization
- */
 export const ensureSuperAdminExists = async () => {
   try {
     if (!process.env.SUPER_ADMIN_PASSWORD) {
-      logger.warn(
-        "SUPER_ADMIN_PASSWORD not set — skipping automatic super admin creation"
-      );
+      logger.warn("SUPER_ADMIN_PASSWORD not set — skipping automatic super admin creation");
       return;
     }
 
     const superAdmin = await findSuperAdmin();
 
     if (!superAdmin) {
-      logger.info(
-        "No super admin found during initialization. Creating default super admin..."
-      );
+      logger.info("No super admin found during initialization. Creating default super admin...");
       await createSuperAdmin();
       logger.info("Default super admin created successfully");
     } else {
-      logger.info(`Super admin exists: ${superAdmin.email}`);
+      logger.info(`✓ Super admin initialized: ${superAdmin.email}`);
+      logger.info(`  - Created: ${superAdmin.createdAt}`);
+      logger.info(`  - Last login: ${superAdmin.lastLogin || "Never"}`);
     }
   } catch (error) {
     logger.error("Error ensuring super admin exists:", error);
   }
 };
 
-/**
- * Middleware to check if user is super admin
- * Use this to protect super admin-only routes
- */
 export const requireSuperAdmin = async (req, res, next) => {
   try {
     if (!req.user) {
-      return res.status(401).json({
-        success: false,
-        message: "Authentication required",
-      });
+      return res.status(401).json({ success: false, message: "Authentication required" });
     }
 
-    // Check if user is super admin
-    const user = await User.findById(req.user._id);
+    const admin = await Admin.findById(req.user._id);
 
-    if (!user || user.role !== "admin" || !user.metadata?.isSuperAdmin) {
-      return res.status(403).json({
-        success: false,
-        message: "Super admin access required",
-      });
+    if (!admin || admin.role !== "super_admin") {
+      return res.status(403).json({ success: false, message: "Super admin access required" });
     }
 
     next();
   } catch (error) {
     logger.error("Error in requireSuperAdmin middleware:", error);
-    res.status(500).json({
-      success: false,
-      message: "Error checking super admin status",
-      error: error.message,
-    });
+    res.status(500).json({ success: false, message: "Error checking super admin status" });
   }
 };
 
-/**
- * Get super admin info
- */
 export const getSuperAdminInfo = async () => {
   try {
     const superAdmin = await findSuperAdmin();
-
     if (!superAdmin) {
-      return {
-        exists: false,
-        message: "No super admin account found",
-      };
+      return { exists: false, message: "No super admin account found" };
     }
-
     return {
       exists: true,
       email: superAdmin.email,
-      username: superAdmin.username,
       createdAt: superAdmin.createdAt,
       lastLogin: superAdmin.lastLogin,
     };
   } catch (error) {
     logger.error("Error getting super admin info:", error);
-    return {
-      exists: false,
-      error: error.message,
-    };
+    return { exists: false, error: error.message };
   }
 };
 
-/**
- * Check if there can only be one super admin
- * This enforces the single super admin rule
- */
 export const enforceSingleSuperAdmin = async () => {
   try {
-    const superAdmins = await User.find({
-      role: "admin",
-      "metadata.isSuperAdmin": true,
-    });
+    const superAdmins = await Admin.find({ role: "super_admin" }).sort({ createdAt: 1 });
 
     if (superAdmins.length > 1) {
-      logger.warn(
-        `Multiple super admins found (${superAdmins.length}). Keeping only the first one.`
-      );
-
-      // Keep the oldest super admin, remove others
-      const [firstSuperAdmin, ...otherSuperAdmins] = superAdmins.sort(
-        (a, b) => a.createdAt - b.createdAt
-      );
-
-      for (const admin of otherSuperAdmins) {
-        admin.metadata.isSuperAdmin = false;
+      logger.warn(`Multiple super admins found (${superAdmins.length}). Keeping only the first one.`);
+      const [, ...extras] = superAdmins;
+      for (const admin of extras) {
+        admin.role = "admin";
         await admin.save();
-        logger.info(`Removed super admin flag from: ${admin.email}`);
+        logger.info(`Demoted super_admin to admin: ${admin.email}`);
       }
-
-      logger.info(`Enforced single super admin: ${firstSuperAdmin.email}`);
     }
   } catch (error) {
     logger.error("Error enforcing single super admin:", error);

@@ -82,19 +82,28 @@ class PaymentMethodService {
    * Get saved cards from Flutterwave
    */
   async getSavedCards(email) {
-    if (!process.env.FLUTTERWAVE_SECRET_KEY) {
-      throw new AppError("Flutterwave not configured", 500);
-    }
-
-    try {
-      // Flutterwave doesn't have a direct API to list saved cards
-      // Cards are saved per transaction and can be retrieved via customer email
-      // For now, we'll rely on our database storage
-      return [];
-    } catch (error) {
-      console.error("Error fetching saved cards:", error.message);
-      return [];
-    }
+    // Flutterwave has no "list saved cards" API; cards tokenized through
+    // tokenizeCard are stored on the user's profile. Provider tokens are never returned.
+    const user = await User.findOne({ email: String(email || "").toLowerCase().trim() })
+      .select("paymentMethods")
+      .lean();
+    if (!user) return [];
+    return (user.paymentMethods || [])
+      .filter((m) => m.type === "card")
+      .map((m) => ({
+        id: m._id,
+        brand: m.brand,
+        last4: m.last4,
+        expiryMonth: m.expiryMonth,
+        expiryYear: m.expiryYear,
+        provider: m.provider,
+        isDefault: Boolean(m.isDefault),
+        expired:
+          Boolean(m.expiryYear && m.expiryMonth) &&
+          // expiryMonth is 1-based, so this is the 1st of the month after expiry
+          new Date(Number(m.expiryYear) < 100 ? 2000 + Number(m.expiryYear) : Number(m.expiryYear), Number(m.expiryMonth), 1) <=
+            new Date(),
+      }));
   }
 
   /**

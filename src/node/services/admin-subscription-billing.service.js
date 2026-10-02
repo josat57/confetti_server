@@ -4,6 +4,7 @@ import Payment from "../models/payment.model.js";
 import User from "../models/user.model.js";
 import AuditLog from "../models/auditLog.model.js";
 import { createError } from "../utils/error.js";
+import { escapeRegExp } from "../utils/escape-regex.js";
 
 /**
  * Admin Subscription & Billing Service
@@ -54,9 +55,9 @@ class AdminSubscriptionBillingService {
       // If search is provided, we need to search by user email/name
       const users = await User.find({
         $or: [
-          { email: { $regex: search, $options: "i" } },
-          { firstName: { $regex: search, $options: "i" } },
-          { lastName: { $regex: search, $options: "i" } },
+          { email: { $regex: escapeRegExp(search), $options: "i" } },
+          { firstName: { $regex: escapeRegExp(search), $options: "i" } },
+          { lastName: { $regex: escapeRegExp(search), $options: "i" } },
         ],
       }).select("_id");
 
@@ -387,8 +388,29 @@ class AdminSubscriptionBillingService {
       timestamp: new Date(),
     });
 
-    // TODO: Process actual refund through payment gateway
-    // await paymentGatewayService.processRefund(payment, amount);
+    // Process refund via Flutterwave or Paystack depending on payment method
+    try {
+      const { default: axios } = await import("axios");
+      const transactionRef = payment.reference || payment.transactionId;
+
+      if (payment.paymentMethod === "flutterwave" && process.env.FLUTTERWAVE_SECRET_KEY && transactionRef) {
+        await axios.post(
+          `https://api.flutterwave.com/v3/transactions/${transactionRef}/refund`,
+          { amount },
+          { headers: { Authorization: `Bearer ${process.env.FLUTTERWAVE_SECRET_KEY}` } }
+        );
+      } else if (payment.paymentMethod === "paystack" && process.env.PAYSTACK_SECRET_KEY && transactionRef) {
+        await axios.post(
+          "https://api.paystack.co/refund",
+          { transaction: transactionRef, amount: Math.round(amount * 100) },
+          { headers: { Authorization: `Bearer ${process.env.PAYSTACK_SECRET_KEY}` } }
+        );
+      }
+    } catch (gatewayError) {
+      // Log gateway error but don't block — refund is already recorded in DB
+      const { logger } = await import("../utils/logger.js");
+      logger.error("Gateway refund call failed:", { error: gatewayError.message, paymentId });
+    }
 
     return payment;
   }
@@ -460,8 +482,35 @@ class AdminSubscriptionBillingService {
       timestamp: new Date(),
     });
 
-    // TODO: Implement actual payment retry logic with payment gateway
-    // const result = await paymentGatewayService.retryPayment(payment);
+    // Re-query the transaction status from the payment gateway
+    try {
+      const { default: axios } = await import("axios");
+      const transactionRef = payment.reference || payment.transactionId;
+      let gatewayStatus = null;
+
+      if (payment.paymentMethod === "flutterwave" && process.env.FLUTTERWAVE_SECRET_KEY && transactionRef) {
+        const { data } = await axios.get(
+          `https://api.flutterwave.com/v3/transactions/verify_by_reference?tx_ref=${transactionRef}`,
+          { headers: { Authorization: `Bearer ${process.env.FLUTTERWAVE_SECRET_KEY}` } }
+        );
+        gatewayStatus = data?.data?.status;
+      } else if (payment.paymentMethod === "paystack" && process.env.PAYSTACK_SECRET_KEY && transactionRef) {
+        const { data } = await axios.get(
+          `https://api.paystack.co/transaction/verify/${transactionRef}`,
+          { headers: { Authorization: `Bearer ${process.env.PAYSTACK_SECRET_KEY}` } }
+        );
+        gatewayStatus = data?.data?.status;
+      }
+
+      if (gatewayStatus === "successful" || gatewayStatus === "success") {
+        payment.status = "completed";
+        await payment.save();
+        return { success: true, message: "Payment verified as successful via gateway", payment };
+      }
+    } catch (gatewayError) {
+      const { logger } = await import("../utils/logger.js");
+      logger.error("Gateway retry/verify failed:", { error: gatewayError.message, paymentId });
+    }
 
     return {
       success: true,

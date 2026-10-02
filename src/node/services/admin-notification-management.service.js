@@ -1,10 +1,12 @@
-import Notification from "../models/notification.model.js";
+import Notification, { normalizeChannels } from "../models/notification.model.js";
+import { queueForDelivery } from "./notification-delivery.service.js";
 import NotificationPreference from "../models/notificationPreference.model.js";
 import NotificationTemplate from "../models/notificationTemplate.model.js";
 import PushToken from "../models/pushToken.model.js";
 import User from "../models/user.model.js";
 import { createError } from "../utils/error.js";
 import AuditLog from "../models/auditLog.model.js";
+import { escapeRegExp } from "../utils/escape-regex.js";
 
 class AdminNotificationManagementService {
   // ==================== Notifications ====================
@@ -43,8 +45,8 @@ class AdminNotificationManagementService {
 
     if (search) {
       query.$or = [
-        { title: { $regex: search, $options: "i" } },
-        { message: { $regex: search, $options: "i" } },
+        { title: { $regex: escapeRegExp(search), $options: "i" } },
+        { message: { $regex: escapeRegExp(search), $options: "i" } },
       ];
     }
 
@@ -160,19 +162,22 @@ class AdminNotificationManagementService {
         title,
         message,
         data,
-        priority: priority || "medium",
+        // "medium" is accepted from clients but the schema calls it "normal"
+        priority: !priority || priority === "medium" ? "normal" : priority,
         actionUrl,
         actionText: actionLabel || actionText,
         expiresAt,
         scheduledFor: scheduledFor || null,
         status: status || "pending",
-        channels: channels || ["in-app"],
+        channels: normalizeChannels(channels),
       });
 
       notifications.push(notification);
 
-      // Queue for actual sending (would integrate with email/push/sms services)
-      await this.queueNotification(notification);
+      // Deliver over its channels (immediately, or at scheduledFor)
+      if (notification.status === "pending") {
+        await this.queueNotification(notification);
+      }
     }
 
     // Audit log
@@ -248,6 +253,8 @@ class AdminNotificationManagementService {
     notification.status = "pending";
     notification.error = null;
     notification.failedAt = null;
+    notification.deliveryAttempts = 0;
+    notification.nextAttemptAt = null;
     await notification.save();
 
     // Queue for retry
@@ -348,9 +355,9 @@ class AdminNotificationManagementService {
 
     if (search) {
       query.$or = [
-        { name: { $regex: search, $options: "i" } },
-        { key: { $regex: search, $options: "i" } },
-        { title: { $regex: search, $options: "i" } },
+        { name: { $regex: escapeRegExp(search), $options: "i" } },
+        { key: { $regex: escapeRegExp(search), $options: "i" } },
+        { title: { $regex: escapeRegExp(search), $options: "i" } },
       ];
     }
 
@@ -637,11 +644,8 @@ class AdminNotificationManagementService {
   }
 
   async queueNotification(notification) {
-    // This would integrate with actual notification services
-    // For now, just mark as sent
-    notification.status = "sent";
-    notification.sentAt = new Date();
-    await notification.save();
+    // Picked up by the notification dispatcher (email / SMS / push / in-app)
+    await queueForDelivery(notification);
   }
 
   async calculateDeliveryRate(dateQuery) {

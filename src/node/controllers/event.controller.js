@@ -8,6 +8,7 @@ import {
   fileToBase64,
 } from "../utils/gridfs.js";
 import { AppError } from "../utils/AppError.js";
+import { escapeRegExp } from "../utils/escape-regex.js";
 
 /**
  * Helper function to check if user has access to event
@@ -57,7 +58,7 @@ export const getEvents = async (req, res) => {
       query.endDate = { $lte: new Date(endDate) };
     }
     if (location) {
-      query["location.city"] = new RegExp(location, "i");
+      query["location.city"] = new RegExp(escapeRegExp(location), "i");
     }
 
     const events = await Event.find(query)

@@ -4,6 +4,7 @@ import AIPlannerUsage from "../models/ai-planner-usage.model.js";
 import Subscription from "../models/subscription.model.js";
 import { AppError } from "../utils/AppError.js";
 import { logger } from "../utils/logger.js";
+import { escapeRegExp } from "../utils/escape-regex.js";
 
 /**
  * Controller for Planner AI features
@@ -176,7 +177,7 @@ class PlannerAIController {
 
       // Add location filter if city is provided
       if (location.city) {
-        query["businessInfo.address.city"] = new RegExp(location.city, "i");
+        query["businessInfo.address.city"] = new RegExp(escapeRegExp(location.city), "i");
       }
 
       const vendors = await Vendor.find(query)

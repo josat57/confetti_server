@@ -4,6 +4,7 @@ import EmailTemplate from "../models/emailTemplate.model.js";
 import SubscriptionPlan from "../models/subscriptionPlan.model.js";
 import { createError } from "../utils/error.js";
 import AuditLog from "../models/auditLog.model.js";
+import { escapeRegExp } from "../utils/escape-regex.js";
 
 class AdminSystemConfigService {
   // ==================== System Configuration ====================
@@ -15,8 +16,8 @@ class AdminSystemConfigService {
     if (category) query.category = category;
     if (search) {
       query.$or = [
-        { key: { $regex: search, $options: "i" } },
-        { description: { $regex: search, $options: "i" } },
+        { key: { $regex: escapeRegExp(search), $options: "i" } },
+        { description: { $regex: escapeRegExp(search), $options: "i" } },
       ];
     }
     if (isPublic !== undefined) query.isPublic = isPublic;
@@ -152,9 +153,9 @@ class AdminSystemConfigService {
     const query = {};
     if (search) {
       query.$or = [
-        { name: { $regex: search, $options: "i" } },
-        { key: { $regex: search, $options: "i" } },
-        { description: { $regex: search, $options: "i" } },
+        { name: { $regex: escapeRegExp(search), $options: "i" } },
+        { key: { $regex: escapeRegExp(search), $options: "i" } },
+        { description: { $regex: escapeRegExp(search), $options: "i" } },
       ];
     }
     if (isEnabled !== undefined) query.isEnabled = isEnabled;
@@ -316,9 +317,9 @@ class AdminSystemConfigService {
     if (category) query.category = category;
     if (search) {
       query.$or = [
-        { name: { $regex: search, $options: "i" } },
-        { key: { $regex: search, $options: "i" } },
-        { subject: { $regex: search, $options: "i" } },
+        { name: { $regex: escapeRegExp(search), $options: "i" } },
+        { key: { $regex: escapeRegExp(search), $options: "i" } },
+        { subject: { $regex: escapeRegExp(search), $options: "i" } },
       ];
     }
     if (isActive !== undefined) query.isActive = isActive;
@@ -642,15 +643,86 @@ class AdminSystemConfigService {
     return config;
   }
 
+  /**
+   * Verify gateway credentials with an authenticated, read-only API call.
+   * Uses the secret key saved in the gateway config, falling back to env vars.
+   */
   async testPaymentGatewayConnection(gateway) {
-    // This would integrate with actual payment gateway APIs
-    // For now, return mock response
-    return {
-      gateway,
-      status: "connected",
-      message: "Payment gateway connection successful",
-      timestamp: new Date(),
+    const GATEWAYS = {
+      paystack: {
+        envKey: "PAYSTACK_SECRET_KEY",
+        url: "https://api.paystack.co/balance",
+        ok: (data) => data?.status === true,
+        mode: (key) => (key.startsWith("sk_test_") ? "test" : key.startsWith("sk_live_") ? "live" : "unknown"),
+      },
+      flutterwave: {
+        envKey: "FLUTTERWAVE_SECRET_KEY",
+        url: "https://api.flutterwave.com/v3/balances",
+        ok: (data) => data?.status === "success",
+        mode: (key) => (/_TEST/i.test(key) ? "test" : key.startsWith("FLWSECK-") ? "live" : "unknown"),
+      },
     };
+
+    const spec = GATEWAYS[String(gateway || "").toLowerCase()];
+    if (!spec) {
+      throw createError(400, `Unsupported payment gateway: ${gateway}. Supported: ${Object.keys(GATEWAYS).join(", ")}`);
+    }
+
+    const config = await SystemConfig.findOne({
+      key: `payment_gateway_${gateway.toLowerCase()}`,
+      category: "payment",
+    });
+    const secretKey = config?.value?.secretKey || process.env[spec.envKey];
+    const timestamp = new Date();
+
+    let result;
+    if (!secretKey) {
+      result = {
+        gateway,
+        status: "not_configured",
+        message: `No secret key configured (save one in the gateway settings or set ${spec.envKey})`,
+        timestamp,
+      };
+    } else {
+      const started = Date.now();
+      try {
+        const { default: axios } = await import("axios");
+        const res = await axios.get(spec.url, {
+          headers: { Authorization: `Bearer ${secretKey}` },
+          timeout: 15000,
+          validateStatus: () => true,
+        });
+        const connected = res.status === 200 && spec.ok(res.data);
+        result = {
+          gateway,
+          status: connected ? "connected" : "failed",
+          message: connected
+            ? "Payment gateway connection successful"
+            : `Gateway rejected the credentials (HTTP ${res.status}${res.data?.message ? `: ${res.data.message}` : ""})`,
+          httpStatus: res.status,
+          mode: spec.mode(secretKey),
+          latencyMs: Date.now() - started,
+          timestamp,
+        };
+      } catch (error) {
+        result = {
+          gateway,
+          status: "failed",
+          message: `Could not reach ${gateway}: ${error.code || error.message}`,
+          mode: spec.mode(secretKey),
+          latencyMs: Date.now() - started,
+          timestamp,
+        };
+      }
+    }
+
+    if (config) {
+      config.value = { ...config.value, lastTestedAt: timestamp, lastTestStatus: result.status };
+      config.markModified("value");
+      await config.save();
+    }
+
+    return result;
   }
 
   // ==================== Security Settings ====================

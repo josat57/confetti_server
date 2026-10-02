@@ -11,6 +11,52 @@ import Subscription from "../../models/subscription.model.js";
  * - Failed payment alerts
  * - Subscription metrics
  */
+
+// ─── Alert delivery ──────────────────────────────────────────────────────────
+
+const EMAIL_COOLDOWN_MS = 15 * 60 * 1000;
+const lastEmailAt = new Map();
+
+/** Create or bump an active SystemAlert (never throws). */
+const raiseAlert = ({ alertType, severity, title, message, metadata }) => {
+  (async () => {
+    const SystemAlert = (await import("../../models/systemAlert.model.js")).default;
+    const bumped = await SystemAlert.findOneAndUpdate(
+      { alertType, title, status: "active" },
+      { $inc: { occurrenceCount: 1 }, $set: { lastOccurrence: new Date(), message, metadata } },
+      { new: true }
+    );
+    if (!bumped) {
+      await SystemAlert.create({
+        alertType,
+        severity,
+        title,
+        message,
+        source: "payment-monitoring",
+        metadata,
+        lastOccurrence: new Date(),
+      });
+    }
+  })().catch((error) => logger.error(`Failed to raise payment alert: ${error.message}`));
+};
+
+/** Email active super admins, at most once per key per cooldown window. */
+const emailSuperAdmins = (key, subject, text) => {
+  const last = lastEmailAt.get(key);
+  if (last && Date.now() - last < EMAIL_COOLDOWN_MS) return;
+  lastEmailAt.set(key, Date.now());
+  (async () => {
+    const Admin = (await import("../../models/Admin.js")).default;
+    const { sendEmailDirect } = await import("../../utils/email.js");
+    const admins = await Admin.find({ role: "super_admin", isActive: true }).select("email").lean();
+    for (const admin of admins) {
+      await sendEmailDirect({ to: admin.email, subject, text, html: `<p>${text.replace(/[&<>]/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;" })[c])}</p>` }).catch(
+        (error) => logger.error(`Alert email to ${admin.email} failed: ${error.message}`)
+      );
+    }
+  })().catch((error) => logger.error(`Failed to email payment alert: ${error.message}`));
+};
+
 class PaymentMonitoringService {
   constructor() {
     this.metrics = {
@@ -265,10 +311,14 @@ class PaymentMonitoringService {
       severity: "high",
     });
 
-    // In production, this would trigger:
-    // - Email to admin
-    // - Slack notification
-    // - PagerDuty alert (if critical)
+    // Dashboard alert (repeats collapse into one active alert with a counter)
+    raiseAlert({
+      alertType: "error",
+      severity: "warning",
+      title: "Payment failures",
+      message: `Payment ${payment.reference || payment._id} failed (${payment.amount} ${payment.currency || ""} via ${payment.paymentMethod || "unknown"})`,
+      metadata: { lastPaymentId: String(payment._id), reference: payment.reference },
+    });
   }
 
   /**
@@ -282,10 +332,19 @@ class PaymentMonitoringService {
       message: "Potential security issue - invalid webhook signature detected",
     });
 
-    // In production, this would trigger:
-    // - Immediate security alert
-    // - Email to security team
-    // - Slack notification to dev team
+    raiseAlert({
+      alertType: "security",
+      severity: "critical",
+      title: `Invalid ${provider} webhook signature`,
+      message: `A ${provider} webhook was received with an invalid signature — possible spoofing attempt or misconfigured webhook secret`,
+      metadata: { provider },
+    });
+    emailSuperAdmins(
+      `invalid-webhook-${provider}`,
+      `Security alert: invalid ${provider} webhook signature`,
+      `A ${provider} payment webhook with an invalid signature was rejected at ${new Date().toUTCString()}. ` +
+        "If this repeats, verify the webhook secret configuration and review recent payment activity."
+    );
   }
 
   /**

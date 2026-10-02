@@ -1,10 +1,71 @@
 import Vendor from "../models/vendor.model.js";
 import Booking from "../models/booking.model.js";
-import Payment from "../models/payment.model.js";
 import Invoice from "../models/invoice.model.js";
 import Expense from "../models/expense.model.js";
 import { AppError } from "../utils/AppError.js";
-import PDFDocument from "pdfkit";
+import { renderReport, sendReportFile } from "../utils/report-renderer.js";
+
+/**
+ * Money a vendor actually collected, from paid / partially paid invoices
+ * (Payment documents are platform payments and have no vendor field).
+ * Dated by paidAt, falling back to the invoice's last update.
+ */
+const getRevenueEntries = async (vendorId, dateFilter = {}) => {
+  const query = { vendor: vendorId, status: { $in: ["paid", "partial"] }, amountPaid: { $gt: 0 } };
+  if (Object.keys(dateFilter).length > 0) {
+    query.$or = [{ paidAt: dateFilter }, { paidAt: { $exists: false }, updatedAt: dateFilter }];
+  }
+  const invoices = await Invoice.find(query).populate("booking", "eventType eventDate").lean();
+  return invoices.map((inv) => ({
+    amount: inv.amountPaid,
+    date: inv.paidAt || inv.updatedAt,
+    currency: inv.currency,
+    eventType: inv.booking?.eventType,
+    invoiceNumber: inv.invoiceNumber,
+  }));
+};
+
+const buildDateFilter = (startDate, endDate) => {
+  const dateFilter = {};
+  if (startDate) dateFilter.$gte = new Date(startDate);
+  if (endDate) dateFilter.$lte = new Date(endDate);
+  for (const d of Object.values(dateFilter)) {
+    if (isNaN(d)) throw new AppError("Invalid startDate or endDate", 400);
+  }
+  return dateFilter;
+};
+
+/** Revenue, expenses and profit for a vendor over an optional date range. */
+const computeProfitLoss = async (vendorId, startDate, endDate) => {
+  const dateFilter = buildDateFilter(startDate, endDate);
+  const revenue = await getRevenueEntries(vendorId, dateFilter);
+  const totalRevenue = revenue.reduce((sum, r) => sum + r.amount, 0);
+
+  const expenseQuery = { vendor: vendorId };
+  if (Object.keys(dateFilter).length > 0) expenseQuery.date = dateFilter;
+  const expenses = await Expense.find(expenseQuery).lean();
+  const totalExpenses = expenses.reduce((sum, e) => sum + e.amount, 0);
+
+  const expenseBreakdown = {};
+  for (const e of expenses) {
+    expenseBreakdown[e.category] = (expenseBreakdown[e.category] || 0) + e.amount;
+  }
+  const netProfit = totalRevenue - totalExpenses;
+  return {
+    revenue,
+    expenses,
+    totalRevenue,
+    totalExpenses,
+    grossProfit: totalRevenue,
+    netProfit,
+    profitMargin: totalRevenue > 0 ? (netProfit / totalRevenue) * 100 : 0,
+    expenseBreakdown: Object.entries(expenseBreakdown).map(([category, amount]) => ({
+      category,
+      amount,
+      percentage: totalExpenses > 0 ? (amount / totalExpenses) * 100 : 0,
+    })),
+  };
+};
 
 /**
  * Get revenue report
@@ -15,25 +76,10 @@ export const getRevenueReport = async (req, res, next) => {
     const vendor = await Vendor.findOne({ owner: req.user._id });
     if (!vendor) return next(new AppError("Vendor profile not found", 404));
 
-    const { startDate, endDate, groupBy = "month", location } = req.query;
+    const { startDate, endDate, groupBy = "month" } = req.query;
 
-    // Build date filter
-    const dateFilter = {};
-    if (startDate) dateFilter.$gte = new Date(startDate);
-    if (endDate) dateFilter.$lte = new Date(endDate);
-
-    // Build query
-    const query = { vendor: vendor._id };
-    if (Object.keys(dateFilter).length > 0) {
-      query.createdAt = dateFilter;
-    }
-    if (location) query.location = location;
-
-    // Get payments
-    const payments = await Payment.find({
-      ...query,
-      status: "completed",
-    }).populate("booking", "eventDate eventType");
+    // Collected revenue (paid / partially paid invoices)
+    const payments = await getRevenueEntries(vendor._id, buildDateFilter(startDate, endDate));
 
     // Calculate totals
     const totalRevenue = payments.reduce(
@@ -47,7 +93,7 @@ export const getRevenueReport = async (req, res, next) => {
     const revenueByPeriod = {};
     payments.forEach((payment) => {
       let period;
-      const date = new Date(payment.createdAt);
+      const date = new Date(payment.date);
 
       if (groupBy === "day") {
         period = date.toISOString().split("T")[0];
@@ -74,8 +120,8 @@ export const getRevenueReport = async (req, res, next) => {
     // Revenue by event type
     const revenueByEventType = {};
     payments.forEach((payment) => {
-      if (payment.booking && payment.booking.eventType) {
-        const eventType = payment.booking.eventType;
+      if (payment.eventType) {
+        const eventType = payment.eventType;
         if (!revenueByEventType[eventType]) {
           revenueByEventType[eventType] = { revenue: 0, count: 0 };
         }
@@ -221,110 +267,22 @@ export const getProfitLossStatement = async (req, res, next) => {
 
     const { startDate, endDate, compareWith } = req.query;
 
-    // Build date filter
-    const dateFilter = {};
-    if (startDate) dateFilter.$gte = new Date(startDate);
-    if (endDate) dateFilter.$lte = new Date(endDate);
+    const pl = await computeProfitLoss(vendor._id, startDate, endDate);
+    const { totalRevenue, totalExpenses, grossProfit, netProfit, profitMargin } = pl;
 
-    // Get revenue (completed payments)
-    const revenueQuery = { vendor: vendor._id, status: "completed" };
-    if (Object.keys(dateFilter).length > 0) {
-      revenueQuery.createdAt = dateFilter;
-    }
-    const payments = await Payment.find(revenueQuery);
-    const totalRevenue = payments.reduce(
-      (sum, payment) => sum + payment.amount,
-      0
-    );
-
-    // Get expenses
-    const expenseQuery = { vendor: vendor._id };
-    if (Object.keys(dateFilter).length > 0) {
-      expenseQuery.date = dateFilter;
-    }
-    const expenses = await Expense.find(expenseQuery);
-    const totalExpenses = expenses.reduce(
-      (sum, expense) => sum + expense.amount,
-      0
-    );
-
-    // Calculate profit
-    const grossProfit = totalRevenue;
-    const netProfit = totalRevenue - totalExpenses;
-    const profitMargin =
-      totalRevenue > 0 ? (netProfit / totalRevenue) * 100 : 0;
-
-    // Expense breakdown
-    const expenseBreakdown = {};
-    expenses.forEach((expense) => {
-      const category = expense.category;
-      if (!expenseBreakdown[category]) {
-        expenseBreakdown[category] = 0;
-      }
-      expenseBreakdown[category] += expense.amount;
-    });
-
-    // Comparison with previous period if requested
+    // Comparison with the preceding period of equal length
     let comparison = null;
-    if (compareWith) {
-      const prevDateFilter = {};
-      if (startDate && endDate) {
-        const start = new Date(startDate);
-        const end = new Date(endDate);
-        const duration = end - start;
-        prevDateFilter.$gte = new Date(start - duration);
-        prevDateFilter.$lte = start;
-
-        // Previous period revenue
-        const prevRevenue = await Payment.find({
-          vendor: vendor._id,
-          status: "completed",
-          createdAt: prevDateFilter,
-        });
-        const prevTotalRevenue = prevRevenue.reduce(
-          (sum, p) => sum + p.amount,
-          0
-        );
-
-        // Previous period expenses
-        const prevExpenses = await Expense.find({
-          vendor: vendor._id,
-          date: prevDateFilter,
-        });
-        const prevTotalExpenses = prevExpenses.reduce(
-          (sum, e) => sum + e.amount,
-          0
-        );
-        const prevNetProfit = prevTotalRevenue - prevTotalExpenses;
-
-        comparison = {
-          revenue: {
-            current: totalRevenue,
-            previous: prevTotalRevenue,
-            change:
-              prevTotalRevenue > 0
-                ? ((totalRevenue - prevTotalRevenue) / prevTotalRevenue) * 100
-                : 0,
-          },
-          expenses: {
-            current: totalExpenses,
-            previous: prevTotalExpenses,
-            change:
-              prevTotalExpenses > 0
-                ? ((totalExpenses - prevTotalExpenses) / prevTotalExpenses) *
-                  100
-                : 0,
-          },
-          profit: {
-            current: netProfit,
-            previous: prevNetProfit,
-            change:
-              prevNetProfit !== 0
-                ? ((netProfit - prevNetProfit) / Math.abs(prevNetProfit)) * 100
-                : 0,
-          },
-        };
-      }
+    if (compareWith && startDate && endDate) {
+      const start = new Date(startDate);
+      const end = new Date(endDate);
+      const prev = await computeProfitLoss(vendor._id, new Date(start - (end - start)), start);
+      const pct = (cur, before, abs = false) =>
+        before !== 0 ? ((cur - before) / (abs ? Math.abs(before) : before)) * 100 : 0;
+      comparison = {
+        revenue: { current: totalRevenue, previous: prev.totalRevenue, change: pct(totalRevenue, prev.totalRevenue) },
+        expenses: { current: totalExpenses, previous: prev.totalExpenses, change: pct(totalExpenses, prev.totalExpenses) },
+        profit: { current: netProfit, previous: prev.netProfit, change: pct(netProfit, prev.netProfit, true) },
+      };
     }
 
     res.status(200).json({
@@ -336,18 +294,12 @@ export const getProfitLossStatement = async (req, res, next) => {
         },
         revenue: {
           total: totalRevenue,
-          transactions: payments.length,
+          transactions: pl.revenue.length,
         },
         expenses: {
           total: totalExpenses,
-          transactions: expenses.length,
-          breakdown: Object.entries(expenseBreakdown).map(
-            ([category, amount]) => ({
-              category,
-              amount,
-              percentage: (amount / totalExpenses) * 100,
-            })
-          ),
+          transactions: pl.expenses.length,
+          breakdown: pl.expenseBreakdown,
         },
         profit: {
           gross: grossProfit,
@@ -372,64 +324,66 @@ export const exportFinancialReport = async (req, res, next) => {
     if (!vendor) return next(new AppError("Vendor profile not found", 404));
 
     const { reportType, startDate, endDate } = req.body;
+    const REPORT_TYPES = ["revenue", "expenses", "profit-loss"];
 
     if (!reportType) {
       return next(new AppError("Report type is required", 400));
     }
-
-    // Create PDF document
-    const doc = new PDFDocument();
-    const filename = `${reportType}-report-${Date.now()}.pdf`;
-
-    res.setHeader("Content-Type", "application/pdf");
-    res.setHeader("Content-Disposition", `attachment; filename=${filename}`);
-
-    doc.pipe(res);
-
-    // Add header
-    doc.fontSize(20).text(`${vendor.businessName}`, { align: "center" });
-    doc
-      .fontSize(16)
-      .text(`${reportType.toUpperCase()} REPORT`, { align: "center" });
-    doc.moveDown();
-    doc
-      .fontSize(12)
-      .text(`Period: ${startDate || "All time"} to ${endDate || "Present"}`, {
-        align: "center",
-      });
-    doc.moveDown(2);
-
-    // Get report data based on type
-    if (reportType === "revenue") {
-      const dateFilter = {};
-      if (startDate) dateFilter.$gte = new Date(startDate);
-      if (endDate) dateFilter.$lte = new Date(endDate);
-
-      const query = { vendor: vendor._id, status: "completed" };
-      if (Object.keys(dateFilter).length > 0) {
-        query.createdAt = dateFilter;
-      }
-
-      const payments = await Payment.find(query);
-      const totalRevenue = payments.reduce((sum, p) => sum + p.amount, 0);
-
-      doc.fontSize(14).text("Revenue Summary", { underline: true });
-      doc.moveDown();
-      doc.fontSize(12).text(`Total Revenue: ₦${totalRevenue.toLocaleString()}`);
-      doc.text(`Total Transactions: ${payments.length}`);
-      doc.text(
-        `Average Transaction: ₦${(
-          totalRevenue / payments.length || 0
-        ).toLocaleString()}`
-      );
-    } else if (reportType === "profit-loss") {
-      // Add P&L data
-      doc.fontSize(14).text("Profit & Loss Statement", { underline: true });
-      doc.moveDown();
-      doc.text("This is a placeholder for P&L data");
+    if (!REPORT_TYPES.includes(reportType)) {
+      return next(new AppError(`reportType must be one of: ${REPORT_TYPES.join(", ")}`, 400));
     }
 
-    doc.end();
+    // Compute everything before sending headers so errors still return JSON
+    const pl = await computeProfitLoss(vendor._id, startDate, endDate);
+    const round2 = (n) => Math.round(n * 100) / 100;
+    let data;
+    if (reportType === "revenue") {
+      data = {
+        totalRevenue: round2(pl.totalRevenue),
+        totalTransactions: pl.revenue.length,
+        averageTransaction: round2(pl.revenue.length ? pl.totalRevenue / pl.revenue.length : 0),
+        payments: pl.revenue.map((r) => ({
+          date: r.date,
+          invoice: r.invoiceNumber || "",
+          eventType: r.eventType || "",
+          amount: r.amount,
+          currency: r.currency || "",
+        })),
+      };
+    } else if (reportType === "expenses") {
+      data = {
+        totalExpenses: round2(pl.totalExpenses),
+        totalTransactions: pl.expenses.length,
+        byCategory: pl.expenseBreakdown.map((b) => ({ ...b, percentage: round2(b.percentage) })),
+        expenses: pl.expenses.map((e) => ({
+          date: e.date,
+          category: e.category,
+          description: e.description || "",
+          amount: e.amount,
+        })),
+      };
+    } else {
+      data = {
+        revenue: round2(pl.totalRevenue),
+        expenses: round2(pl.totalExpenses),
+        grossProfit: round2(pl.grossProfit),
+        netProfit: round2(pl.netProfit),
+        profitMarginPercent: round2(pl.profitMargin),
+        expenseBreakdown: pl.expenseBreakdown.map((b) => ({ ...b, percentage: round2(b.percentage) })),
+      };
+    }
+
+    const titles = { revenue: "Revenue Report", expenses: "Expense Report", "profit-loss": "Profit & Loss Statement" };
+    const file = await renderReport({
+      title: `${vendor.businessName} - ${titles[reportType]}`,
+      format: "pdf",
+      data,
+      meta: {
+        Period: `${startDate || "All time"} to ${endDate || "Present"}`,
+        Generated: new Date(),
+      },
+    });
+    sendReportFile(res, file, `${reportType}-report-${Date.now()}`);
   } catch (error) {
     next(error);
   }

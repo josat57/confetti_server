@@ -9,6 +9,7 @@ import {
   getMobileConfig,
   subscribePush,
   checkCapabilities,
+  getUploadedImage,
 } from "../controllers/mobile.controller.js";
 
 const router = express.Router();
@@ -155,6 +156,7 @@ router.post("/sync", protect, syncOfflineChanges);
  *         description: Unauthorized
  */
 router.post("/upload-image", protect, upload.single("image"), uploadImage);
+router.get("/images/:fileId", protect, getUploadedImage);
 
 /**
  * @swagger

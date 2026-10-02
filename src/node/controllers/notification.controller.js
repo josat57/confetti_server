@@ -111,17 +111,19 @@ export const markAsFailed = async (req, res, next) => {
 export const checkNotificationStatus = async (req, res, next) => {
   try {
     const { id } = req.params;
-    const notification = await notificationService.getNotificationById(id);
+    const {
+      data: { notification },
+    } = await notificationService.getNotificationById(id);
     const status = {
-      isRead: notification.isRead(),
-      isDelivered: notification.isDelivered(),
-      isSent: notification.isSent(),
-      isFailed: notification.isFailed(),
-      isPending: notification.isPending(),
-      isUrgent: notification.isUrgent(),
-      isHighPriority: notification.isHighPriority(),
-      isMediumPriority: notification.isMediumPriority(),
-      isLowPriority: notification.isLowPriority(),
+      isRead: notification.isRead === true || notification.status === "read",
+      isDelivered: ["delivered", "read"].includes(notification.status),
+      isSent: ["sent", "delivered", "read"].includes(notification.status),
+      isFailed: notification.status === "failed",
+      isPending: notification.status === "pending",
+      isUrgent: notification.priority === "urgent",
+      isHighPriority: notification.priority === "high",
+      isMediumPriority: notification.priority === "normal",
+      isLowPriority: notification.priority === "low",
     };
     res.status(200).json(status);
   } catch (error) {

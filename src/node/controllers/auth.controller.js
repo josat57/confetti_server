@@ -16,6 +16,8 @@ import {
 import { AppError } from "../utils/AppError.js";
 import { logger } from "../utils/logger.js";
 import { Console } from "console";
+import securityMonitor from "../services/security-monitor.service.js";
+import { closeUserAccount } from "../services/account-closure.service.js";
 
 export const register = async (req, res, next) => {
   try {
@@ -142,7 +144,22 @@ export const login = async (req, res, next) => {
     const { email, password } = req.body;
     const user = await User.findOne({ email }).select("+password");
 
-    if (!user || !(await user.comparePassword(password))) {
+    if (!user) {
+      securityMonitor.trackFailedLogin(email, req.ip, "Unknown account").catch(() => {});
+      return next(new AppError("Invalid email or password", 401));
+    }
+
+    if (!(await user.comparePassword(password))) {
+      // Count toward the 5-attempt lockout defined on the user model
+      const wasLocked = user.isLocked();
+      await user.incrementLoginAttempts();
+      const nowLocked = !wasLocked && (user.loginAttempts || 0) + 1 >= 5;
+      securityMonitor.trackFailedLogin(email, req.ip, "Invalid password", { userId: user._id }).catch(() => {});
+      if (nowLocked) {
+        securityMonitor
+          .trackAccountLockout(user._id, user.email, "5 consecutive failed login attempts")
+          .catch(() => {});
+      }
       return next(new AppError("Invalid email or password", 401));
     }
 
@@ -192,7 +209,15 @@ export const login = async (req, res, next) => {
     });
 
     user.lastLogin = Date.now();
+    if (user.loginAttempts || user.lockUntil) {
+      user.loginAttempts = 0;
+      user.lockUntil = undefined;
+    }
     await user.save();
+
+    securityMonitor
+      .trackSuccessfulLogin(user._id, user.email, req.ip, req.headers["user-agent"])
+      .catch(() => {});
 
     res.json({
       status: "success",
@@ -588,7 +613,6 @@ export const resendOTP = async (req, res, next) => {
 export const refreshToken = async (req, res, next) => {
   try {
     const refreshToken = req.cookies?.refreshToken;
-    console.log(refreshToken);
     if (!refreshToken) {
       return next(new AppError("Refresh token is required", 400));
     }
@@ -816,14 +840,10 @@ export const disableAccount = async (req, res, next) => {
       return next(new AppError("Incorrect password", 401));
     }
 
-    // Soft delete - mark as inactive
-    user.isActive = false;
-    user.deletedAt = new Date();
-    user.accountDisabledReason = reason || "User requested account disable";
-    await user.save();
-
-    // Revoke all refresh tokens
-    await RefreshToken.deleteMany({ user: user._id });
+    // Deactivate, cancel subscriptions, remove cards, revoke sessions, email confirmation
+    await closeUserAccount(user, reason || "User requested account disable");
+    res.clearCookie("accessToken");
+    res.clearCookie("refreshToken");
 
     // Log the action
     logger.info(`Account disabled for user ${user._id}`, {

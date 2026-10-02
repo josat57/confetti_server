@@ -1,8 +1,10 @@
 import User from "../models/user.model.js";
-import AuditLog from "../models/auditLog.model.js";
 import { AppError } from "../utils/AppError.js";
 import speakeasy from "speakeasy";
 import QRCode from "qrcode";
+import securityMonitor from "../services/security-monitor.service.js";
+import SecurityLog from "../models/SecurityLog.model.js";
+import { encryptSecret } from "../utils/secret-crypto.js";
 import crypto from "crypto";
 
 /**
@@ -33,13 +35,12 @@ export const enable2FA = async (req, res, next) => {
     await user.save();
 
     // Log activity
-    await AuditLog.create({
-      user: user._id,
-      action: "2FA_SETUP_INITIATED",
-      resource: "User",
-      resourceId: user._id,
-      ipAddress: req.ip,
+    // User security events go to the security log (AuditLog is for admin actions)
+    securityMonitor.logEvent("2fa_event", {
+      userId: user._id,
+      ip: req.ip,
       userAgent: req.get("user-agent"),
+      ...{ action: "setup_initiated" },
     });
 
     res.status(200).json({
@@ -103,13 +104,12 @@ export const verify2FA = async (req, res, next) => {
     await user.save();
 
     // Log activity
-    await AuditLog.create({
-      user: user._id,
-      action: "2FA_ENABLED",
-      resource: "User",
-      resourceId: user._id,
-      ipAddress: req.ip,
+    // User security events go to the security log (AuditLog is for admin actions)
+    securityMonitor.logEvent("2fa_event", {
+      userId: user._id,
+      ip: req.ip,
       userAgent: req.get("user-agent"),
+      ...{ action: "enabled" },
     });
 
     res.status(200).json({
@@ -165,13 +165,12 @@ export const disable2FA = async (req, res, next) => {
     await user.save();
 
     // Log activity
-    await AuditLog.create({
-      user: user._id,
-      action: "2FA_DISABLED",
-      resource: "User",
-      resourceId: user._id,
-      ipAddress: req.ip,
+    // User security events go to the security log (AuditLog is for admin actions)
+    securityMonitor.logEvent("2fa_event", {
+      userId: user._id,
+      ip: req.ip,
       userAgent: req.get("user-agent"),
+      ...{ action: "disabled", severity: "medium" },
     });
 
     res.status(200).json({
@@ -187,46 +186,61 @@ export const disable2FA = async (req, res, next) => {
  * Get audit logs
  * GET /api/v1/vendors/security/audit-logs
  */
+// The user's own security activity (SecurityLog), in the audit-log shape the
+// frontend expects: { createdAt, action, resource, resourceId, ipAddress, userAgent }.
+const buildActivityQuery = (userId, { action, startDate, endDate }) => {
+  const query = { user: userId };
+  if (action) query.$or = [{ event: action }, { "details.action": action }, { "details.operation": action }];
+  if (startDate || endDate) {
+    query.createdAt = {};
+    if (startDate) query.createdAt.$gte = new Date(startDate);
+    if (endDate) query.createdAt.$lte = new Date(endDate);
+  }
+  return query;
+};
+
+const toActivityEntry = (log) => {
+  const details = log.details instanceof Map ? Object.fromEntries(log.details) : log.details || {};
+  return {
+    _id: log._id,
+    createdAt: log.createdAt,
+    action: details.action || details.operation || log.event,
+    event: log.event,
+    resource: "User",
+    resourceId: log.user,
+    status: log.status,
+    severity: log.severity,
+    ipAddress: log.ipAddress,
+    userAgent: log.userAgent,
+  };
+};
+
 export const getAuditLogs = async (req, res, next) => {
   try {
-    const {
-      page = 1,
-      limit = 50,
-      action,
-      resource,
-      startDate,
-      endDate,
-    } = req.query;
+    const { page = 1, limit = 50 } = req.query;
+    const pageNum = Math.max(1, parseInt(page, 10) || 1);
+    const limitNum = Math.min(200, Math.max(1, parseInt(limit, 10) || 50));
+    const query = buildActivityQuery(req.user._id, req.query);
 
-    const query = { user: req.user._id };
-
-    if (action) query.action = action;
-    if (resource) query.resource = resource;
-    if (startDate || endDate) {
-      query.createdAt = {};
-      if (startDate) query.createdAt.$gte = new Date(startDate);
-      if (endDate) query.createdAt.$lte = new Date(endDate);
-    }
-
-    const skip = (page - 1) * limit;
-    const logs = await AuditLog.find(query)
-      .sort({ createdAt: -1 })
-      .limit(parseInt(limit))
-      .skip(skip)
-      .populate("user", "email userName");
-
-    const total = await AuditLog.countDocuments(query);
+    const [logs, total] = await Promise.all([
+      SecurityLog.find(query)
+        .sort({ createdAt: -1 })
+        .skip((pageNum - 1) * limitNum)
+        .limit(limitNum)
+        .lean(),
+      SecurityLog.countDocuments(query),
+    ]);
 
     res.status(200).json({
       status: "success",
       results: logs.length,
       data: {
-        logs,
+        logs: logs.map(toActivityEntry),
         pagination: {
-          page: parseInt(page),
-          limit: parseInt(limit),
+          page: pageNum,
+          limit: limitNum,
           total,
-          pages: Math.ceil(total / limit),
+          pages: Math.ceil(total / limitNum),
         },
       },
     });
@@ -241,40 +255,28 @@ export const getAuditLogs = async (req, res, next) => {
  */
 export const exportAuditLogs = async (req, res, next) => {
   try {
-    const { startDate, endDate, format = "csv" } = req.query;
-
-    const query = { user: req.user._id };
-    if (startDate || endDate) {
-      query.createdAt = {};
-      if (startDate) query.createdAt.$gte = new Date(startDate);
-      if (endDate) query.createdAt.$lte = new Date(endDate);
-    }
-
-    const logs = await AuditLog.find(query)
-      .sort({ createdAt: -1 })
-      .populate("user", "email userName");
+    const { format = "csv" } = req.query;
+    const logs = (
+      await SecurityLog.find(buildActivityQuery(req.user._id, req.query)).sort({ createdAt: -1 }).limit(50000).lean()
+    ).map(toActivityEntry);
 
     if (format === "csv") {
-      // Generate CSV
+      const cell = (v) => {
+        let str = v === null || v === undefined ? "" : v instanceof Date ? v.toISOString() : String(v);
+        if (/^[=+\-@\t\r]/.test(str)) str = `'${str}`;
+        return /[",\n\r]/.test(str) ? `"${str.replace(/"/g, '""')}"` : str;
+      };
       const csv = [
-        "Timestamp,Action,Resource,Resource ID,IP Address,User Agent",
+        "Timestamp,Action,Status,Resource,Resource ID,IP Address,User Agent",
         ...logs.map((log) =>
-          [
-            log.createdAt.toISOString(),
-            log.action,
-            log.resource,
-            log.resourceId,
-            log.ipAddress,
-            `"${log.userAgent}"`,
-          ].join(",")
+          [log.createdAt, log.action, log.status, log.resource, log.resourceId, log.ipAddress, log.userAgent]
+            .map(cell)
+            .join(",")
         ),
       ].join("\n");
 
       res.setHeader("Content-Type", "text/csv");
-      res.setHeader(
-        "Content-Disposition",
-        `attachment; filename=audit-logs-${Date.now()}.csv`
-      );
+      res.setHeader("Content-Disposition", `attachment; filename=audit-logs-${Date.now()}.csv`);
       res.send(csv);
     } else {
       res.status(200).json({
@@ -330,13 +332,12 @@ export const revokeSession = async (req, res, next) => {
     }
 
     // Log activity
-    await AuditLog.create({
-      user: req.user._id,
-      action: "SESSION_REVOKED",
-      resource: "RefreshToken",
-      resourceId: session._id,
-      ipAddress: req.ip,
+    // User security events go to the security log (AuditLog is for admin actions)
+    securityMonitor.logEvent("sensitive_operation", {
+      userId: req.user._id,
+      ip: req.ip,
       userAgent: req.get("user-agent"),
+      ...{ operation: "session_revoked" },
     });
 
     res.status(200).json({
@@ -367,13 +368,12 @@ export const revokeAllSessions = async (req, res, next) => {
     });
 
     // Log activity
-    await AuditLog.create({
-      user: req.user._id,
-      action: "ALL_SESSIONS_REVOKED",
-      resource: "RefreshToken",
-      details: { count: result.deletedCount },
-      ipAddress: req.ip,
+    // User security events go to the security log (AuditLog is for admin actions)
+    securityMonitor.logEvent("sensitive_operation", {
+      userId: req.user._id,
+      ip: req.ip,
       userAgent: req.get("user-agent"),
+      ...{ count: result.deletedCount }, ...{ operation: "all_sessions_revoked" },
     });
 
     res.status(200).json({
@@ -417,12 +417,12 @@ export const configureSSO = async (req, res, next) => {
       return next(new AppError("Provider and client ID are required", 400));
     }
 
-    // Store SSO configuration (in production, encrypt sensitive data)
+    // Store SSO configuration (client secret encrypted at rest)
     user.ssoConfig = {
       enabled: true,
       provider,
       clientId,
-      clientSecret, // Should be encrypted
+      clientSecret: encryptSecret(clientSecret), // AES-256-GCM (utils/secret-crypto.js)
       domain,
       metadata,
       configuredAt: new Date(),
@@ -431,14 +431,12 @@ export const configureSSO = async (req, res, next) => {
     await user.save();
 
     // Log activity
-    await AuditLog.create({
-      user: user._id,
-      action: "SSO_CONFIGURED",
-      resource: "User",
-      resourceId: user._id,
-      details: { provider },
-      ipAddress: req.ip,
+    // User security events go to the security log (AuditLog is for admin actions)
+    securityMonitor.logEvent("sensitive_operation", {
+      userId: user._id,
+      ip: req.ip,
       userAgent: req.get("user-agent"),
+      ...{ provider }, ...{ operation: "sso_configured", severity: "medium" },
     });
 
     res.status(200).json({

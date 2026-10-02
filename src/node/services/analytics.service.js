@@ -1,4 +1,5 @@
 import Event from "../models/event.model.js";
+import Budget from "../models/budget.model.js";
 import Task from "../models/task.model.js";
 import Vendor from "../models/vendor.model.js";
 import { logger } from "../utils/logger.js";
@@ -169,7 +170,31 @@ class AnalyticsService {
         );
       }
 
-      // Calculate profit (simplified - would need expense tracking)
+      // Expenses recorded in each event's budget (cancelled expenses excluded)
+      const eventById = new Map(events.map((e) => [String(e._id), e]));
+      const budgets = events.length
+        ? await Budget.find({ event: { $in: events.map((e) => e._id) } }).select("event expenses").lean()
+        : [];
+      for (const budgetDoc of budgets) {
+        const event = eventById.get(String(budgetDoc.event));
+        const currency = event?.budget?.currency || "NGN";
+        for (const expense of budgetDoc.expenses || []) {
+          if (expense.paymentStatus === "cancelled") continue;
+          const amount = Number(expense.amount) || 0;
+          metrics.totalExpenses += amount;
+          if (metrics.byCurrency[currency]) metrics.byCurrency[currency].expenses += amount;
+          if (event && metrics.byEventType[event.eventType]) metrics.byEventType[event.eventType].expenses += amount;
+          if (expense.paymentStatus === "paid") metrics.paidAmount += amount;
+          else metrics.pendingPayments += amount;
+        }
+      }
+      for (const bucket of [...Object.values(metrics.byCurrency), ...Object.values(metrics.byEventType)]) {
+        bucket.profit = bucket.revenue - bucket.expenses;
+      }
+      if (events.length > 0) {
+        metrics.averageEventExpenses = Math.round(metrics.totalExpenses / events.length);
+      }
+
       metrics.totalProfit = metrics.totalRevenue - metrics.totalExpenses;
       if (metrics.totalRevenue > 0) {
         metrics.profitMargin = Math.round(

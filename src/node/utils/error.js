@@ -125,6 +125,11 @@ export const notFound = (req, res, next) => {
 // }
 
 export const createError = (statusCode, message) => {
+  // Several services call createError(message, statusCode); accept both orders
+  // so the HTTP status is never set to a string (which makes Express throw).
+  if (typeof statusCode === "string" && typeof message === "number") {
+    return new AppError(statusCode, message);
+  }
   return new AppError(message, statusCode);
 };
 

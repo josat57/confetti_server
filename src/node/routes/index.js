@@ -28,6 +28,7 @@ import settingsRoutes from "./settings.routes.js";
 import plannerRoutes from "./planner.routes.js";
 import plannerDashboardRoutes from "./planner-dashboard.routes.js";
 import plannerDocumentRoutes from "./planner-document.routes.js";
+import { accessSharedDocument } from "../controllers/planner-document.controller.js";
 import plannerClientRoutes from "./planner-client.routes.js";
 import plannerVendorRoutes, { bookingRouter } from "./planner-vendor.routes.js";
 import plannerTaskRoutes from "./planner-task.routes.js";
@@ -61,12 +62,17 @@ import businessVerificationRoutes from "./business-verification.routes.js";
 import brandingRoutes from "./branding.routes.js";
 import featureFlagRoutes from "./featureFlagRoutes.js";
 import couponRoutes from "./couponRoutes.js";
+import adminApiManagementRoutes from "./admin-api-management.routes.js";
+import adminBackupRoutes from "./admin-backup.routes.js";
 // Vendor AI routes are now integrated into universal AI planner
 // import vendorAIRoutes from "./vendor-ai-planner.routes.js";
 
 const router = express.Router();
 
 // Routes
+// Public: signed, expiring links created by POST /planner/documents/:id/share
+router.get("/shared/documents/:id", accessSharedDocument);
+
 router.use("/auth", authRoutes);
 router.use("/users", userRoutes);
 router.use("/team", teamRouterRoutes);
@@ -125,9 +131,12 @@ router.use("/vendors", vendorRoutes);
 router.use("/vendors", apiAccessRoutes);
 router.use("/vendors", financialRoutes);
 router.use("/quotes", quoteRoutes); // Public quote routes
-// Admin routes MUST come before general routes to avoid conflicts
-router.use("/admin", adminRoutes);
+// Specific admin sub-routes MUST come before the general /admin router
+router.use("/admin/api", adminApiManagementRoutes);
+router.use("/admin/backups", adminBackupRoutes);
 router.use("/admin/business-profiles", businessVerificationRoutes);
+// General admin router (wildcard /:id catch-all must come after specific prefixes)
+router.use("/admin", adminRoutes);
 router.use("/admin", featureFlagRoutes);
 router.use("/admin", couponRoutes);
 // General routes (after admin routes)

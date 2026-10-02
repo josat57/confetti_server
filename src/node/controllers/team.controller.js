@@ -1,9 +1,11 @@
-import TeamMember from "../models/team-member.model.js";
+// Vendor teams have their own model (planner teams use team-member.model.js)
+import TeamMember from "../models/vendor-team-member.model.js";
 import Vendor from "../models/vendor.model.js";
 import User from "../models/user.model.js";
 import { AppError } from "../utils/AppError.js";
 import { logger } from "../utils/logger.js";
 import crypto from "crypto";
+import { sendEmailDirect } from "../utils/email.js";
 
 /**
  * Get all team members
@@ -27,8 +29,8 @@ export const getTeamMembers = async (req, res, next) => {
     const skip = (page - 1) * limit;
 
     const teamMembers = await TeamMember.find(query)
-      .populate("user", "name email")
-      .populate("invitedBy", "name email")
+      .populate("user", "firstName lastName email")
+      .populate("invitedBy", "firstName lastName email")
       .sort({ role: 1, createdAt: -1 })
       .limit(parseInt(limit))
       .skip(skip);
@@ -93,7 +95,7 @@ export const getTeamMember = async (req, res, next) => {
       vendor: vendor._id,
     })
       .populate("user", "name email phone")
-      .populate("invitedBy", "name email");
+      .populate("invitedBy", "firstName lastName email");
 
     if (!teamMember) {
       return next(new AppError("Team member not found", 404));
@@ -131,9 +133,12 @@ export const inviteTeamMember = async (req, res, next) => {
 
     if (!user) {
       // Create a placeholder user account
+      const localPart = email.toLowerCase().split("@")[0].replace(/[^a-z0-9._-]/g, "") || "member";
       user = await User.create({
         email: email.toLowerCase(),
-        name: email.split("@")[0],
+        // username is unique: suffix avoids clashes with existing accounts
+        username: `${localPart}_${crypto.randomBytes(3).toString("hex")}`,
+        firstName: localPart,
         password: crypto.randomBytes(32).toString("hex"), // Random password
         role: "vendor",
         isActive: false, // Will be activated when they accept invitation
@@ -154,21 +159,55 @@ export const inviteTeamMember = async (req, res, next) => {
       }
     }
 
-    // Create team member invitation
-    const teamMember = await TeamMember.create({
-      vendor: vendor._id,
-      user: user._id,
-      role: role || "staff",
-      permissions: permissions || [],
-      invitedBy: req.user._id,
-      notes,
-      status: "pending",
-    });
+    // Create the invitation (re-inviting a declined/inactive member reuses their record)
+    let teamMember;
+    if (existingMember) {
+      existingMember.set({
+        role: role || "staff",
+        permissions: permissions || [],
+        invitedBy: req.user._id,
+        notes,
+        status: "pending",
+        invitationToken: crypto.randomBytes(32).toString("hex"),
+        invitationExpires: new Date(Date.now() + 7 * 24 * 60 * 60 * 1000),
+      });
+      teamMember = await existingMember.save();
+    } else {
+      teamMember = await TeamMember.create({
+        vendor: vendor._id,
+        user: user._id,
+        role: role || "staff",
+        permissions: permissions || [],
+        invitedBy: req.user._id,
+        notes,
+        status: "pending",
+      });
+    }
 
-    await teamMember.populate("user", "name email");
-    await teamMember.populate("invitedBy", "name email");
+    await teamMember.populate("user", "firstName lastName email");
+    await teamMember.populate("invitedBy", "firstName lastName email");
 
-    // TODO: Send invitation email
+    // Send invitation email
+    try {
+      const invitationLink = `${process.env.FRONTEND_URL}/team/accept/${teamMember.invitationToken}`;
+      await sendEmailDirect({
+        to: email,
+        subject: `You're invited to join ${vendor.businessName || vendor.displayName} on Confetti`,
+        html: `
+          <h2>Team Invitation</h2>
+          <p>Hi there,</p>
+          <p><strong>${[req.user.firstName, req.user.lastName].filter(Boolean).join(" ") || req.user.email}</strong> has invited you to join the <strong>${vendor.businessName || vendor.displayName}</strong> team on Confetti as a <strong>${role || "staff"}</strong>.</p>
+          <p>Click the button below to accept your invitation:</p>
+          <p>
+            <a href="${invitationLink}" style="display:inline-block;padding:12px 24px;background:#6366f1;color:#fff;text-decoration:none;border-radius:6px;">Accept Invitation</a>
+          </p>
+          <p>This invitation expires in 7 days. If you did not expect this invitation, you can safely ignore this email.</p>
+          <p>Or copy this link: ${invitationLink}</p>
+        `,
+      });
+    } catch (emailError) {
+      logger.error(`Failed to send invitation email to ${email}:`, emailError.message);
+    }
     logger.info(`Team invitation sent to ${email} for vendor ${vendor._id}`);
 
     res.status(201).json({
@@ -197,7 +236,7 @@ export const acceptInvitation = async (req, res, next) => {
       status: "pending",
     })
       .populate("vendor", "businessName displayName")
-      .populate("invitedBy", "name email");
+      .populate("invitedBy", "firstName lastName email");
 
     if (!teamMember) {
       return next(new AppError("Invalid or expired invitation", 400));
@@ -311,7 +350,7 @@ export const updateMemberRole = async (req, res, next) => {
     }
 
     await teamMember.save();
-    await teamMember.populate("user", "name email");
+    await teamMember.populate("user", "firstName lastName email");
 
     res.status(200).json({
       status: "success",
@@ -352,7 +391,7 @@ export const updateMemberPermissions = async (req, res, next) => {
 
     teamMember.permissions = permissions;
     await teamMember.save();
-    await teamMember.populate("user", "name email");
+    await teamMember.populate("user", "firstName lastName email");
 
     res.status(200).json({
       status: "success",
@@ -428,7 +467,7 @@ export const deactivateTeamMember = async (req, res, next) => {
     }
 
     await teamMember.deactivate();
-    await teamMember.populate("user", "name email");
+    await teamMember.populate("user", "firstName lastName email");
 
     res.status(200).json({
       status: "success",
@@ -467,7 +506,7 @@ export const reactivateTeamMember = async (req, res, next) => {
 
     teamMember.status = "active";
     await teamMember.save();
-    await teamMember.populate("user", "name email");
+    await teamMember.populate("user", "firstName lastName email");
 
     res.status(200).json({
       status: "success",
@@ -498,25 +537,49 @@ export const getTeamActivity = async (req, res, next) => {
       vendor: vendor._id,
       status: "active",
     })
-      .populate("user", "name email")
+      .populate("user", "firstName lastName email")
       .select("user role lastActiveAt")
       .sort({ lastActiveAt: -1 })
       .limit(parseInt(limit))
       .skip((page - 1) * limit);
 
-    // TODO: Implement comprehensive activity logging
-    // For now, return basic team member info with last active times
+    // Fetch audit logs for this vendor's team actions
+    let auditActivities = [];
+    try {
+      const AuditLog = (await import("../models/auditLog.model.js")).default;
+      const logs = await AuditLog.find({
+        resource: "team_member",
+        "changes.vendorId": vendor._id.toString(),
+      })
+        .populate("admin", "firstName lastName email")
+        .sort({ timestamp: -1 })
+        .limit(parseInt(limit))
+        .skip((page - 1) * limit)
+        .lean();
+
+      auditActivities = logs.map((log) => ({
+        action: log.action,
+        performedBy: log.admin,
+        resourceId: log.resourceId,
+        changes: log.changes,
+        timestamp: log.timestamp,
+      }));
+    } catch (_) {
+      // Audit log collection may not exist yet; fall through to basic activity
+    }
+
+    const basicActivities = teamMembers.map((member) => ({
+      user: member.user,
+      role: member.role,
+      lastActiveAt: member.lastActiveAt,
+      action: "last_seen",
+    }));
 
     res.status(200).json({
       status: "success",
       results: teamMembers.length,
       data: {
-        activities: teamMembers.map((member) => ({
-          user: member.user,
-          role: member.role,
-          lastActiveAt: member.lastActiveAt,
-          action: "active",
-        })),
+        activities: auditActivities.length ? auditActivities : basicActivities,
       },
     });
   } catch (error) {
@@ -540,7 +603,7 @@ export const resendInvitation = async (req, res, next) => {
       _id: req.params.id,
       vendor: vendor._id,
       status: "pending",
-    }).populate("user", "name email");
+    }).populate("user", "firstName lastName email");
 
     if (!teamMember) {
       return next(
@@ -555,7 +618,27 @@ export const resendInvitation = async (req, res, next) => {
     );
     await teamMember.save();
 
-    // TODO: Send invitation email
+    // Send invitation email
+    try {
+      const invitationLink = `${process.env.FRONTEND_URL}/team/accept/${teamMember.invitationToken}`;
+      await sendEmailDirect({
+        to: teamMember.user.email,
+        subject: `Reminder: You have a pending team invitation on Confetti`,
+        html: `
+          <h2>Team Invitation Reminder</h2>
+          <p>Hi ${teamMember.user.firstName || "there"},</p>
+          <p>This is a reminder that you have a pending invitation to join a team on Confetti.</p>
+          <p>Click the button below to accept your invitation:</p>
+          <p>
+            <a href="${invitationLink}" style="display:inline-block;padding:12px 24px;background:#6366f1;color:#fff;text-decoration:none;border-radius:6px;">Accept Invitation</a>
+          </p>
+          <p>This invitation expires in 7 days.</p>
+          <p>Or copy this link: ${invitationLink}</p>
+        `,
+      });
+    } catch (emailError) {
+      logger.error(`Failed to resend invitation email:`, emailError.message);
+    }
 
     res.status(200).json({
       status: "success",

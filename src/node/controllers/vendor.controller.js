@@ -8,6 +8,7 @@ import {
   fileToBase64,
   fileExists,
 } from "../utils/gridfs.js";
+import { escapeRegExp } from "../utils/escape-regex.js";
 
 // Create a new vendor
 export const createVendor = async (req, res, next) => {
@@ -91,10 +92,10 @@ export const listVendors = async (req, res, next) => {
 
     if (location) {
       query.$or = [
-        { "address.city": new RegExp(location, "i") },
-        { "address.state": new RegExp(location, "i") },
-        { "serviceArea.cities": new RegExp(location, "i") },
-        { "serviceArea.states": new RegExp(location, "i") },
+        { "address.city": new RegExp(escapeRegExp(location), "i") },
+        { "address.state": new RegExp(escapeRegExp(location), "i") },
+        { "serviceArea.cities": new RegExp(escapeRegExp(location), "i") },
+        { "serviceArea.states": new RegExp(escapeRegExp(location), "i") },
       ];
     }
 
@@ -162,15 +163,16 @@ export const searchVendors = async (req, res, next) => {
     // Build search query
     const query = { isActive: true };
 
-    // Text search
+    // Text search (input escaped: never interpreted as a regular expression)
     if (searchQuery) {
+      const rx = new RegExp(String(searchQuery).slice(0, 100).replace(/[.*+?^${}()|[\]\\]/g, "\\$&"), "i");
       query.$or = [
-        { businessName: new RegExp(searchQuery, "i") },
-        { displayName: new RegExp(searchQuery, "i") },
-        { description: new RegExp(searchQuery, "i") },
-        { tagline: new RegExp(searchQuery, "i") },
-        { category: new RegExp(searchQuery, "i") },
-        { tags: new RegExp(searchQuery, "i") },
+        { businessName: rx },
+        { displayName: rx },
+        { description: rx },
+        { tagline: rx },
+        { category: rx },
+        { tags: rx },
       ];
     }
 
@@ -182,10 +184,10 @@ export const searchVendors = async (req, res, next) => {
     // Location filter
     if (location) {
       query.$or = [
-        { "address.city": new RegExp(location, "i") },
-        { "address.state": new RegExp(location, "i") },
-        { "serviceArea.cities": new RegExp(location, "i") },
-        { "serviceArea.states": new RegExp(location, "i") },
+        { "address.city": new RegExp(escapeRegExp(location), "i") },
+        { "address.state": new RegExp(escapeRegExp(location), "i") },
+        { "serviceArea.cities": new RegExp(escapeRegExp(location), "i") },
+        { "serviceArea.states": new RegExp(escapeRegExp(location), "i") },
       ];
     }
 
@@ -217,9 +219,23 @@ export const searchVendors = async (req, res, next) => {
 
     // Availability filter (check if vendor has availability on specific date)
     if (availability) {
-      // This would require checking against bookings/availability
-      // For now, we'll just ensure the vendor is active
       query.isActive = true;
+      const day = new Date(availability);
+      if (!isNaN(day)) {
+        // Exclude vendors booked or blocked on that day
+        const start = new Date(Date.UTC(day.getUTCFullYear(), day.getUTCMonth(), day.getUTCDate()));
+        const end = new Date(start.getTime() + 24 * 60 * 60 * 1000);
+        const [Availability, VendorBooking] = await Promise.all([
+          import("../models/availability.model.js").then((m) => m.default),
+          import("../models/vendor-booking.model.js").then((m) => m.default),
+        ]);
+        const [blocked, booked] = await Promise.all([
+          Availability.distinct("vendor", { date: { $gte: start, $lt: end }, status: { $in: ["booked", "blocked"] } }),
+          VendorBooking.distinct("vendor", { eventDate: { $gte: start, $lt: end }, status: { $in: ["booked", "confirmed"] } }),
+        ]);
+        const unavailable = [...blocked, ...booked];
+        if (unavailable.length) query._id = { $nin: unavailable };
+      }
     }
 
     // Execute query with pagination
@@ -1061,10 +1077,10 @@ export const getFeaturedVendors = async (req, res, next) => {
 
     if (location) {
       query.$or = [
-        { "address.city": new RegExp(location, "i") },
-        { "address.state": new RegExp(location, "i") },
-        { "serviceArea.cities": new RegExp(location, "i") },
-        { "serviceArea.states": new RegExp(location, "i") },
+        { "address.city": new RegExp(escapeRegExp(location), "i") },
+        { "address.state": new RegExp(escapeRegExp(location), "i") },
+        { "serviceArea.cities": new RegExp(escapeRegExp(location), "i") },
+        { "serviceArea.states": new RegExp(escapeRegExp(location), "i") },
       ];
     }
 
@@ -1116,8 +1132,23 @@ export const trackProfileView = async (req, res, next) => {
 
     // Optionally track in analytics if user is logged in
     if (req.user) {
-      // TODO: Create analytics entry for detailed tracking
-      // This would include: user ID, timestamp, referrer, etc.
+      // Record a detailed analytics entry for the profile view
+      try {
+        const Analytics = (await import("../models/analytics.model.js")).default;
+        await Analytics.create({
+          vendor: vendor._id,
+          user: req.user._id,
+          event: "profile_view",
+          metadata: {
+            referrer: req.get("referer") || null,
+            userAgent: req.get("user-agent") || null,
+            ipAddress: req.ip || null,
+            timestamp: new Date(),
+          },
+        });
+      } catch (analyticsError) {
+        // Non-critical: profile view counter already incremented above
+      }
       logger.info(
         `Profile view tracked: Vendor ${vendor._id} by User ${req.user._id}`
       );

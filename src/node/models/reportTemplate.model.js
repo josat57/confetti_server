@@ -27,7 +27,9 @@ const reportTemplateSchema = new mongoose.Schema(
       {
         name: String,
         label: String,
-        type: String,
+        // Must be the object form: a bare `type: String` here makes mongoose
+        // treat the whole metric as a String and reject metric objects.
+        type: { type: String },
         aggregation: String,
       },
     ],
@@ -85,6 +87,14 @@ const reportTemplateSchema = new mongoose.Schema(
 reportTemplateSchema.index({ reportType: 1 });
 reportTemplateSchema.index({ isPublic: 1 });
 reportTemplateSchema.index({ createdBy: 1 });
+
+// Entries stored before this field was a subdocument are plain strings;
+// convert them on load so they are not hydrated as character-indexed objects.
+reportTemplateSchema.pre("init", function (doc) {
+  if (Array.isArray(doc?.metrics)) {
+    doc.metrics = doc.metrics.map((v) => (typeof v === "string" ? { name: v, label: v } : v));
+  }
+});
 
 const ReportTemplate = mongoose.model("ReportTemplate", reportTemplateSchema);
 

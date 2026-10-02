@@ -1,8 +1,10 @@
 import Vendor from "../models/vendor.model.js";
 import User from "../models/user.model.js";
+import Admin from "../models/Admin.js";
 import AuditLog from "../models/auditLog.model.js";
 import Payment from "../models/payment.model.js";
 import { createError } from "../utils/error.js";
+import { escapeRegExp } from "../utils/escape-regex.js";
 
 /**
  * Admin Vendor Verification Service
@@ -103,6 +105,12 @@ class AdminVendorVerificationService {
       throw createError(400, "Vendor is already verified");
     }
 
+    const previous = {
+      verificationStatus: vendor.verificationStatus,
+      isVerified: vendor.isVerified,
+      status: vendor.status,
+    };
+
     // Update vendor verification status
     await vendor.verifyBusinessProfile(adminId);
 
@@ -118,15 +126,33 @@ class AdminVendorVerificationService {
       resource: "vendor",
       resourceId: vendorId,
       changes: {
-        verificationStatus: { from: "pending", to: "verified" },
-        isVerified: { from: false, to: true },
-        status: { from: vendor.status, to: "approved" },
+        verificationStatus: { from: previous.verificationStatus, to: "verified" },
+        isVerified: { from: previous.isVerified, to: true },
+        status: { from: previous.status, to: "approved" },
       },
       timestamp: new Date(),
     });
 
-    // TODO: Send approval notification to vendor owner
-    // await notificationService.sendVendorApprovalEmail(vendor.owner);
+    // Notify vendor owner of approval
+    try {
+      const owner = await User.findById(vendor.owner).select("email firstName name");
+      if (owner?.email) {
+        const { sendEmailDirect } = await import("../utils/email.js");
+        await sendEmailDirect({
+          to: owner.email,
+          subject: "Your vendor profile has been approved on Confetti!",
+          html: `
+            <h2>Vendor Approved!</h2>
+            <p>Hi ${owner.firstName || owner.name || "there"},</p>
+            <p>Great news! Your vendor profile <strong>${vendor.businessName || vendor.name}</strong> has been reviewed and approved on Confetti.</p>
+            <p>You can now receive bookings and appear in search results.</p>
+            <p><a href="${process.env.FRONTEND_URL}/vendor/dashboard" style="display:inline-block;padding:12px 24px;background:#22c55e;color:#fff;text-decoration:none;border-radius:6px;">Go to Dashboard</a></p>
+          `,
+        });
+      }
+    } catch (emailError) {
+      // Non-critical
+    }
 
     return vendor;
   }
@@ -167,8 +193,27 @@ class AdminVendorVerificationService {
       timestamp: new Date(),
     });
 
-    // TODO: Send rejection notification to vendor owner
-    // await notificationService.sendVendorRejectionEmail(vendor.owner, reason);
+    // Notify vendor owner of rejection
+    try {
+      const owner = await User.findById(vendor.owner).select("email firstName name");
+      if (owner?.email) {
+        const { sendEmailDirect } = await import("../utils/email.js");
+        await sendEmailDirect({
+          to: owner.email,
+          subject: "Update on your Confetti vendor application",
+          html: `
+            <h2>Vendor Application Update</h2>
+            <p>Hi ${owner.firstName || owner.name || "there"},</p>
+            <p>Thank you for applying to be a vendor on Confetti. After reviewing your profile <strong>${vendor.businessName || vendor.name}</strong>, we were unable to approve your application at this time.</p>
+            <p><strong>Reason:</strong> ${reason}</p>
+            <p>You may update your profile and reapply. If you have questions, please contact our support team.</p>
+            <p><a href="${process.env.FRONTEND_URL}/vendor/profile" style="display:inline-block;padding:12px 24px;background:#6366f1;color:#fff;text-decoration:none;border-radius:6px;">Update Profile</a></p>
+          `,
+        });
+      }
+    } catch (emailError) {
+      // Non-critical
+    }
 
     return vendor;
   }
@@ -214,15 +259,33 @@ class AdminVendorVerificationService {
    * @returns {Object} Booking stats
    */
   async getBookingStats(vendorId) {
-    // TODO: Implement booking model and queries
-    // For now, return mock data structure
-    return {
-      total: vendor.stats?.totalBookings || 0,
-      completed: 0,
-      pending: 0,
-      cancelled: 0,
-      completionRate: 0,
-    };
+    try {
+      const Booking = (await import("../models/booking.model.js")).default;
+      const stats = await Booking.aggregate([
+        { $match: { vendor: vendorId } },
+        {
+          $group: {
+            _id: "$status",
+            count: { $sum: 1 },
+          },
+        },
+      ]);
+
+      const counts = { total: 0, completed: 0, pending: 0, cancelled: 0, rejected: 0 };
+      stats.forEach((s) => {
+        counts[s._id] = s.count;
+        counts.total += s.count;
+      });
+
+      const completionRate =
+        counts.total > 0
+          ? Math.round((counts.completed / counts.total) * 100 * 100) / 100
+          : 0;
+
+      return { ...counts, completionRate };
+    } catch {
+      return { total: 0, completed: 0, pending: 0, cancelled: 0, completionRate: 0 };
+    }
   }
 
   /**
@@ -323,8 +386,28 @@ class AdminVendorVerificationService {
       timestamp: new Date(),
     });
 
-    // TODO: Send suspension notification to vendor owner
-    // TODO: Hide vendor from search results
+    // Notify vendor owner of suspension
+    try {
+      const owner = await User.findById(vendor.owner).select("email firstName name");
+      if (owner?.email) {
+        const { sendEmailDirect } = await import("../utils/email.js");
+        await sendEmailDirect({
+          to: owner.email,
+          subject: "Your Confetti vendor account has been suspended",
+          html: `
+            <h2>Vendor Account Suspended</h2>
+            <p>Hi ${owner.firstName || owner.name || "there"},</p>
+            <p>Your vendor profile <strong>${vendor.businessName || vendor.name}</strong> has been suspended${reason ? ` for the following reason: <strong>${reason}</strong>` : ""}.</p>
+            <p>Your profile is now hidden from search results. If you believe this is a mistake, please contact our support team.</p>
+          `,
+        });
+      }
+    } catch (emailError) {
+      // Non-critical
+    }
+
+    // Hide vendor from search by setting isActive=false (already done above in status update)
+    // Ensure the vendor is excluded from public-facing queries via isActive flag
 
     return vendor;
   }
@@ -366,7 +449,25 @@ class AdminVendorVerificationService {
       timestamp: new Date(),
     });
 
-    // TODO: Send activation notification to vendor owner
+    // Notify vendor owner of reactivation
+    try {
+      const owner = await User.findById(vendor.owner).select("email firstName name");
+      if (owner?.email) {
+        const { sendEmailDirect } = await import("../utils/email.js");
+        await sendEmailDirect({
+          to: owner.email,
+          subject: "Your Confetti vendor account is active again",
+          html: `
+            <h2>Vendor Account Reactivated</h2>
+            <p>Hi ${owner.firstName || owner.name || "there"},</p>
+            <p>Your vendor profile <strong>${vendor.businessName || vendor.name}</strong> has been reactivated and is now visible in search results.</p>
+            <p><a href="${process.env.FRONTEND_URL}/vendor/dashboard" style="display:inline-block;padding:12px 24px;background:#22c55e;color:#fff;text-decoration:none;border-radius:6px;">Go to Dashboard</a></p>
+          `,
+        });
+      }
+    } catch (emailError) {
+      // Non-critical
+    }
 
     return vendor;
   }
@@ -385,8 +486,6 @@ class AdminVendorVerificationService {
       throw createError(404, "Vendor not found");
     }
 
-    // Add flag to vendor (you may want to add a flags field to the schema)
-    // For now, we'll just log it
     await AuditLog.create({
       admin: adminId,
       action: "flag_vendor",
@@ -399,8 +498,46 @@ class AdminVendorVerificationService {
       timestamp: new Date(),
     });
 
-    // TODO: Create a separate flags collection or add flags field to vendor schema
-    // TODO: Send notification to senior admins
+    // Persist flag on the vendor document
+    if (!vendor.flags) {
+      vendor.flags = [];
+    }
+    vendor.flags.push({
+      reason,
+      flaggedBy: adminId,
+      flaggedAt: new Date(),
+      resolved: false,
+    });
+    vendor.isFlagged = true;
+    await vendor.save();
+
+    // Notify senior admins of the flag
+    try {
+      // Admin accounts live in the Admin collection (not User)
+      const seniorAdmins = await Admin.find({ role: "super_admin", isActive: true, _id: { $ne: adminId } })
+        .select("email firstName")
+        .lean();
+      const { sendEmailDirect } = await import("../utils/email.js");
+      for (const admin of seniorAdmins) {
+        await sendEmailDirect({
+          to: admin.email,
+          subject: `Vendor flagged for investigation: ${vendor.businessName || vendor.name}`,
+          html: `
+            <h2>Vendor Flagged</h2>
+            <p>Hi ${admin.firstName || admin.name || "there"},</p>
+            <p>A vendor has been flagged for investigation by an admin.</p>
+            <table style="width:100%;border-collapse:collapse;margin:12px 0;">
+              <tr><td style="padding:8px;border:1px solid #e5e7eb;"><strong>Vendor</strong></td><td style="padding:8px;border:1px solid #e5e7eb;">${vendor.businessName || vendor.name}</td></tr>
+              <tr><td style="padding:8px;border:1px solid #e5e7eb;"><strong>Reason</strong></td><td style="padding:8px;border:1px solid #e5e7eb;">${String(reason || "").replace(/[&<>"]/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" })[c])}</td></tr>
+              <tr><td style="padding:8px;border:1px solid #e5e7eb;"><strong>Flagged At</strong></td><td style="padding:8px;border:1px solid #e5e7eb;">${new Date().toLocaleString()}</td></tr>
+            </table>
+            <p><a href="${process.env.FRONTEND_URL}/admin/vendors/${vendorId}" style="display:inline-block;padding:12px 24px;background:#ef4444;color:#fff;text-decoration:none;border-radius:6px;">Review Vendor</a></p>
+          `,
+        }).catch(() => {});
+      }
+    } catch (emailError) {
+      // Non-critical
+    }
 
     return {
       success: true,
@@ -441,7 +578,21 @@ class AdminVendorVerificationService {
       timestamp: new Date(),
     });
 
-    // TODO: Update search indexes
+    // Invalidate any cached search results for this vendor
+    try {
+      const { createClient } = await import("redis");
+      const redis = createClient({ url: process.env.REDIS_URI });
+      await redis.connect();
+      // Delete vendor search cache keys that might contain this vendor
+      const keys = await redis.keys(`search:vendors:*`);
+      if (keys.length) {
+        await redis.del(keys);
+      }
+      await redis.del(`vendor:${vendorId}`);
+      await redis.quit();
+    } catch {
+      // Redis may not be available; search indexes will self-correct on next query
+    }
 
     return vendor;
   }
@@ -502,9 +653,9 @@ class AdminVendorVerificationService {
     // Search filter
     if (search) {
       query.$or = [
-        { name: { $regex: search, $options: "i" } },
-        { businessName: { $regex: search, $options: "i" } },
-        { email: { $regex: search, $options: "i" } },
+        { name: { $regex: escapeRegExp(search), $options: "i" } },
+        { businessName: { $regex: escapeRegExp(search), $options: "i" } },
+        { email: { $regex: escapeRegExp(search), $options: "i" } },
       ];
     }
 

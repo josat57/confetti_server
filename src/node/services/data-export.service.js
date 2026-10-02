@@ -45,7 +45,7 @@ class DataExportService {
         .lean();
 
       // Get all documents
-      const documents = await Document.find({ uploadedBy: userId })
+      const documents = await Document.find({ owner: userId })
         .populate("event", "title")
         .select("-__v")
         .lean();

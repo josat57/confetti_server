@@ -10,6 +10,7 @@ import Vendor from "../models/vendor.model.js";
 import User from "../models/user.model.js";
 import { AppError } from "../utils/AppError.js";
 import notificationService from "./notification.service.js";
+import { escapeRegExp } from "../utils/escape-regex.js";
 
 /**
  * List all business profiles pending verification
@@ -80,8 +81,8 @@ export async function listAllProfiles(filters = {}, pagination = {}) {
       if (status) plannerQuery.verificationStatus = status;
       if (search) {
         plannerQuery.$or = [
-          { companyName: { $regex: search, $options: "i" } },
-          { registrationNumber: { $regex: search, $options: "i" } },
+          { companyName: { $regex: escapeRegExp(search), $options: "i" } },
+          { registrationNumber: { $regex: escapeRegExp(search), $options: "i" } },
         ];
       }
 
@@ -108,8 +109,8 @@ export async function listAllProfiles(filters = {}, pagination = {}) {
       if (status) vendorQuery.verificationStatus = status;
       if (search) {
         vendorQuery.$or = [
-          { businessName: { $regex: search, $options: "i" } },
-          { registrationNumber: { $regex: search, $options: "i" } },
+          { businessName: { $regex: escapeRegExp(search), $options: "i" } },
+          { registrationNumber: { $regex: escapeRegExp(search), $options: "i" } },
         ];
       }
 
