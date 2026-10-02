@@ -1,9 +1,6 @@
-import numpy as np
-from sklearn.linear_model import LinearRegression
 
 class BudgetOptimizer:
     def __init__(self):
-        self.model = LinearRegression()
         
         # Budget allocation templates by event type
         self.templates = {
@@ -126,17 +123,3 @@ class BudgetOptimizer:
             recommendations.append('Consider premium options for key categories')
         
         return recommendations
-
-    def fit(self, X, y):
-        self.model.fit(X, y)
-
-    def predict(self, X):
-        return self.model.predict(X)
-
-    def optimize_budget(self, budget, preferences, constraints):
-        # Legacy method for backward compatibility
-        X = np.array(preferences).reshape(-1, 1)
-        y = np.array(constraints).reshape(-1, 1)
-        self.fit(X, y)
-        optimized_budget = self.predict(np.array(budget).reshape(-1, 1))
-        return optimized_budget 

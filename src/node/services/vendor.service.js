@@ -61,6 +61,7 @@ class VendorService {
       }
 
       // Check if we have enough vendors
+      let nearbyCities = [];
       if (vendors.length < this.minVendorsThreshold) {
         logger.warn("Insufficient vendors found", {
           location: `${location.city}, ${location.state}`,
@@ -68,8 +69,13 @@ class VendorService {
           vendorCount: vendors.length,
         });
 
-        // Still proceed but with a warning
-        // In production, you might want to suggest nearby cities
+        // Still proceed, but suggest nearby cities with more vendors
+        nearbyCities = await VendorRepository.findNearbyCities(location.city, location.state, {
+          eventType,
+        }).catch((error) => {
+          logger.warn("Nearby city lookup failed", { error: error.message });
+          return [];
+        });
       }
 
       // Get statistics
@@ -93,6 +99,8 @@ class VendorService {
           locationStats,
           searchRadius: this.searchRadius,
           eventType,
+          insufficientVendors: vendors.length < this.minVendorsThreshold,
+          nearbyCities,
         },
         metadata: {
           location: {
@@ -336,8 +344,9 @@ class VendorService {
       if (budget && budget.amount) {
         // Filter vendors based on category-specific budget allocations
         vendors = vendors.filter((vendor) => {
-          // If vendor has pricing info, check if it fits budget based on category
-          if (vendor.averagePrice) {
+          // Vendors here are formatVendorForAI() output: price is under pricing
+          const averagePrice = vendor.pricing?.averagePrice || vendor.averagePrice;
+          if (averagePrice) {
             // Category-specific budget percentages
             const categoryBudgetPercentages = {
               venue: 0.4, // Venues can take up to 40% of budget
@@ -358,7 +367,7 @@ class VendorService {
             const maxBudgetForCategory =
               budget.amount *
               (categoryBudgetPercentages[vendor.category] || 0.3);
-            return vendor.averagePrice <= maxBudgetForCategory;
+            return averagePrice <= maxBudgetForCategory;
           }
           return true; // Include vendors without pricing info
         });

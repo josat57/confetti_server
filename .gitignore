@@ -57,3 +57,8 @@ digitalocean-app.yaml
 deploy-to-digitalocean.sh
 nginx/
 k8s/ 
+# Runtime backups, exports and retention archives (contain database / personal data)
+data/
+
+# Local env backups (contain secrets)
+.env.bak*

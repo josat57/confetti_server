@@ -15,6 +15,7 @@ services:
       - REDIS_HOST=${REDIS_HOST}
       - REDIS_PORT=${REDIS_PORT}
       - PYTHON_API_URL=http://python-api:5600
+      - PYTHON_API_KEY=${PYTHON_API_KEY}
       - FRONTEND_URL=${FRONTEND_URL}
       - JWT_ACCESS_SECRET=${JWT_ACCESS_SECRET}
       - JWT_REFRESH_SECRET=${JWT_REFRESH_SECRET}
@@ -57,15 +58,20 @@ services:
   # Python AI/ML Service
   python-api:
     image: registry.digitalocean.com/confetti-registry/confetti-python-api:latest
-    ports:
-      - "5600:5600"
+    # Internal only — reachable by node-api on confetti-network, not the host
+    expose:
+      - "5600"
     environment:
       - FLASK_ENV=production
       - MONGODB_URI=${MONGODB_URI}
-      - REDIS_URI=${REDIS_URL}
+      - REDIS_URL=${REDIS_URL}
+      - PYTHON_API_KEY=${PYTHON_API_KEY}
+      - OPENAI_API_KEY=${OPENAI_API_KEY}
+      - ANTHROPIC_API_KEY=${ANTHROPIC_API_KEY}
+      - GEMINI_API_KEY=${GEMINI_API_KEY}
     restart: unless-stopped
     healthcheck:
-      test: ["CMD", "curl", "-f", "http://localhost:5600/health/ai"]
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:5600/health/ai', timeout=5)"]
       interval: 30s
       timeout: 10s
       retries: 3

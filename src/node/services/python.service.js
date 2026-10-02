@@ -1,6 +1,7 @@
 import axios from "axios";
 import { logger } from "../utils/logger.js";
 import { AppError } from "../utils/AppError.js";
+import { isCloudinaryConfigured, uploadRemoteImage } from "../utils/cloudinary.js";
 import {
   AIServiceUnavailableError,
   ProcessingTimeoutError,
@@ -12,6 +13,10 @@ class PythonService {
     this.aiTimeout = 90000; // 90 seconds — real AI calls take longer
     this.retryAttempts = 2;  // Fewer retries to avoid excessive latency
     this.apiKey = process.env.PYTHON_API_KEY;
+    // All calls go through this client so the service key is always sent
+    this.http = axios.create({
+      headers: this.apiKey ? { Authorization: `Bearer ${this.apiKey}` } : {},
+    });
 
     // AI model configurations — updated to current model names (Fix 5)
     this.models = {
@@ -19,13 +24,13 @@ class PythonService {
         endpoint: "/ai/gpt4",
         maxTokens: 4000,
         temperature: 0.4,
-        modelName: "gpt-4o",
+        modelName: process.env.OPENAI_MODEL || "gpt-4o",
       },
       claude: {
         endpoint: "/ai/claude",
         maxTokens: 3000,
         temperature: 0.4,
-        modelName: "claude-sonnet-4-6",
+        modelName: process.env.CLAUDE_MODEL || "claude-sonnet-5",
       },
       gemini: {
         endpoint: "/ai/gemini",
@@ -47,7 +52,7 @@ class PythonService {
       // Extract numeric amount from budget object if needed
       const budgetAmount = typeof budget === "object" ? budget.amount : budget;
 
-      const response = await axios.post(
+      const response = await this.http.post(
         `${this.pythonApiUrl}/optimize-budget`,
         {
           budget: budgetAmount,
@@ -63,7 +68,7 @@ class PythonService {
 
   async predictPrices(items) {
     try {
-      const response = await axios.post(`${this.pythonApiUrl}/predict-prices`, {
+      const response = await this.http.post(`${this.pythonApiUrl}/predict-prices`, {
         items,
       });
       return response.data;
@@ -75,7 +80,7 @@ class PythonService {
 
   async matchVendors(requirements) {
     try {
-      const response = await axios.post(`${this.pythonApiUrl}/match-vendors`, {
+      const response = await this.http.post(`${this.pythonApiUrl}/match-vendors`, {
         requirements,
       });
       return response.data;
@@ -87,7 +92,7 @@ class PythonService {
 
   async getRecommendations(userPreferences) {
     try {
-      const response = await axios.post(
+      const response = await this.http.post(
         `${this.pythonApiUrl}/get-recommendations`,
         {
           preferences: userPreferences,
@@ -102,7 +107,7 @@ class PythonService {
 
   async simulateEvent(eventPlan) {
     try {
-      const response = await axios.post(`${this.pythonApiUrl}/simulate-event`, {
+      const response = await this.http.post(`${this.pythonApiUrl}/simulate-event`, {
         plan: eventPlan,
       });
       return response.data;
@@ -114,7 +119,7 @@ class PythonService {
 
   async analyzeText(text) {
     try {
-      const response = await axios.post(`${this.pythonApiUrl}/analyze-text`, {
+      const response = await this.http.post(`${this.pythonApiUrl}/analyze-text`, {
         text,
       });
       return response.data;
@@ -177,7 +182,7 @@ class PythonService {
         );
 
         // Fallback to legacy endpoint
-        const response = await axios.post(
+        const response = await this.http.post(
           `${this.pythonApiUrl}/analyze-event-plan`,
           eventData,
           {
@@ -298,7 +303,8 @@ class PythonService {
 
       if (response.status === "success") {
         return {
-          imageUrl: response.image_url,
+          imageUrl: await this.persistGeneratedImage(response),
+          generated: response.metadata?.generated ?? false,
           detectedStyle: response.detected_style,
           confidence: response.confidence,
           processingTime: response.processing_time,
@@ -309,6 +315,36 @@ class PythonService {
     } catch (error) {
       logger.error("AI image generation failed:", error);
       throw new AppError(`Image generation failed: ${error.message}`, 500);
+    }
+  }
+
+  /**
+   * Provider image URLs expire (~1h) and gpt-image models return base64, so
+   * copy generated images to Cloudinary and return the permanent URL.
+   * Stock fallback images are already permanent and returned as-is.
+   */
+  async persistGeneratedImage(response) {
+    if (!response.metadata?.generated) return response.image_url;
+
+    const source = response.image_b64
+      ? `data:${response.image_mime || "image/png"};base64,${response.image_b64}`
+      : response.image_url;
+
+    if (!isCloudinaryConfigured()) {
+      if (response.image_b64) {
+        logger.warn("Cloudinary not configured — returning generated image as a data URI");
+      } else {
+        logger.warn("Cloudinary not configured — generated image URL will expire in ~1 hour");
+      }
+      return source;
+    }
+
+    try {
+      const uploaded = await uploadRemoteImage(source, { folder: "confetti-ai-images" });
+      return uploaded.secure_url;
+    } catch (error) {
+      logger.error("Persisting generated image failed; returning temporary URL", { error: error.message });
+      return source;
     }
   }
 
@@ -400,21 +436,22 @@ class PythonService {
   async getModelMetrics(vendorId) {
     try {
       const response = await this.makeRequest(
-        `/ai/model-metrics/${vendorId}`,
+        `/ai/model-metrics/vendor/${vendorId}`,
         {},
         "GET"
       );
 
       if (response.status === "success") {
+        // Shape of LearningService.get_learning_status in the Python service
+        const m = response.metrics;
         return {
-          accuracy: response.metrics.accuracy,
-          precision: response.metrics.precision,
-          recall: response.metrics.recall,
-          f1Score: response.metrics.f1_score,
-          trainingHistory: response.metrics.training_history,
-          lastUpdated: response.metrics.last_updated,
-          totalPredictions: response.metrics.total_predictions,
-          successRate: response.metrics.success_rate,
+          exists: m.exists,
+          status: m.status,
+          accuracy: m.accuracy,
+          totalInteractions: m.total_interactions,
+          lastTrained: m.last_trained,
+          successRate: m.performance?.planAcceptanceRate,
+          satisfactionScore: m.performance?.clientSatisfactionScore,
         };
       } else {
         throw new Error(response.message || "Failed to get model metrics");
@@ -486,7 +523,6 @@ class PythonService {
           timeout: this.aiTimeout,
           headers: {
             "Content-Type": "application/json",
-            ...(this.apiKey && { Authorization: `Bearer ${this.apiKey}` }),
           },
         };
 
@@ -494,7 +530,7 @@ class PythonService {
           config.data = data;
         }
 
-        const response = await axios(config);
+        const response = await this.http(config);
         return response.data;
       } catch (error) {
         lastError = error;
@@ -503,6 +539,11 @@ class PythonService {
           error: error.message,
           status: error.response?.status,
         });
+
+        // Client errors (bad input, auth, not found) and 503 "AI model
+        // unavailable" won't succeed on retry
+        const status = error.response?.status;
+        if ((status >= 400 && status < 500) || status === 503) break;
 
         if (attempt < this.retryAttempts) {
           // Exponential backoff
@@ -520,7 +561,7 @@ class PythonService {
    */
   async checkAIHealth() {
     try {
-      const response = await axios.get(`${this.pythonApiUrl}/health/ai`, {
+      const response = await this.http.get(`${this.pythonApiUrl}/health/ai`, {
         timeout: 10000,
       });
 
@@ -583,7 +624,7 @@ class PythonService {
     res.flushHeaders();
 
     try {
-      const response = await axios.post(url, payload, {
+      const response = await this.http.post(url, payload, {
         responseType: "stream",
         timeout: this.aiTimeout,
         headers: { "Content-Type": "application/json" },
@@ -608,7 +649,7 @@ class PythonService {
   /**
    * Record user feedback on a generated plan — feeds the learning loop.
    */
-  async recordFeedback({ userId, userType, rating, comments, successful }) {
+  async recordFeedback({ userId, userType, rating, comments, successful, interactionId }) {
     try {
       const response = await this.makeRequest("/ai/feedback", {
         user_id: userId,
@@ -616,6 +657,7 @@ class PythonService {
         rating,
         comments,
         successful,
+        ...(interactionId && { interaction_id: interactionId }),
       });
       return response;
     } catch (error) {

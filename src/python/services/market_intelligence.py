@@ -4,10 +4,12 @@ Provides market insights, trends analysis, and competitive intelligence for even
 """
 
 import logging
+import re
 import time
-import random
 from typing import Dict, Any, List, Optional
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
+
+from services.db import get_db, cached
 
 logger = logging.getLogger(__name__)
 
@@ -81,6 +83,69 @@ class MarketIntelligence:
                 'price_index': 0.8
             }
         }
+
+        # Neutral profiles for cities / event types without reference data
+        # (previously every unknown city was reported as Lagos)
+        self.default_region = {
+            'market_size': 'unknown',
+            'competition_level': 'medium',
+            'growth_rate': 0.10,
+            'vendor_density': 'medium',
+            'price_index': 1.0
+        }
+        self.default_segment = {
+            'growth_rate': 0.05,
+            'seasonality': {'spring': 1.0, 'summer': 1.0, 'fall': 1.0, 'winter': 1.0},
+            'avg_budget': 250000,
+            'key_factors': ['venue', 'catering', 'decoration', 'entertainment']
+        }
+
+    def _region(self, city: str) -> Dict[str, Any]:
+        return self.regional_data.get(city, self.default_region)
+
+    def _segment(self, event_type: str) -> Dict[str, Any]:
+        return self.market_segments.get(event_type, self.default_segment)
+
+    def _vendor_stats(self, city: str) -> Optional[Dict[str, Any]]:
+        """Real counts from the vendors collection for this city (cached 1h)."""
+        def compute():
+            match: Dict[str, Any] = {"status": "approved", "isActive": True}
+            if city:
+                match["address.city"] = {"$regex": f"^{re.escape(city)}$", "$options": "i"}
+            since = datetime.now(timezone.utc) - timedelta(days=90)
+            rows = list(get_db().vendors.aggregate([
+                {"$match": match},
+                {"$facet": {
+                    "totals": [{"$group": {
+                        "_id": None,
+                        "total": {"$sum": 1},
+                        "new_entrants": {"$sum": {"$cond": [{"$gte": ["$createdAt", since]}, 1, 0]}},
+                        "market_leaders": {"$sum": {"$cond": [{"$and": [
+                            {"$gte": ["$rating", 4.5]}, {"$gte": ["$reviewCount", 10]}]}, 1, 0]}},
+                    }}],
+                    "by_category": [{"$group": {
+                        "_id": "$category",
+                        "count": {"$sum": 1},
+                        "avg_price": {"$avg": {"$cond": [{"$gt": ["$averagePrice", 0]}, "$averagePrice", None]}},
+                    }}],
+                }},
+            ]))
+            facet = rows[0] if rows else {}
+            totals = (facet.get("totals") or [{}])[0]
+            return {
+                "total_vendors": totals.get("total", 0),
+                "new_entrants_90d": totals.get("new_entrants", 0),
+                "market_leaders": totals.get("market_leaders", 0),
+                "by_category": {
+                    r["_id"]: {"count": r["count"], "avg_price": round(r["avg_price"]) if r.get("avg_price") else None}
+                    for r in facet.get("by_category", []) if r.get("_id")
+                },
+            }
+        try:
+            return cached(f"market:vendorstats:v1:{city}", 3600, compute)
+        except Exception as e:
+            logger.warning(f"Vendor stats unavailable for {city or 'all cities'}: {e}")
+            return None
     
     def generate_insights(self, location: Dict, event_type: str, timeframe: str = 'monthly', 
                          analysis_depth: str = 'comprehensive') -> Dict[str, Any]:
@@ -90,21 +155,21 @@ class MarketIntelligence:
         try:
             start_time = time.time()
             
-            city = location.get('city', '').lower()
-            country = location.get('country', '').lower()
-            
-            # Get market segment data
-            segment_data = self.market_segments.get(event_type, self.market_segments['corporate'])
-            
-            # Get regional data
-            regional_data = self.regional_data.get(city, self.regional_data['lagos'])
+            location = location or {}
+            city = str(location.get('city') or '').strip().lower()
+            country = str(location.get('country') or '').strip().lower()
+            event_type = str(event_type or '').lower()
+
+            segment_data = self._segment(event_type)
+            regional_data = self._region(city)
+            vendor_stats = self._vendor_stats(city)
             
             # Generate comprehensive insights
             insights = {
                 'market_overview': self._generate_market_overview(segment_data, regional_data, city),
                 'demand_analysis': self._analyze_demand_patterns(event_type, city, timeframe),
-                'pricing_intelligence': self._generate_pricing_intelligence(segment_data, regional_data, event_type),
-                'competitive_landscape': self._analyze_competitive_landscape(city, event_type),
+                'pricing_intelligence': self._generate_pricing_intelligence(segment_data, regional_data, event_type, vendor_stats),
+                'competitive_landscape': self._analyze_competitive_landscape(city, event_type, vendor_stats),
                 'seasonal_trends': self._analyze_seasonal_trends(segment_data, event_type),
                 'growth_opportunities': self._identify_growth_opportunities(segment_data, regional_data),
                 'risk_factors': self._identify_market_risks(city, event_type),
@@ -120,15 +185,18 @@ class MarketIntelligence:
                 'insights': insights,
                 'trends': self._generate_trend_summary(insights),
                 'predictions': self._generate_predictions(insights, timeframe),
-                'confidence': self._calculate_confidence_score(analysis_depth, city, event_type),
-                'data_freshness': 'current',
+                'confidence': self._calculate_confidence_score(analysis_depth, city, event_type, vendor_stats),
+                'data_freshness': 'current' if vendor_stats else 'reference_only',
                 'metadata': {
                     'location': {'city': city, 'country': country},
                     'event_type': event_type,
                     'timeframe': timeframe,
                     'analysis_depth': analysis_depth,
                     'processing_time_ms': processing_time,
-                    'data_sources': ['market_research', 'vendor_data', 'trend_analysis'],
+                    # Be explicit about what is measured vs. assumed
+                    'data_sources': (['local_vendor_db'] if vendor_stats else []) + ['static_reference_estimates'],
+                    'city_profile': 'reference' if city in self.regional_data else 'default',
+                    'event_profile': 'reference' if event_type in self.market_segments else 'default',
                     'generated_at': datetime.now().isoformat()
                 }
             }
@@ -161,7 +229,7 @@ class MarketIntelligence:
     
     def _analyze_demand_patterns(self, event_type: str, city: str, timeframe: str) -> Dict[str, Any]:
         """Analyze demand patterns"""
-        segment_data = self.market_segments.get(event_type, self.market_segments['corporate'])
+        segment_data = self._segment(event_type)
         
         # Simulate demand data
         current_season = self._get_current_season()
@@ -189,7 +257,8 @@ class MarketIntelligence:
             }
         }
     
-    def _generate_pricing_intelligence(self, segment_data: Dict, regional_data: Dict, event_type: str) -> Dict[str, Any]:
+    def _generate_pricing_intelligence(self, segment_data: Dict, regional_data: Dict, event_type: str,
+                                       vendor_stats: Optional[Dict] = None) -> Dict[str, Any]:
         """Generate pricing intelligence"""
         base_budget = segment_data['avg_budget']
         regional_multiplier = regional_data['price_index']
@@ -210,6 +279,12 @@ class MarketIntelligence:
                 'factors': ['inflation', 'demand growth', 'vendor costs', 'quality expectations']
             },
             'cost_breakdown': self._generate_cost_breakdown(segment_data, event_type),
+            # Measured from listed vendors in this city (None when unavailable)
+            'observed_vendor_prices': {
+                cat: v['avg_price'] for cat, v in (vendor_stats or {}).get('by_category', {}).items()
+                if v.get('avg_price')
+            } or None,
+            'estimate_basis': 'static reference budgets × regional price index',
             'pricing_strategies': [
                 'Early bird discounts',
                 'Package deals',
@@ -224,18 +299,26 @@ class MarketIntelligence:
             ]
         }
     
-    def _analyze_competitive_landscape(self, city: str, event_type: str) -> Dict[str, Any]:
+    def _analyze_competitive_landscape(self, city: str, event_type: str,
+                                       vendor_stats: Optional[Dict] = None) -> Dict[str, Any]:
         """Analyze competitive landscape"""
-        regional_data = self.regional_data.get(city, self.regional_data['lagos'])
+        regional_data = self._region(city)
         
+        if vendor_stats:
+            key_players = {
+                'established_vendors': vendor_stats['total_vendors'] - vendor_stats['new_entrants_90d'],
+                'new_entrants': vendor_stats['new_entrants_90d'],
+                'market_leaders': vendor_stats['market_leaders'],  # rating ≥ 4.5 with ≥ 10 reviews
+                'source': 'local_vendor_db',
+            }
+        else:
+            key_players = {'established_vendors': None, 'new_entrants': None,
+                           'market_leaders': None, 'source': 'unavailable'}
+
         return {
             'competition_level': regional_data['competition_level'],
             'market_concentration': 'fragmented' if regional_data['vendor_density'] == 'high' else 'concentrated',
-            'key_players': {
-                'established_vendors': random.randint(10, 50),
-                'new_entrants': random.randint(5, 20),
-                'market_leaders': random.randint(2, 8)
-            },
+            'key_players': key_players,
             'competitive_factors': [
                 'Price competitiveness',
                 'Service quality',
@@ -333,7 +416,7 @@ class MarketIntelligence:
     
     def _identify_market_risks(self, city: str, event_type: str) -> List[Dict[str, Any]]:
         """Identify market risks"""
-        regional_data = self.regional_data.get(city, self.regional_data['lagos'])
+        regional_data = self._region(city)
         
         risks = []
         
@@ -376,8 +459,8 @@ class MarketIntelligence:
     
     def _analyze_vendor_ecosystem(self, city: str, event_type: str) -> Dict[str, Any]:
         """Analyze vendor ecosystem"""
-        regional_data = self.regional_data.get(city, self.regional_data['lagos'])
-        segment_data = self.market_segments.get(event_type, self.market_segments['corporate'])
+        regional_data = self._region(city)
+        segment_data = self._segment(event_type)
         
         return {
             'ecosystem_health': 'robust' if regional_data['vendor_density'] == 'high' else 'developing',
@@ -498,7 +581,8 @@ class MarketIntelligence:
             }
         ]
     
-    def _calculate_confidence_score(self, analysis_depth: str, city: str, event_type: str) -> float:
+    def _calculate_confidence_score(self, analysis_depth: str, city: str, event_type: str,
+                                    vendor_stats: Optional[Dict] = None) -> float:
         """Calculate confidence score for insights"""
         base_confidence = 0.8
         
@@ -514,7 +598,9 @@ class MarketIntelligence:
         city_data_quality = 1.0 if city in self.regional_data else 0.8
         event_data_quality = 1.0 if event_type in self.market_segments else 0.8
         
-        confidence = base_confidence * depth_multiplier * city_data_quality * event_data_quality
+        live_data_quality = 1.0 if vendor_stats and vendor_stats['total_vendors'] else 0.85
+        
+        confidence = base_confidence * depth_multiplier * city_data_quality * event_data_quality * live_data_quality
         
         return min(confidence, 0.95)  # Cap at 95%
     
@@ -577,7 +663,7 @@ class MarketIntelligence:
     
     def _get_fallback_insights(self, location: Dict, event_type: str, timeframe: str) -> Dict[str, Any]:
         """Get fallback insights when generation fails"""
-        city = location.get('city', 'Unknown')
+        city = (location or {}).get('city', 'Unknown')
         
         return {
             'insights': {
@@ -618,5 +704,9 @@ class MarketIntelligence:
         }
     
     def health_check(self) -> str:
-        """Check market intelligence service health"""
-        return 'operational'
+        """Reference data is static; live vendor stats need MongoDB."""
+        try:
+            get_db().command("ping")
+            return "operational"
+        except Exception:
+            return "degraded"

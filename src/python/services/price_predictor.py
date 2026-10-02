@@ -1,18 +1,15 @@
-import numpy as np
-from sklearn.ensemble import RandomForestRegressor
 from datetime import datetime
 import calendar
 
 class PricePredictor:
     """
-    Predict vendor pricing based on multiple factors
-    Uses historical data and market trends
+    Rule-based vendor price estimates: category base prices (NGN) adjusted
+    for event type, formality, city, season and guest count. There is no
+    trained model — results are labelled method="rule_based".
     """
     
     def __init__(self):
-        self.model = RandomForestRegressor(n_estimators=100, random_state=42)
-        self.is_trained = False
-        
+
         # Base pricing by category (NGN)
         self.base_prices = {
             'venue': {'min': 50000, 'avg': 200000, 'max': 1000000},
@@ -41,16 +38,26 @@ class PricePredictor:
             'default': 1.0
         }
 
-    def fit(self, X, y):
-        """Train the model with historical pricing data"""
-        self.model.fit(X, y)
-        self.is_trained = True
-
-    def predict(self, X):
-        """Make predictions using trained model"""
-        if self.is_trained:
-            return self.model.predict(X)
-        return None
+    def predict(self, items):
+        """
+        Estimate prices for a list of items. Each item is a category name
+        ("catering") or a dict: {category, guest_count, event_type, location,
+        event_date, formality}.
+        """
+        predictions = []
+        for item in items or []:
+            params = item if isinstance(item, dict) else {"category": item}
+            category = str(params.get("category") or "").lower()
+            if category not in self.base_prices:
+                predictions.append({
+                    "category": category or None,
+                    "estimated_price": None,
+                    "method": "rule_based",
+                    "note": f"No price reference for this category (known: {', '.join(self.base_prices)})",
+                })
+                continue
+            predictions.append({**self.predict_category_price(category, params), "method": "rule_based"})
+        return {"predictions": predictions, "currency": "NGN", "method": "rule_based"}
 
     def predict_category_price(self, category, event_params):
         """
@@ -72,11 +79,14 @@ class PricePredictor:
             category = 'venue'  # Default
         
         base = self.base_prices[category]
-        guest_count = event_params.get('guest_count', 100)
-        event_type = event_params.get('event_type', 'other').lower()
-        location = event_params.get('location', {})
+        try:
+            guest_count = int(event_params.get('guest_count') or 100)
+        except (TypeError, ValueError):
+            guest_count = 100
+        event_type = str(event_params.get('event_type') or 'other').lower()
+        location = event_params.get('location') or {}
         event_date = event_params.get('event_date')
-        formality = event_params.get('formality', 'casual').lower()
+        formality = str(event_params.get('formality') or 'casual').lower()
         
         # Start with base average
         estimated_price = base['avg']
@@ -135,7 +145,7 @@ class PricePredictor:
                 'min': round(min_price),
                 'max': round(max_price)
             },
-            'confidence': 0.75,  # Medium confidence without historical data
+            'confidence': 0.6,  # rule-based estimate, no historical data
             'factors': {
                 'base_price': base['avg'],
                 'event_type_impact': event_multipliers.get(event_type, 1.0),
@@ -256,11 +266,3 @@ class PricePredictor:
             recommendations.append('Explore DIY options for decorations')
         
         return recommendations
-
-    def predict_price(self, features):
-        """Legacy method for backward compatibility"""
-        X = np.array(features).reshape(1, -1)
-        if self.is_trained:
-            predicted_price = self.predict(X)
-            return predicted_price
-        return None 

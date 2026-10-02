@@ -4,25 +4,32 @@ Tracks real user interactions, computes preference patterns from actual data,
 and persists everything to the ai_learning collection across restarts.
 """
 
-import os
 import logging
 from typing import Dict, Any, List, Optional
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
+
+from services.db import get_db as _get_db, to_object_id
 
 logger = logging.getLogger(__name__)
 
-_mongo_db = None
+# Keep the embedded interactions array well under MongoDB's 16MB document limit
+MAX_INTERACTIONS = 200
 
 
-def _get_db():
-    global _mongo_db
-    if _mongo_db is None:
-        from pymongo import MongoClient
-        uri = os.environ.get("MONGODB_URI", "mongodb://localhost:27017/confetti")
-        client = MongoClient(uri, serverSelectionTimeoutMS=3000)
-        db_name = uri.split("/")[-1].split("?")[0] or "confetti"
-        _mongo_db = client[db_name]
-    return _mongo_db
+def _user_key(user_id: str, user_type: str) -> Dict[str, Any]:
+    """Filter for a user's learning doc. The Node AILearning model stores
+    userId as an ObjectId, so match that type or the two services diverge."""
+    return {"userId": to_object_id(user_id), "userType": user_type}
+
+
+def _normalize_budget(budget: Any) -> Dict[str, Any]:
+    """Match the Node schema: budget is {amount, currency}."""
+    if isinstance(budget, dict):
+        return {"amount": budget.get("amount", 0), "currency": budget.get("currency", "NGN")}
+    try:
+        return {"amount": float(budget or 0), "currency": "NGN"}
+    except (TypeError, ValueError):
+        return {"amount": 0, "currency": "NGN"}
 
 
 class LearningService:
@@ -48,37 +55,43 @@ class LearningService:
         Append one planning interaction to the user's learning document.
         Creates the document if it doesn't exist yet.
         """
+        from bson import ObjectId
+
         interaction = {
-            "timestamp": datetime.utcnow(),
+            "_id": ObjectId(),  # same shape as a Mongoose subdocument
+            "timestamp": datetime.now(timezone.utc),
             "eventType": event_data.get("eventType", ""),
-            "budget": event_data.get("budget", {}),
+            "budget": _normalize_budget(event_data.get("budget")),
             "clientProfile": event_data.get("clientProfile", {}),
             "generatedPlan": {
                 "vendorCount": len(generated_plan.get("vendor_matching", {}).get("matches", [])),
                 "confidenceScore": generated_plan.get("overall_confidence", 0),
                 "aiEnriched": generated_plan.get("ai_enriched", False),
             },
-            "feedback": feedback or {},
         }
+        # Only set feedback when we have it, so "no feedback yet" is detectable
+        if feedback:
+            interaction["feedback"] = feedback
 
         try:
             db = _get_db()
+            now = datetime.now(timezone.utc)
             result = db.ailearnings.update_one(
-                {"userId": user_id, "userType": user_type},
+                _user_key(user_id, user_type),
                 {
-                    "$push": {"learningData.interactions": interaction},
+                    "$push": {"learningData.interactions": {
+                        "$each": [interaction],
+                        "$slice": -MAX_INTERACTIONS,
+                    }},
+                    # $inc creates the field on insert — it must not also
+                    # appear in $setOnInsert or MongoDB rejects the update
                     "$inc": {"learningData.totalInteractions": 1},
-                    "$set": {
-                        "lastInteraction": datetime.utcnow(),
-                        "lastUpdated": datetime.utcnow(),
-                    },
+                    "$set": {"lastInteraction": now, "lastUpdated": now},
                     "$setOnInsert": {
-                        "userId": user_id,
-                        "userType": user_type,
-                        "createdAt": datetime.utcnow(),
+                        "createdAt": now,
                         "status": "learning",
+                        "isActive": True,
                         "learningData.accuracy": 0.5,
-                        "learningData.totalInteractions": 0,
                         "modelConfig.aiPersonality": "professional",
                         "modelConfig.responseStyle": "detailed",
                         "modelConfig.adaptationLevel": "basic",
@@ -87,12 +100,13 @@ class LearningService:
                 upsert=True,
             )
 
-            # Recompute metrics asynchronously-ish (same call, cheap)
-            self._update_accuracy(user_id, user_type)
+            if feedback:
+                self._update_accuracy(user_id, user_type)
 
             return {
                 "recorded": True,
                 "upserted": result.upserted_id is not None,
+                "interaction_id": str(interaction["_id"]),
             }
         except Exception as e:
             logger.error(f"record_interaction failed for {user_id}: {e}")
@@ -102,30 +116,48 @@ class LearningService:
         self,
         user_id: str,
         user_type: str,
-        interaction_index: int,
         rating: int,
         comments: str = "",
         successful: bool = True,
+        interaction_id: Optional[str] = None,
     ) -> Dict[str, Any]:
-        """Attach feedback to the most recent interaction."""
+        """Attach feedback to one interaction: the given interaction_id,
+        or the most recent interaction when none is given."""
+        from bson import ObjectId
+
         try:
             db = _get_db()
-            db.ailearnings.update_one(
-                {"userId": user_id, "userType": user_type},
-                {
-                    "$set": {
-                        "learningData.interactions.$[last].feedback": {
-                            "rating": rating,
-                            "comments": comments,
-                            "successful": successful,
-                        }
+            key = _user_key(user_id, user_type)
+
+            if interaction_id:
+                if not ObjectId.is_valid(interaction_id):
+                    return {"updated": False, "error": "invalid interaction_id"}
+                target_id = ObjectId(interaction_id)
+            else:
+                doc = db.ailearnings.find_one(
+                    key, {"learningData.interactions": {"$slice": -1}},
+                )
+                last = (doc or {}).get("learningData", {}).get("interactions", [])
+                if not last or "_id" not in last[0]:
+                    return {"updated": False, "error": "no interaction to attach feedback to"}
+                target_id = last[0]["_id"]
+
+            result = db.ailearnings.update_one(
+                {**key, "learningData.interactions._id": target_id},
+                {"$set": {
+                    "learningData.interactions.$.feedback": {
+                        "rating": rating,
+                        "comments": comments,
+                        "successful": successful,
                     },
-                    "$inc": {"learningData.totalInteractions": 0},  # touch doc for pre-save hook analog
-                },
-                array_filters=[{"last.feedback": {"$exists": False}}],
+                    "lastUpdated": datetime.now(timezone.utc),
+                }},
             )
+            if result.matched_count == 0:
+                return {"updated": False, "error": "interaction not found"}
+
             self._update_accuracy(user_id, user_type)
-            return {"updated": True}
+            return {"updated": True, "interaction_id": str(target_id)}
         except Exception as e:
             logger.error(f"record_feedback failed for {user_id}: {e}")
             return {"updated": False, "error": str(e)}
@@ -142,7 +174,7 @@ class LearningService:
         try:
             db = _get_db()
             doc = db.ailearnings.find_one(
-                {"userId": user_id, "userType": user_type},
+                _user_key(user_id, user_type),
                 {"learningData": 1, "modelConfig": 1},
             )
             if not doc:
@@ -200,7 +232,7 @@ class LearningService:
         try:
             db = _get_db()
             doc = db.ailearnings.find_one(
-                {"userId": user_id, "userType": user_type},
+                _user_key(user_id, user_type),
                 {"learningData.interactions": 1},
             )
             if not doc:
@@ -251,7 +283,7 @@ class LearningService:
         try:
             db = _get_db()
             doc = db.ailearnings.find_one(
-                {"userId": user_id, "userType": user_type},
+                _user_key(user_id, user_type),
                 {"learningData.interactions": {"$slice": -50}},
             )
             if not doc:
@@ -266,14 +298,14 @@ class LearningService:
             accuracy = round(min(avg_rating / 5.0, 1.0), 4)
 
             db.ailearnings.update_one(
-                {"userId": user_id, "userType": user_type},
+                _user_key(user_id, user_type),
                 {"$set": {
                     "learningData.accuracy": accuracy,
                     "performanceMetrics.clientSatisfactionScore": round(avg_rating, 2),
                     "performanceMetrics.planAcceptanceRate": round(
                         len([i for i in rated if i["feedback"].get("successful")]) / len(rated), 4
                     ),
-                    "lastUpdated": datetime.utcnow(),
+                    "lastUpdated": datetime.now(timezone.utc),
                 }},
             )
         except Exception as e:
@@ -306,24 +338,24 @@ class LearningService:
 
             db = _get_db()
             doc = db.ailearnings.find_one(
-                {"userId": user_id, "userType": user_type},
+                _user_key(user_id, user_type),
                 {"learningData.accuracy": 1, "learningData.totalInteractions": 1},
             )
             old_accuracy = doc.get("learningData", {}).get("accuracy", 0.5) if doc else 0.5
 
             # Persist patterns
             db.ailearnings.update_one(
-                {"userId": user_id, "userType": user_type},
+                _user_key(user_id, user_type),
                 {"$set": {
                     "learningData.successPatterns": patterns,
                     "learningData.preferences.preferredEventTypes": prefs.get("preferred_event_types", []),
-                    "learningData.lastTrainingDate": datetime.utcnow(),
-                    "lastUpdated": datetime.utcnow(),
+                    "learningData.lastTrainingDate": datetime.now(timezone.utc),
+                    "lastUpdated": datetime.now(timezone.utc),
                 }},
             )
 
             new_doc = db.ailearnings.find_one(
-                {"userId": user_id, "userType": user_type},
+                _user_key(user_id, user_type),
                 {"learningData.accuracy": 1, "learningData.totalInteractions": 1},
             )
             new_accuracy = new_doc.get("learningData", {}).get("accuracy", old_accuracy) if new_doc else old_accuracy
@@ -354,7 +386,7 @@ class LearningService:
         try:
             db = _get_db()
             doc = db.ailearnings.find_one(
-                {"userId": user_id, "userType": user_type},
+                _user_key(user_id, user_type),
                 {
                     "learningData.accuracy": 1,
                     "learningData.totalInteractions": 1,

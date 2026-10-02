@@ -6,6 +6,9 @@ from nltk.stem import WordNetLemmatizer
 from collections import Counter
 import re
 import string
+import logging
+
+logger = logging.getLogger(__name__)
 
 class NLPService:
     """
@@ -13,15 +16,26 @@ class NLPService:
     Analyzes event descriptions to extract insights, preferences, and requirements
     """
     
+    # (resource path for nltk.data.find, package name for nltk.download).
+    # NLTK >= 3.8.2 tokenizers need punkt_tab, not punkt.
+    REQUIRED_NLTK_DATA = [
+        ('tokenizers/punkt_tab', 'punkt_tab'),
+        ('corpora/stopwords', 'stopwords'),
+        ('corpora/wordnet', 'wordnet'),
+    ]
+
     def __init__(self):
-        # Download required NLTK data
-        try:
-            nltk.download('punkt', quiet=True)
-            nltk.download('stopwords', quiet=True)
-            nltk.download('wordnet', quiet=True)
-            nltk.download('averaged_perceptron_tagger', quiet=True)
-        except:
-            pass
+        # Data is baked into the Docker image; only download what's missing
+        # (e.g. running outside Docker) instead of hitting the network on
+        # every worker start.
+        for resource, package in self.REQUIRED_NLTK_DATA:
+            try:
+                nltk.data.find(resource)
+            except LookupError:
+                try:
+                    nltk.download(package, quiet=True)
+                except Exception as e:
+                    logger.warning(f"NLTK download failed for {package}: {e}")
         
         self.stop_words = set(stopwords.words('english'))
         self.lemmatizer = WordNetLemmatizer()
@@ -140,6 +154,7 @@ class NLPService:
                 for word, freq in top_keywords
             ]
         except Exception as e:
+            logger.warning(f"extract_keywords failed: {e}")
             return []
 
     def extract_themes(self, text):
@@ -338,8 +353,12 @@ class NLPService:
         if not text:
             return 'No description provided'
         
-        # Get first sentence or first 100 characters
-        sentences = sent_tokenize(text)
+        # Get first sentence or first 150 characters
+        try:
+            sentences = sent_tokenize(text)
+        except Exception as e:
+            logger.warning(f"sent_tokenize failed: {e}")
+            sentences = []
         if sentences:
             first_sentence = sentences[0]
             if len(first_sentence) > 150:

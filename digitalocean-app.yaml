@@ -30,6 +30,9 @@ services:
         value: "9600"
       - key: PYTHON_API_URL
         value: ${python-api.PRIVATE_URL}
+      - key: PYTHON_API_KEY
+        value: generate-with-openssl-rand-hex-32
+        type: SECRET
       - key: FRONTEND_URL
         value: https://${APP_DOMAIN}
       - key: MONGODB_URI
@@ -115,14 +118,15 @@ services:
       repo: your-username/confetti-server
       branch: main
       deploy_on_push: true
-    run_command: python run.py
+    run_command: gunicorn run:app --bind 0.0.0.0:5600 --workers 2 --worker-class gthread --threads 8 --timeout 120 --keep-alive 65
     environment_slug: python
     instance_count: 1
     instance_size_slug: basic-xxs
-    http_port: 5600
-    routes:
-      - path: /ai
+    # Internal only — no public route; node-api reaches it via PRIVATE_URL
+    internal_ports:
+      - 5600
     health_check:
+      port: 5600
       http_path: /health/ai
       initial_delay_seconds: 30
       period_seconds: 10
@@ -135,8 +139,20 @@ services:
       - key: MONGODB_URI
         value: ${confetti-mongodb.DATABASE_URL}
         type: SECRET
-      - key: REDIS_URI
+      - key: REDIS_URL
         value: ${confetti-redis.DATABASE_URL}
+        type: SECRET
+      - key: PYTHON_API_KEY
+        value: generate-with-openssl-rand-hex-32
+        type: SECRET
+      - key: OPENAI_API_KEY
+        value: your-production-openai-api-key
+        type: SECRET
+      - key: ANTHROPIC_API_KEY
+        value: your-production-anthropic-api-key
+        type: SECRET
+      - key: GEMINI_API_KEY
+        value: your-production-gemini-api-key
         type: SECRET
 
 databases:

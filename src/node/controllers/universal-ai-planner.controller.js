@@ -1,4 +1,5 @@
 import UniversalAIService from "../services/universal-ai.service.js";
+import PythonService from "../services/python.service.js";
 import { logger } from "../utils/logger.js";
 import { AppError } from "../utils/AppError.js";
 import { getPlanLevel } from "../middleware/subscription.js";
@@ -8,7 +9,7 @@ import crypto from "crypto";
  * Get user context including authentication status, user type, and plan level
  * Also handles guest session management
  */
-const getUserContext = async (req) => {
+export const getUserContext = async (req) => {
   const context = {
     isAuthenticated: false,
     userType: "guest",
@@ -374,6 +375,51 @@ export const getLearningInsights = async (req, res, next) => {
     });
   } catch (error) {
     logger.error("Learning insights generation failed:", error);
+    next(error);
+  }
+};
+
+/**
+ * Rate a generated plan — feeds the AI learning loop
+ * POST /api/v1/ai-planner/feedback
+ * Body: { rating: 1-5, comments?, successful?, interactionId? }
+ * interactionId is the plan's learningInteractionId; defaults to the latest plan.
+ */
+export const submitPlanFeedback = async (req, res, next) => {
+  try {
+    const userContext = await getUserContext(req);
+    if (!userContext.isAuthenticated) {
+      return next(new AppError("Feedback requires authentication", 401));
+    }
+
+    const { comments = "", interactionId } = req.body;
+    const rating = Number(req.body.rating);
+    if (!Number.isInteger(rating) || rating < 1 || rating > 5) {
+      return next(new AppError("rating must be an integer from 1 to 5", 400));
+    }
+    if (interactionId && !/^[a-f0-9]{24}$/i.test(String(interactionId))) {
+      return next(new AppError("Invalid interactionId", 400));
+    }
+
+    const result = await PythonService.recordFeedback({
+      userId: userContext.userId,
+      userType: userContext.userType,
+      rating,
+      comments: String(comments).slice(0, 2000),
+      successful: req.body.successful ?? rating >= 4,
+      interactionId,
+    });
+
+    if (result.status !== "success") {
+      return next(new AppError("No generated plan found to attach feedback to", 404));
+    }
+
+    res.status(200).json({
+      status: "success",
+      data: { interactionId: result.interaction_id },
+    });
+  } catch (error) {
+    logger.error("Plan feedback failed:", error);
     next(error);
   }
 };
@@ -797,6 +843,46 @@ export const chatWithPlan = async (req, res, next) => {
 };
 
 /**
+ * General AI planning chat, not tied to a plan (all users)
+ * POST /api/v1/ai-planner/chat
+ * Body: { message, conversationHistory?: [{ role, content }] }
+ */
+export const chatGeneral = async (req, res, next) => {
+  try {
+    const { message, conversationHistory } = req.body;
+    if (typeof message !== "string" || message.trim().length === 0) {
+      return next(new AppError("Message is required", 400));
+    }
+    if (message.length > 2000) {
+      return next(new AppError("Message is too long (max 2000 characters)", 400));
+    }
+
+    const userContext = await getUserContext(req);
+    const chat = await UniversalAIService.chatGeneral({
+      userContext,
+      message: message.trim(),
+      history: conversationHistory,
+    });
+
+    res.status(200).json({
+      status: "success",
+      data: {
+        response: chat.response,
+        suggestions: chat.suggestions,
+        metadata: {
+          timestamp: new Date(),
+          aiModel: chat.aiModel,
+          responseTime: chat.responseTime,
+        },
+      },
+    });
+  } catch (error) {
+    logger.error("General AI chat failed:", error);
+    next(error);
+  }
+};
+
+/**
  * Refine existing AI plan with additional prompts (authenticated users only)
  * POST /api/v1/ai-planner/refine/:planId
  */
@@ -1077,6 +1163,7 @@ export default {
   getMarketInsights,
   generateProposal,
   getLearningInsights,
+  submitPlanFeedback,
   trainModel,
   getModelMetrics,
   generateVisualSuggestions,
@@ -1086,6 +1173,7 @@ export default {
   getPlanResult,
   getRecentPlans,
   chatWithPlan,
+  chatGeneral,
   refinePlan,
   updatePlan,
   deletePlan,

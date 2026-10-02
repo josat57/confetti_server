@@ -3,12 +3,50 @@ Visual AI Service
 Handles image generation, analysis, and visual content creation for events
 """
 
+import json
 import logging
+import os
 import time
-import random
 from typing import Dict, Any, List, Optional
 
 logger = logging.getLogger(__name__)
+
+
+class VisionUnavailableError(Exception):
+    """No vision-capable model is configured, or every provider failed."""
+
+
+# Output contract for /ai/analyze-image (unchanged field names for Node)
+IMAGE_ANALYSIS_SCHEMA = {
+    "type": "object",
+    "properties": {
+        "analysis": {"type": "object", "properties": {
+            "composition": {"type": "object", "properties": {
+                "balance": {"type": "string"}, "focal_point": {"type": "string"}, "notes": {"type": "string"}}},
+            "color_analysis": {"type": "object", "properties": {
+                "dominant_colors": {"type": "array", "items": {"type": "string"}, "description": "hex codes"},
+                "color_harmony": {"type": "string"}, "mood": {"type": "string"}}},
+            "style_assessment": {"type": "object", "properties": {
+                "style": {"type": "string"}, "formality": {"type": "string"}, "appropriateness": {"type": "string"}}},
+            "technical_quality": {"type": "object", "properties": {
+                "resolution": {"type": "string"}, "lighting": {"type": "string"}, "clarity": {"type": "string"}}},
+            "event_suitability": {"type": "object", "properties": {
+                "score": {"type": "number", "description": "0-1"},
+                "strengths": {"type": "array", "items": {"type": "string"}},
+                "improvements": {"type": "array", "items": {"type": "string"}}}},
+        }},
+        "detected_elements": {"type": "array", "items": {"type": "string"}},
+        "recommendations": {"type": "array", "items": {"type": "string"}},
+        "overall_score": {"type": "number", "description": "0-1 suitability for the event"},
+    },
+    "required": ["analysis", "detected_elements", "recommendations", "overall_score"],
+}
+
+VISION_SYSTEM_PROMPT = (
+    "You are an event design expert reviewing a photo (venue, decor, setup or inspiration) "
+    "for an event planning platform. Describe only what is actually visible. "
+    "Scores are 0-1. Colors are hex codes."
+)
 
 class VisualAIService:
     """
@@ -41,82 +79,185 @@ class VisualAIService:
             'festive': ['#FFD700', '#FF6347', '#32CD32', '#FF1493', '#9370DB']
         }
     
-    def generate_image(self, prompt: str, model: str = 'stable-diffusion', 
-                      style: str = 'photorealistic', aspect_ratio: str = '16:9', 
+    def generate_image(self, prompt: str, model: str = 'stable-diffusion',
+                      style: str = 'photorealistic', aspect_ratio: str = '16:9',
                       quality: str = 'high') -> Dict[str, Any]:
         """
-        Generate images using AI models (fallback implementation)
+        Generate an image with OpenAI (OPENAI_API_KEY; model OPENAI_IMAGE_MODEL,
+        default dall-e-3). Without a key, or if generation fails, a curated stock
+        photo matching the event type is returned and marked as such
+        (metadata.generated = False).
         """
-        try:
-            # Simulate processing time
-            time.sleep(1.0)
-            
-            # Analyze prompt to determine event type
-            event_type = self._detect_event_type(prompt)
-            
-            # Get appropriate fallback image
-            image_url = self.fallback_images.get(event_type, self.fallback_images['default'])
-            
-            # Generate style analysis
-            detected_style = self._analyze_style_from_prompt(prompt, style)
-            
-            logger.info(f"Generated image for {event_type} event with {style} style")
-            
+        started = time.time()
+        event_type = self._detect_event_type(prompt)
+        detected_style = self._analyze_style_from_prompt(prompt, style)
+        prompt_analysis = {
+            'event_type': event_type,
+            'style_elements': self._extract_style_elements(prompt),
+            'color_hints': self._extract_color_hints(prompt)
+        }
+        params = {'style': style, 'aspect_ratio': aspect_ratio, 'quality': quality}
+
+        from services.ai_orchestrator import _get_openai
+
+        generated_url = generated_b64 = None
+        image_model = os.environ.get('OPENAI_IMAGE_MODEL') or 'dall-e-3'
+        is_gpt_image = image_model.startswith('gpt-image')
+        error = None
+        client = _get_openai()
+        if client:
+            try:
+                landscape = aspect_ratio in ('16:9', 'landscape')
+                portrait = aspect_ratio in ('9:16', 'portrait')
+                if is_gpt_image:
+                    size = '1536x1024' if landscape else '1024x1536' if portrait else '1024x1024'
+                    image_quality = 'high' if quality == 'high' else 'medium'
+                else:
+                    size = '1792x1024' if landscape else '1024x1792' if portrait else '1024x1024'
+                    image_quality = 'hd' if quality == 'high' else 'standard'
+                result = client.images.generate(
+                    model=image_model,
+                    prompt=f"{prompt}. Style: {style}."[:3900],
+                    size=size,
+                    quality=image_quality,
+                    n=1,
+                )
+                # gpt-image-* returns base64; dall-e returns a URL that expires after ~1 hour
+                generated_url = result.data[0].url
+                generated_b64 = getattr(result.data[0], 'b64_json', None)
+            except Exception as e:  # fall back to stock imagery
+                error = str(e)
+                logger.error(f"Image generation failed, using stock image: {e}")
+
+        elapsed_ms = int((time.time() - started) * 1000)
+        if generated_url or generated_b64:
+            logger.info(f"Generated image for {event_type} event with {style} style ({image_model})")
             return {
-                'image_url': image_url,
+                'image_url': generated_url,
+                'image_b64': generated_b64 if not generated_url else None,
+                'image_mime': 'image/png',
                 'detected_style': detected_style,
-                'confidence': 0.8,
-                'processing_time': 1000,
+                'confidence': 0.9,
+                'processing_time': elapsed_ms,
                 'metadata': {
-                    'model': f'{model}-fallback',
-                    'prompt_analysis': {
-                        'event_type': event_type,
-                        'style_elements': self._extract_style_elements(prompt),
-                        'color_hints': self._extract_color_hints(prompt)
-                    },
-                    'generation_params': {
-                        'style': style,
-                        'aspect_ratio': aspect_ratio,
-                        'quality': quality
-                    }
+                    'model': image_model,
+                    'generated': True,
+                    # The caller must persist the image; provider URLs are temporary
+                    'temporary_url': bool(generated_url),
+                    'prompt_analysis': prompt_analysis,
+                    'generation_params': params,
                 }
             }
-            
-        except Exception as e:
-            logger.error(f"Image generation failed: {e}")
-            return self._get_fallback_image_response(prompt, style)
-    
+
+        return {
+            'image_url': self.fallback_images.get(event_type, self.fallback_images['default']),
+            'detected_style': detected_style,
+            'confidence': 0.5,
+            'processing_time': elapsed_ms,
+            'metadata': {
+                'model': 'stock',
+                'generated': False,
+                'note': 'Stock photo for this event type (set OPENAI_API_KEY to generate images)'
+                        if not error else f'Generation failed, stock photo returned: {error[:200]}',
+                'prompt_analysis': prompt_analysis,
+                'generation_params': params,
+            }
+        }
+
     def analyze_image(self, image_url: str, prompt: str = None,
                      model: str = 'gpt-4o', analysis_type: str = 'general') -> Dict[str, Any]:
         """
-        Analyze images using AI vision models (fallback implementation)
+        Analyze an image with a vision model: OpenAI first (or Claude first when
+        model starts with "claude"), falling back to the other. Raises
+        VisionUnavailableError if no provider is configured or all fail —
+        this never returns made-up analysis.
         """
-        try:
-            # Simulate processing time
-            time.sleep(0.8)
-            
-            # Generate analysis based on URL and prompt
-            analysis = self._generate_image_analysis(image_url, prompt, analysis_type)
-            
-            logger.info(f"Analyzed image with {analysis_type} analysis")
-            
+        from services.ai_orchestrator import _get_openai, _get_anthropic, OPENAI_MODEL, CLAUDE_MODEL
+
+        if not isinstance(image_url, str) or not image_url.startswith(("https://", "http://")):
+            raise ValueError("image_url must be an http(s) URL")
+
+        instruction = (
+            f"Analysis type: {analysis_type}.\n"
+            + (f"Context from the planner: {prompt}\n" if prompt else "")
+            + "Assess the image for event planning."
+        )
+
+        providers = [("openai", _get_openai), ("anthropic", _get_anthropic)]
+        if str(model).lower().startswith("claude"):
+            providers.reverse()
+
+        started = time.time()
+        errors = []
+        for name, get_client in providers:
+            client = get_client()
+            if not client:
+                continue
+            try:
+                if name == "openai":
+                    data, used = self._analyze_with_openai(client, OPENAI_MODEL, image_url, instruction), OPENAI_MODEL
+                else:
+                    data, used = self._analyze_with_claude(client, CLAUDE_MODEL, image_url, instruction), CLAUDE_MODEL
+            except Exception as e:
+                logger.error(f"Image analysis via {name} failed: {e}")
+                errors.append(f"{name}: {str(e)[:120]}")
+                continue
+
+            score = data.get("overall_score")
             return {
-                'analysis': analysis,
-                'confidence': 0.82,
-                'detected_elements': self._detect_image_elements(image_url),
-                'recommendations': self._generate_image_recommendations(analysis),
-                'overall_score': self._calculate_image_score(analysis),
+                'analysis': data.get('analysis', {}),
+                'confidence': 0.85,
+                'detected_elements': data.get('detected_elements', []),
+                'recommendations': data.get('recommendations', []),
+                'overall_score': score if isinstance(score, (int, float)) else None,
                 'metadata': {
-                    'model': f'{model}-fallback',
+                    'model': used,
                     'analysis_type': analysis_type,
-                    'processing_time': 800
-                }
+                    'processing_time': int((time.time() - started) * 1000),
+                },
             }
-            
-        except Exception as e:
-            logger.error(f"Image analysis failed: {e}")
-            return self._get_fallback_image_analysis(image_url, prompt)
-    
+
+        raise VisionUnavailableError(
+            "Image analysis unavailable: " + ("; ".join(errors) if errors else
+                                              "no vision model configured (set OPENAI_API_KEY or ANTHROPIC_API_KEY)")
+        )
+
+    def _analyze_with_openai(self, client, model: str, image_url: str, instruction: str) -> Dict:
+        response = client.chat.completions.create(
+            model=model,
+            messages=[
+                {"role": "system", "content": VISION_SYSTEM_PROMPT
+                    + " Reply with JSON matching this schema: " + json.dumps(IMAGE_ANALYSIS_SCHEMA)},
+                {"role": "user", "content": [
+                    {"type": "text", "text": instruction},
+                    {"type": "image_url", "image_url": {"url": image_url}},
+                ]},
+            ],
+            response_format={"type": "json_object"},
+            max_tokens=1500,
+            temperature=0.2,
+        )
+        return json.loads(response.choices[0].message.content)
+
+    def _analyze_with_claude(self, client, model: str, image_url: str, instruction: str) -> Dict:
+        response = client.messages.create(
+            model=model,
+            max_tokens=1500,
+            temperature=0.2,
+            system=VISION_SYSTEM_PROMPT,
+            tools=[{"name": "submit_image_analysis", "description": "Submit the image analysis.",
+                    "input_schema": IMAGE_ANALYSIS_SCHEMA}],
+            tool_choice={"type": "tool", "name": "submit_image_analysis"},
+            messages=[{"role": "user", "content": [
+                {"type": "image", "source": {"type": "url", "url": image_url}},
+                {"type": "text", "text": instruction},
+            ]}],
+        )
+        tool_use = next((b for b in response.content if b.type == "tool_use"), None)
+        if tool_use is None:
+            raise ValueError(f"no tool call (stop_reason={response.stop_reason})")
+        return dict(tool_use.input)
+
     def generate_mood_board(self, theme: str, event_type: str, color_preferences: List[str] = None) -> Dict[str, Any]:
         """
         Generate mood board for event planning
@@ -243,64 +384,6 @@ class VisualAIService:
         
         return colors[:3]  # Limit to 3 colors
     
-    def _generate_image_analysis(self, image_url: str, prompt: str, analysis_type: str) -> Dict[str, Any]:
-        """Generate image analysis"""
-        return {
-            'composition': {
-                'balance': 'well-balanced',
-                'focal_point': 'center',
-                'rule_of_thirds': 'applied'
-            },
-            'color_analysis': {
-                'dominant_colors': ['#F8F9FA', '#007BFF', '#28A745'],
-                'color_harmony': 'complementary',
-                'mood': 'professional and welcoming'
-            },
-            'style_assessment': {
-                'style': 'modern professional',
-                'formality': 'semi-formal',
-                'appropriateness': 'high'
-            },
-            'technical_quality': {
-                'resolution': 'high',
-                'lighting': 'well-lit',
-                'clarity': 'sharp'
-            },
-            'event_suitability': {
-                'score': 0.85,
-                'strengths': ['professional appearance', 'good lighting', 'clear composition'],
-                'improvements': ['could use more color', 'add branded elements']
-            }
-        }
-    
-    def _detect_image_elements(self, image_url: str) -> List[str]:
-        """Detect elements in image"""
-        # Simulate element detection based on URL patterns
-        elements = ['people', 'furniture', 'lighting', 'decorations']
-        
-        if 'wedding' in image_url:
-            elements.extend(['flowers', 'ceremony setup', 'elegant decor'])
-        elif 'corporate' in image_url:
-            elements.extend(['presentation screen', 'professional setup', 'branded materials'])
-        elif 'party' in image_url:
-            elements.extend(['balloons', 'festive decorations', 'entertainment area'])
-        
-        return elements[:6]  # Limit to 6 elements
-    
-    def _generate_image_recommendations(self, analysis: Dict) -> List[str]:
-        """Generate recommendations based on analysis"""
-        return [
-            'Consider adding more branded elements',
-            'Enhance lighting for better ambiance',
-            'Include interactive elements for engagement',
-            'Add color accents to match theme',
-            'Ensure accessibility for all guests'
-        ]
-    
-    def _calculate_image_score(self, analysis: Dict) -> float:
-        """Calculate overall image score"""
-        return 0.82  # Simulated score
-    
     def _get_style_elements(self, theme: str, event_type: str) -> List[str]:
         """Get style elements for theme and event type"""
         elements = {
@@ -397,37 +480,6 @@ class VisualAIService:
         # Simplified accessibility calculation
         return 0.85  # Assume good accessibility
     
-    def _get_fallback_image_response(self, prompt: str, style: str) -> Dict[str, Any]:
-        """Get fallback image response"""
-        return {
-            'image_url': self.fallback_images['default'],
-            'detected_style': style,
-            'confidence': 0.6,
-            'processing_time': 500,
-            'metadata': {
-                'model': 'fallback',
-                'note': 'Using fallback image generation'
-            }
-        }
-    
-    def _get_fallback_image_analysis(self, image_url: str, prompt: str) -> Dict[str, Any]:
-        """Get fallback image analysis"""
-        return {
-            'analysis': {
-                'composition': 'balanced',
-                'style': 'professional',
-                'quality': 'good'
-            },
-            'confidence': 0.6,
-            'detected_elements': ['general elements'],
-            'recommendations': ['Consider professional photography'],
-            'overall_score': 0.7,
-            'metadata': {
-                'model': 'fallback',
-                'note': 'Using fallback image analysis'
-            }
-        }
-    
     def _get_fallback_mood_board(self, theme: str, event_type: str) -> Dict[str, Any]:
         """Get fallback mood board"""
         return {
@@ -462,5 +514,7 @@ class VisualAIService:
         }
     
     def health_check(self) -> str:
-        """Check visual AI service health"""
-        return 'operational'
+        """Generation and analysis both need an external model."""
+        if os.environ.get('OPENAI_API_KEY') or os.environ.get('ANTHROPIC_API_KEY'):
+            return 'operational'
+        return 'degraded'

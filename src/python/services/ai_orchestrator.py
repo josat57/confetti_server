@@ -19,68 +19,86 @@ logger = logging.getLogger(__name__)
 # Lazy SDK singletons — avoids crash on import if a package isn't installed
 # ---------------------------------------------------------------------------
 
+from services.db import get_db as _get_mongo_db, get_redis as _get_redis, cache_get, cache_set, cached
+from services.intelligent_matcher import IntelligentVendorMatcher, normalize_vendor
+
 _openai_client = None
 _anthropic_client = None
-_redis_client = None
-_mongo_db = None
+
+# Model names are configurable so upgrades don't need a code change
+OPENAI_MODEL = os.environ.get("OPENAI_MODEL") or "gpt-4o"
+CLAUDE_MODEL = os.environ.get("CLAUDE_MODEL") or "claude-sonnet-5"
+# Keep below gunicorn's 120s worker timeout, including one retry
+AI_TIMEOUT_SECONDS = float(os.environ.get("AI_TIMEOUT_SECONDS") or "45")
+AI_MAX_RETRIES = int(os.environ.get("AI_MAX_RETRIES") or "1")
+
+_missing_key_warned = set()
+
+
+def _warn_missing_once(name: str, message: str):
+    if name not in _missing_key_warned:
+        _missing_key_warned.add(name)
+        logger.warning(message)
 
 
 def _get_openai():
     global _openai_client
     if _openai_client is None:
+        key = os.environ.get("OPENAI_API_KEY")
+        if not key:
+            _warn_missing_once("openai", "OPENAI_API_KEY not set — OpenAI unavailable")
+            return None
         try:
             from openai import OpenAI
-            key = os.environ.get("OPENAI_API_KEY")
-            if key:
-                _openai_client = OpenAI(api_key=key)
-            else:
-                logger.warning("OPENAI_API_KEY not set — GPT-4 unavailable")
+            _openai_client = OpenAI(api_key=key, timeout=AI_TIMEOUT_SECONDS, max_retries=AI_MAX_RETRIES)
         except ImportError:
-            logger.warning("openai package not installed")
+            _warn_missing_once("openai", "openai package not installed")
     return _openai_client
+
+
+def _gemini_key():
+    return os.environ.get("GEMINI_API_KEY") or os.environ.get("GOOGLE_API_KEY")
+
+
+def _gemini_model():
+    return os.environ.get("GEMINI_MODEL") or "gemini-2.0-flash"
 
 
 def _get_anthropic():
     global _anthropic_client
     if _anthropic_client is None:
+        key = os.environ.get("ANTHROPIC_API_KEY")
+        if not key:
+            _warn_missing_once("anthropic", "ANTHROPIC_API_KEY not set — Claude unavailable")
+            return None
         try:
             import anthropic
-            key = os.environ.get("ANTHROPIC_API_KEY")
-            if key:
-                _anthropic_client = anthropic.Anthropic(api_key=key)
-            else:
-                logger.warning("ANTHROPIC_API_KEY not set — Claude unavailable")
+            _anthropic_client = anthropic.Anthropic(api_key=key, timeout=AI_TIMEOUT_SECONDS, max_retries=AI_MAX_RETRIES)
         except ImportError:
-            logger.warning("anthropic package not installed")
+            _warn_missing_once("anthropic", "anthropic package not installed")
     return _anthropic_client
 
 
-def _get_redis():
-    global _redis_client
-    if _redis_client is None:
-        try:
-            import redis as redis_lib
-            _redis_client = redis_lib.Redis.from_url(
-                os.environ.get("REDIS_URL", "redis://localhost:6379"),
-                decode_responses=True,
-                socket_connect_timeout=2,
-            )
-            _redis_client.ping()
-        except Exception as e:
-            logger.warning(f"Redis unavailable — semantic caching disabled: {e}")
-            _redis_client = None
-    return _redis_client
+def _escape_regex(value: str) -> str:
+    import re
+    return re.escape(str(value).strip())
 
 
-def _get_mongo_db():
-    global _mongo_db
-    if _mongo_db is None:
-        from pymongo import MongoClient
-        uri = os.environ.get("MONGODB_URI", "mongodb://localhost:27017/confetti")
-        client = MongoClient(uri, serverSelectionTimeoutMS=3000)
-        db_name = uri.split("/")[-1].split("?")[0] or "confetti"
-        _mongo_db = client[db_name]
-    return _mongo_db
+def _to_int(value: Any, default: int = 0) -> int:
+    """Parse client-supplied numbers without crashing on None / "" / "abc"."""
+    try:
+        return int(float(value))
+    except (TypeError, ValueError):
+        return default
+
+
+def _budget_amount(budget: Any) -> float:
+    """Budget may arrive as {amount, currency} or a bare number."""
+    raw = budget.get("amount", 0) if isinstance(budget, dict) else budget
+    try:
+        return float(raw or 0)
+    except (TypeError, ValueError):
+        return 0.0
 
 
 # ---------------------------------------------------------------------------
@@ -149,6 +167,32 @@ Output MUST be valid JSON:
 }"""
 
 
+# Same shape as ENRICHMENT_SYSTEM_PROMPT, as a JSON schema. Claude is forced to
+# call this tool, so its output is structured JSON rather than free text.
+ENRICHMENT_TOOL = {
+    "name": "submit_enrichment",
+    "description": "Submit gap-filling event planning recommendations.",
+    "input_schema": {
+        "type": "object",
+        "properties": {
+            "missing_vendor_suggestions": {"type": "array", "items": {"type": "object", "properties": {
+                "category": {"type": "string"}, "what_to_look_for": {"type": "string"},
+                "estimated_budget_pct": {"type": "number"}, "search_tips": {"type": "string"}}}},
+            "creative_theme_ideas": {"type": "array", "items": {"type": "string"}},
+            "budget_reallocation": {"type": "object", "properties": {
+                "rationale": {"type": "string"},
+                "adjustments": {"type": "array", "items": {"type": "object", "properties": {
+                    "category": {"type": "string"}, "change_pct": {"type": "number"}, "reason": {"type": "string"}}}}}},
+            "risk_mitigation": {"type": "array", "items": {"type": "object", "properties": {
+                "risk": {"type": "string"}, "action": {"type": "string"}}}},
+            "local_market_tips": {"type": "string"},
+            "confidence_score": {"type": "number"},
+        },
+        "required": ["missing_vendor_suggestions", "creative_theme_ideas", "risk_mitigation", "confidence_score"],
+    },
+}
+
+
 # ---------------------------------------------------------------------------
 # Required vendor categories per event type
 # ---------------------------------------------------------------------------
@@ -178,11 +222,12 @@ class AIOrchestrator:
 
     def __init__(self):
         self.models = {
-            "gpt4": {"name": "gpt-4o", "available": bool(os.environ.get("OPENAI_API_KEY"))},
-            "claude": {"name": "claude-sonnet-4-6", "available": bool(os.environ.get("ANTHROPIC_API_KEY"))},
-            "gemini": {"name": "gemini-2.0-flash", "available": False},  # coming soon
+            "gpt4": {"name": OPENAI_MODEL, "available": bool(os.environ.get("OPENAI_API_KEY"))},
+            "claude": {"name": CLAUDE_MODEL, "available": bool(os.environ.get("ANTHROPIC_API_KEY"))},
+            "gemini": {"name": _gemini_model(), "available": bool(_gemini_key())},
             "local": {"name": "local-scoring", "available": True},
         }
+        self.matcher = IntelligentVendorMatcher()  # stateless — safe to share
 
     # ------------------------------------------------------------------
     # Public: main entry point
@@ -246,29 +291,29 @@ class AIOrchestrator:
         user_context: Dict,
     ) -> Dict[str, Any]:
         """Score and analyze using only data already in MongoDB."""
-        from services.intelligent_matcher import IntelligentVendorMatcher
+        event_type = event_data.get("eventType") or "event"
+        budget_amount = _budget_amount(event_data.get("budget"))
+        guest_count = _to_int(event_data.get("guestCount"))
+        location = event_data.get("location") or {}
 
-        matcher = IntelligentVendorMatcher()
-        event_type = event_data.get("eventType", "event")
-        budget = event_data.get("budget", {})
-        budget_amount = float(budget.get("amount", 0) if isinstance(budget, dict) else (budget or 0))
-        guest_count = int(event_data.get("guestCount", 0))
-        location = event_data.get("location", {})
+        budget_breakdown = self._calculate_budget_breakdown(budget_amount, event_type, guest_count)
 
+        preferences = event_data.get("specialRequirements") or []
         requirements = {
             "event_type": event_type,
             "budget": budget_amount,
             "guest_count": guest_count,
             "location": location,
             "date": event_data.get("eventDate"),
-            "preferences": event_data.get("specialRequirements", []),
+            "preferences": preferences if isinstance(preferences, list) else [preferences],
+            # Judge each vendor's price against its category's share of the budget
+            "category_budgets": {
+                cat: amount for cat, amount in budget_breakdown.items()
+                if cat in budget_breakdown["percentages"]
+            },
         }
 
-        # Vendor matching
-        match_result = matcher.match_vendors(requirements, vendors)
-
-        # Budget breakdown
-        budget_breakdown = self._calculate_budget_breakdown(budget_amount, event_type, guest_count)
+        match_result = self.matcher.match_vendors(requirements, vendors)
 
         # Timeline
         timeline = self._build_timeline(event_data)
@@ -288,9 +333,8 @@ class AIOrchestrator:
 
     def _derive_client_profile(self, event_data: Dict, user_context: Dict) -> Dict:
         """Build a client profile from actual submitted event data."""
-        budget = event_data.get("budget", {})
-        amount = float(budget.get("amount", 0) if isinstance(budget, dict) else (budget or 0))
-        guest_count = int(event_data.get("guestCount", 0))
+        amount = _budget_amount(event_data.get("budget"))
+        guest_count = _to_int(event_data.get("guestCount"))
         per_head = round(amount / guest_count, 2) if guest_count > 0 else 0
 
         tier = "budget" if per_head < 50 else "mid-range" if per_head < 150 else "premium"
@@ -367,9 +411,8 @@ class AIOrchestrator:
 
     def _assess_risks_from_data(self, event_data: Dict, vendors: List, match_result: Dict) -> Dict:
         risks = []
-        budget = event_data.get("budget", {})
-        amount = float(budget.get("amount", 0) if isinstance(budget, dict) else (budget or 0))
-        guest_count = int(event_data.get("guestCount", 0))
+        amount = _budget_amount(event_data.get("budget"))
+        guest_count = _to_int(event_data.get("guestCount"))
 
         # Vendor coverage risk
         total = len(vendors)
@@ -378,7 +421,7 @@ class AIOrchestrator:
                           "mitigation": "Expand search radius or consider alternative categories",
                           "probability": 0.7})
         # Budget risk
-        feasibility = self._score_budget_feasibility(amount, event_data.get("eventType", ""), guest_count)
+        feasibility = self._score_budget_feasibility(amount, event_data.get("eventType") or "", guest_count)
         if feasibility < 55:
             risks.append({"factor": "Budget may be insufficient for event scale", "severity": "high",
                           "mitigation": "Reduce guest count or increase budget by 20-30%",
@@ -417,45 +460,48 @@ class AIOrchestrator:
         }
 
     def _query_market_insights(self, location: Dict, event_type: str) -> Dict:
-        """Pull aggregated stats from the local vendor collection."""
+        """Aggregated vendor stats for the event's city/state, cached for an hour."""
+        location = location or {}
+        city = str(location.get("city") or "").strip()
+        state = str(location.get("state") or "").strip()
+        area = city or state
+        key = f"market:v2:{'city' if city else 'state'}:{area.lower()}"
         try:
-            db = _get_mongo_db()
-            city = location.get("city", "")
-            state = location.get("state", "")
-
-            query = {"status": "approved", "isActive": True}
-            if city:
-                query["address.city"] = {"$regex": city, "$options": "i"}
-            elif state:
-                query["address.state"] = {"$regex": state, "$options": "i"}
-
-            pipeline = [
-                {"$match": query},
-                {"$group": {
-                    "_id": "$category",
-                    "count": {"$sum": 1},
-                    "avg_rating": {"$avg": "$rating"},
-                    "avg_price": {"$avg": "$averagePrice"},
-                    "high_avail": {"$sum": {"$cond": [{"$eq": ["$availabilityStatus", "high"]}, 1, 0]}},
-                }},
-                {"$sort": {"count": -1}},
-            ]
-
-            stats = list(db.vendors.aggregate(pipeline))
-            market = {
-                "city": city or state or "your area",
-                "vendor_market": {s["_id"]: {"count": s["count"],
-                                             "avg_rating": round(s.get("avg_rating") or 0, 2),
-                                             "avg_price": round(s.get("avg_price") or 0, 2),
-                                             "high_availability_count": s["high_avail"]}
-                                  for s in stats if s["_id"]},
-                "total_vendors_in_area": sum(s["count"] for s in stats),
-                "data_source": "local_db",
-            }
-            return market
+            return cached(key, 3600, lambda: self._aggregate_market(city, state))
         except Exception as e:
             logger.warning(f"market insights query failed: {e}")
             return {"data_source": "unavailable", "total_vendors_in_area": 0}
+
+    def _aggregate_market(self, city: str, state: str) -> Dict:
+        query: Dict[str, Any] = {"status": "approved", "isActive": True}
+        # Escaped + anchored: user input can't inject regex, and exact
+        # case-insensitive matching doesn't mix "Ikeja" with "Ikeja GRA"
+        if city:
+            query["address.city"] = {"$regex": f"^{_escape_regex(city)}$", "$options": "i"}
+        elif state:
+            query["address.state"] = {"$regex": f"^{_escape_regex(state)}$", "$options": "i"}
+
+        stats = list(_get_mongo_db().vendors.aggregate([
+            {"$match": query},
+            {"$group": {
+                "_id": "$category",
+                "count": {"$sum": 1},
+                "avg_rating": {"$avg": "$rating"},
+                "avg_price": {"$avg": "$averagePrice"},
+                "high_avail": {"$sum": {"$cond": [{"$eq": ["$availabilityStatus", "high"]}, 1, 0]}},
+            }},
+            {"$sort": {"count": -1}},
+        ]))
+        return {
+            "city": city or state or "your area",
+            "vendor_market": {s["_id"]: {"count": s["count"],
+                                         "avg_rating": round(s.get("avg_rating") or 0, 2),
+                                         "avg_price": round(s.get("avg_price") or 0, 2),
+                                         "high_availability_count": s["high_avail"]}
+                              for s in stats if s["_id"]},
+            "total_vendors_in_area": sum(s["count"] for s in stats),
+            "data_source": "local_db",
+        }
 
     # ------------------------------------------------------------------
     # Sufficiency assessment
@@ -466,10 +512,9 @@ class AIOrchestrator:
         Decides whether local data can satisfy the plan request without external AI.
         Returns: {sufficient: bool, confidence: float, gaps: [str]}
         """
-        event_type = event_data.get("eventType", "event").lower()
-        budget = event_data.get("budget", {})
-        budget_amount = float(budget.get("amount", 0) if isinstance(budget, dict) else (budget or 0))
-        guest_count = int(event_data.get("guestCount", 0))
+        event_type = (event_data.get("eventType") or "event").lower()
+        budget_amount = _budget_amount(event_data.get("budget"))
+        guest_count = _to_int(event_data.get("guestCount"))
 
         gaps = []
         confidence = 1.0
@@ -481,10 +526,8 @@ class AIOrchestrator:
 
         # Category coverage
         required = set(EVENT_CATEGORY_REQUIREMENTS.get(event_type, ["venue", "catering"]))
-        available_cats = set(
-            (v.get("category") or v.get("businessType") or "").lower()
-            for v in vendors
-        )
+        normalized = [normalize_vendor(v) for v in vendors if isinstance(v, dict)]
+        available_cats = {v["category"] for v in normalized}
         missing = required - available_cats
         if missing:
             gaps.append(f"Missing categories: {', '.join(missing)}")
@@ -492,10 +535,7 @@ class AIOrchestrator:
 
         # Budget coverage
         if budget_amount > 0:
-            affordable = [
-                v for v in vendors
-                if self._vendor_fits_budget(v, budget_amount, guest_count)
-            ]
+            affordable = [v for v in normalized if self._vendor_fits_budget(v, budget_amount)]
             if len(affordable) < 2:
                 gaps.append("Very few vendors match the budget range")
                 confidence -= 0.25
@@ -508,21 +548,11 @@ class AIOrchestrator:
             "vendor_count": len(vendors),
         }
 
-    def _vendor_fits_budget(self, vendor: Dict, budget: float, guest_count: int) -> bool:
-        price_range = vendor.get("priceRange", {})
-        avg = vendor.get("averagePrice", 0)
-        if avg and avg <= budget:
-            return True
-        max_price = price_range.get("max", 0)
-        if max_price and max_price <= budget:
-            return True
-        # Services-based estimate
-        for svc in vendor.get("services", []):
-            price = svc.get("price", {})
-            total = (price.get("amount", 0) or 0)
-            if total <= budget:
-                return True
-        return avg == 0  # Include vendors with no price data as potentially affordable
+    def _vendor_fits_budget(self, vendor: Dict, budget: float) -> bool:
+        """vendor is a normalize_vendor() dict. Vendors with no price data count as
+        potentially affordable (they quote on request)."""
+        price = vendor["price_min"] or vendor["avg_price"]
+        return not price or price <= budget
 
     # ------------------------------------------------------------------
     # External AI decision + calls (Fix 1 + Fix 2)
@@ -535,7 +565,7 @@ class AIOrchestrator:
         if plan_level >= 3:
             return True  # Business+ always gets AI enrichment
         if not sufficiency["sufficient"]:
-            return bool(_get_openai() or _get_anthropic())  # Free tier gets AI only if available
+            return bool(_get_openai() or _get_anthropic() or _gemini_key())  # Free tier gets AI only if available
         return False
 
     def _call_external_ai(
@@ -546,28 +576,43 @@ class AIOrchestrator:
         plan_level: int,
         user_context: Dict,
     ) -> Optional[Dict]:
-        """Call OpenAI or Anthropic with a rich, context-specific prompt."""
-        # Build cache key from the event parameters
-        cache_key = self._build_cache_key(event_data, plan_level)
+        """Call OpenAI / Anthropic / Gemini with a context-specific prompt.
+
+        Providers are tried in preference order; a failed provider falls
+        through to the next. Only real model output is cached — the canned
+        fallback is returned uncached so a transient outage doesn't stick.
+        """
+        prompt = self._build_enrichment_prompt(event_data, local_result, sufficiency)
+
+        # Key on the exact prompt: it already contains every input that
+        # shapes the answer (event details, local vendors, gaps, budget).
+        cache_key = self._build_cache_key(prompt, plan_level)
         cached = self._cache_get(cache_key)
         if cached:
             cached["_from_cache"] = True
             return cached
 
-        prompt = self._build_enrichment_prompt(event_data, local_result, sufficiency)
+        # GPT-4o first up to plan level 3, Claude first above that
+        providers = []
+        if plan_level <= 3:
+            providers += [(_get_openai, self.query_gpt4), (_get_anthropic, self.query_claude)]
+        else:
+            providers += [(_get_anthropic, self.query_claude), (_get_openai, self.query_gpt4)]
+        providers.append((_gemini_key, lambda p: self.query_gemini(p, temperature=0.4, max_tokens=2000)))
 
-        result = None
-        # Prefer GPT-4o for plan levels 2-3, Claude for 3+ (or fallback)
-        if plan_level <= 3 and _get_openai():
-            result = self.query_gpt4(prompt)
-        elif _get_anthropic():
-            result = self.query_claude(prompt)
-        elif _get_openai():
-            result = self.query_gpt4(prompt)
+        for available, query in providers:
+            if not available():
+                continue
+            result = query(prompt)
+            if result and not self._is_fallback(result):
+                self._cache_set(cache_key, result, ttl=21600)  # cache 6 hours
+                return result
 
-        if result:
-            self._cache_set(cache_key, result, ttl=21600)  # cache 6 hours
-        return result
+        return self._fallback_enrichment()
+
+    @staticmethod
+    def _is_fallback(result: Dict) -> bool:
+        return result.get("_model_used") == "fallback"
 
     def query_gpt4(
         self,
@@ -584,7 +629,7 @@ class AIOrchestrator:
 
         try:
             response = client.chat.completions.create(
-                model="gpt-4o",
+                model=OPENAI_MODEL,
                 messages=[
                     {"role": "system", "content": system_prompt or ENRICHMENT_SYSTEM_PROMPT},
                     {"role": "user", "content": prompt},
@@ -595,9 +640,9 @@ class AIOrchestrator:
             )
             raw = response.choices[0].message.content
             data = json.loads(raw)
-            data["_model_used"] = "gpt-4o"
+            data["_model_used"] = OPENAI_MODEL
             data["_tokens_used"] = response.usage.total_tokens
-            logger.info(f"GPT-4o call OK | tokens={response.usage.total_tokens}")
+            logger.info(f"OpenAI call OK | model={OPENAI_MODEL} tokens={response.usage.total_tokens}")
             return data
         except json.JSONDecodeError as e:
             logger.error(f"GPT-4o JSON parse error: {e}")
@@ -620,23 +665,42 @@ class AIOrchestrator:
             return self._fallback_enrichment()
 
         try:
-            response = client.messages.create(
-                model="claude-sonnet-4-6",
-                max_tokens=max_tokens,
-                temperature=temperature,
-                system=system_prompt or ENRICHMENT_SYSTEM_PROMPT,
-                messages=[{"role": "user", "content": prompt}],
-            )
-            raw = response.content[0].text
-            # Strip any accidental markdown fences
-            if raw.startswith("```"):
-                raw = raw.split("```")[1]
-                if raw.startswith("json"):
-                    raw = raw[4:]
-            data = json.loads(raw.strip())
-            data["_model_used"] = "claude-sonnet-4-6"
-            data["_tokens_used"] = response.usage.input_tokens + response.usage.output_tokens
-            logger.info(f"Claude call OK | tokens={response.usage.input_tokens + response.usage.output_tokens}")
+            if system_prompt:
+                # Caller-defined output shape: ask for JSON and parse the text
+                response = client.messages.create(
+                    model=CLAUDE_MODEL,
+                    max_tokens=max_tokens,
+                    temperature=temperature,
+                    system=system_prompt + "\n\nRespond with a single JSON object only.",
+                    messages=[{"role": "user", "content": prompt}],
+                )
+                raw = "".join(b.text for b in response.content if b.type == "text").strip()
+                if raw.startswith("```"):
+                    raw = raw.strip("`").removeprefix("json").strip()
+                data = json.loads(raw)
+                if not isinstance(data, dict):
+                    data = {"response": data}
+            else:
+                # Enrichment: force the schema tool so output is always valid JSON
+                response = client.messages.create(
+                    model=CLAUDE_MODEL,
+                    max_tokens=max_tokens,
+                    temperature=temperature,
+                    system=ENRICHMENT_SYSTEM_PROMPT,
+                    tools=[ENRICHMENT_TOOL],
+                    tool_choice={"type": "tool", "name": ENRICHMENT_TOOL["name"]},
+                    messages=[{"role": "user", "content": prompt}],
+                )
+                tool_use = next((b for b in response.content if b.type == "tool_use"), None)
+                if tool_use is None:
+                    logger.error(f"Claude returned no tool call (stop_reason={response.stop_reason})")
+                    return self._fallback_enrichment()
+                data = dict(tool_use.input)
+
+            tokens = response.usage.input_tokens + response.usage.output_tokens
+            data["_model_used"] = CLAUDE_MODEL
+            data["_tokens_used"] = tokens
+            logger.info(f"Claude call OK | model={CLAUDE_MODEL} tokens={tokens}")
             return data
         except json.JSONDecodeError as e:
             logger.error(f"Claude JSON parse error: {e}")
@@ -645,17 +709,87 @@ class AIOrchestrator:
             logger.error(f"Claude call failed: {e}")
             return self._fallback_enrichment()
 
-    def query_gemini(self, prompt: str, temperature: float = 0.5, max_tokens: int = 1000, context: Dict = None) -> Dict[str, Any]:
-        """Placeholder — Gemini integration to be added when key is available."""
-        logger.info("Gemini not yet configured — routing to GPT-4o")
-        return self.query_gpt4(prompt, temperature, max_tokens, context)
+    def query_gemini(
+        self,
+        prompt: str,
+        temperature: float = 0.5,
+        max_tokens: int = 1000,
+        context: Dict = None,
+        system_prompt: str = None,
+    ) -> Dict[str, Any]:
+        """Gemini call (REST generateContent) with structured JSON output.
+
+        Uses GEMINI_API_KEY (or GOOGLE_API_KEY) and GEMINI_MODEL (default
+        gemini-2.0-flash). Without a key the request is routed to GPT-4o.
+        """
+        key = _gemini_key()
+        if not key:
+            logger.info("Gemini not configured (GEMINI_API_KEY) — routing to GPT-4o")
+            return self.query_gpt4(prompt, temperature, max_tokens, context, system_prompt)
+
+        model = _gemini_model()
+        try:
+            import requests
+
+            response = requests.post(
+                f"https://generativelanguage.googleapis.com/v1beta/models/{model}:generateContent",
+                headers={"x-goog-api-key": key, "Content-Type": "application/json"},
+                json={
+                    "systemInstruction": {"parts": [{"text": system_prompt or ENRICHMENT_SYSTEM_PROMPT}]},
+                    "contents": [{"role": "user", "parts": [{"text": prompt}]}],
+                    "generationConfig": {
+                        "temperature": temperature,
+                        "maxOutputTokens": max_tokens,
+                        "responseMimeType": "application/json",
+                    },
+                },
+                timeout=AI_TIMEOUT_SECONDS,
+            )
+            if response.status_code != 200:
+                logger.error(f"Gemini call failed: HTTP {response.status_code} {response.text[:300]}")
+                return self._fallback_enrichment()
+            body = response.json()
+            candidates = body.get("candidates") or []
+            if not candidates:
+                logger.error(f"Gemini returned no candidates (promptFeedback={body.get('promptFeedback')})")
+                return self._fallback_enrichment()
+            parts = (candidates[0].get("content") or {}).get("parts") or []
+            raw = "".join(p.get("text", "") for p in parts).strip()
+            if raw.startswith("```"):
+                raw = raw.strip("`")
+                if raw.startswith("json"):
+                    raw = raw[4:]
+            data = json.loads(raw.strip())
+            if not isinstance(data, dict):
+                data = {"response": data}
+            tokens = (body.get("usageMetadata") or {}).get("totalTokenCount", 0)
+            data["_model_used"] = model
+            data["_tokens_used"] = tokens
+            logger.info(f"Gemini call OK | tokens={tokens}")
+            return data
+        except json.JSONDecodeError as e:
+            logger.error(f"Gemini JSON parse error: {e}")
+            return self._fallback_enrichment()
+        except Exception as e:
+            logger.error(f"Gemini call failed: {e}")
+            return self._fallback_enrichment()
 
     def query_local_model(self, prompt: str, context: Dict = None) -> Dict[str, Any]:
-        """The 'local model' is the scoring engine — no external API call."""
+        """Run the local scoring engine (no external API call) on context.event_data."""
+        context = context or {}
+        started = time.time()
+        result = self._run_local_analysis(
+            context.get("event_data") or {},
+            context.get("vendors") or [],
+            context.get("vendor_statistics") or {},
+            context.get("user_context") or {},
+        )
         return {
-            "response": {"message": "Answered using local scoring engine"},
-            "confidence": 0.75,
+            "response": result,
+            "confidence": result.get("overall_confidence", 0.0),
             "model": "local-scoring",
+            "processing_time": round((time.time() - started) * 1000, 1),
+            "tokens_used": 0,
         }
 
     # ------------------------------------------------------------------
@@ -678,18 +812,19 @@ class AIOrchestrator:
 
         try:
             with client.chat.completions.stream(
-                model="gpt-4o",
+                model=OPENAI_MODEL,
                 messages=[
                     {"role": "system", "content": ENRICHMENT_SYSTEM_PROMPT},
                     {"role": "user", "content": prompt},
                 ],
                 temperature=0.4,
                 max_tokens=2000,
+                response_format={"type": "json_object"},
             ) as stream:
-                for chunk in stream:
-                    delta = chunk.choices[0].delta.content if chunk.choices else None
-                    if delta:
-                        yield json.dumps({"text": delta, "done": False})
+                # .stream() yields typed events, not raw chunks
+                for event in stream:
+                    if event.type == "content.delta" and event.delta:
+                        yield json.dumps({"text": event.delta, "done": False})
             yield json.dumps({"text": "", "done": True})
         except Exception as e:
             logger.error(f"GPT-4o streaming failed: {e}")
@@ -726,7 +861,7 @@ EVENT DETAILS:
   Date: {event_data.get('eventDate', 'unspecified')}
   Guest count: {event_data.get('guestCount', 'unspecified')}
   Budget: {budget_amount} {currency}
-  Location: {event_data.get('location', {}).get('city', 'unspecified')}, {event_data.get('location', {}).get('state', '')}
+  Location: {(event_data.get('location') or {}).get('city', 'unspecified')}, {(event_data.get('location') or {}).get('state', '')}
   Theme: {event_data.get('theme', 'unspecified')}
   Special requirements: {event_data.get('specialRequirements', 'none')}
 
@@ -802,42 +937,18 @@ Please provide enriched recommendations to fill these specific gaps. Focus on ac
     # Semantic cache (Fix 7)
     # ------------------------------------------------------------------
 
-    def _build_cache_key(self, event_data: Dict, plan_level: int) -> str:
-        budget = event_data.get("budget", {})
-        amount = budget.get("amount", 0) if isinstance(budget, dict) else (budget or 0)
-        # Round budget to nearest 5000 so similar amounts share cache
-        rounded_budget = round(float(amount) / 5000) * 5000
-
-        key_data = "|".join([
-            event_data.get("eventType", ""),
-            event_data.get("location", {}).get("city", "") if isinstance(event_data.get("location"), dict) else "",
-            str(rounded_budget),
-            str(event_data.get("guestCount", 0)),
-            str(plan_level),
-        ])
-        return f"ai_cache:{hashlib.md5(key_data.encode()).hexdigest()}"
+    def _build_cache_key(self, prompt: str, plan_level: int) -> str:
+        digest = hashlib.sha256(f"{plan_level}|{prompt}".encode()).hexdigest()
+        return f"ai_cache:v2:{digest}"
 
     def _cache_get(self, key: str) -> Optional[Dict]:
-        r = _get_redis()
-        if not r:
-            return None
-        try:
-            val = r.get(key)
-            if val:
-                logger.info(f"Semantic cache HIT: {key}")
-                return json.loads(val)
-        except Exception as e:
-            logger.warning(f"Cache get failed: {e}")
-        return None
+        hit = cache_get(key)
+        if hit:
+            logger.info(f"AI cache HIT: {key}")
+        return hit
 
     def _cache_set(self, key: str, value: Dict, ttl: int = 21600):
-        r = _get_redis()
-        if not r:
-            return
-        try:
-            r.setex(key, ttl, json.dumps(value))
-        except Exception as e:
-            logger.warning(f"Cache set failed: {e}")
+        cache_set(key, value, ttl)
 
     # ------------------------------------------------------------------
     # Fallback
@@ -862,12 +973,19 @@ Please provide enriched recommendations to fill these specific gaps. Focus on ac
     # ------------------------------------------------------------------
 
     def health_check(self) -> str:
-        return "operational"
+        """operational when local scoring (MongoDB) works and at least one
+        external model is configured; degraded if either is missing."""
+        try:
+            _get_mongo_db().command("ping")
+        except Exception:
+            return "degraded"
+        has_ai = bool(os.environ.get("OPENAI_API_KEY") or os.environ.get("ANTHROPIC_API_KEY") or _gemini_key())
+        return "operational" if has_ai else "degraded"
 
     def check_models_availability(self) -> Dict[str, Dict[str, Any]]:
         return {
-            "gpt4":   {"status": "live" if bool(os.environ.get("OPENAI_API_KEY")) else "not_configured", "model": "gpt-4o"},
-            "claude": {"status": "live" if bool(os.environ.get("ANTHROPIC_API_KEY")) else "not_configured", "model": "claude-sonnet-4-6"},
-            "gemini": {"status": "coming_soon"},
+            "gpt4":   {"status": "configured" if os.environ.get("OPENAI_API_KEY") else "not_configured", "model": OPENAI_MODEL},
+            "claude": {"status": "configured" if os.environ.get("ANTHROPIC_API_KEY") else "not_configured", "model": CLAUDE_MODEL},
+            "gemini": {"status": "configured" if _gemini_key() else "not_configured", "model": _gemini_model()},
             "local":  {"status": "operational", "model": "local-scoring"},
         }

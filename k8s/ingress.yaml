@@ -28,13 +28,6 @@ spec:
                 name: node-api-service
                 port:
                   number: 9600
-          - path: /ai
-            pathType: Prefix
-            backend:
-              service:
-                name: python-api-service
-                port:
-                  number: 5600
           - path: /health
             pathType: Prefix
             backend:

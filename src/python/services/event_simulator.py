@@ -1,6 +1,4 @@
-import numpy as np
 from datetime import datetime, timedelta
-import random
 
 class EventSimulator:
     """
@@ -9,8 +7,6 @@ class EventSimulator:
     """
     
     def __init__(self):
-        self.simulation_results = []
-        
         # Risk factors and their weights
         self.risk_factors = {
             'budget_adequacy': 0.25,
@@ -52,7 +48,13 @@ class EventSimulator:
         recommendations = self._generate_recommendations(risk_scores, critical_risks)
         
         # Simulate outcome
-        outcome = 'success' if random.random() < success_probability else 'needs_attention'
+        # Deterministic: same plan, same answer (was a random draw per request)
+        if success_probability >= 0.75:
+            outcome = 'success'
+        elif success_probability >= 0.5:
+            outcome = 'needs_attention'
+        else:
+            outcome = 'at_risk'
         
         result = {
             'outcome': outcome,
@@ -62,8 +64,6 @@ class EventSimulator:
             'recommendations': recommendations,
             'confidence': self._calculate_confidence(event_plan)
         }
-        
-        self.simulation_results.append(result)
         return result
 
     def _calculate_risk_scores(self, event_plan):
@@ -92,7 +92,8 @@ class EventSimulator:
         # 2. Vendor Quality Risk
         vendors = event_plan.get('vendors', [])
         if vendors:
-            avg_rating = np.mean([v.get('rating', 3.5) for v in vendors])
+            ratings = [v.get('rating', 3.5) for v in vendors if isinstance(v, dict)] or [3.5]
+            avg_rating = sum(ratings) / len(ratings)
             scores['vendor_quality'] = min(1.0, avg_rating / 5.0)
         else:
             scores['vendor_quality'] = 0.5  # Unknown
@@ -295,10 +296,6 @@ class EventSimulator:
             return date.month
         except:
             return 6  # Default
-
-    def get_simulation_results(self):
-        """Get all simulation results"""
-        return self.simulation_results
 
     def simulate(self, plan):
         """Legacy method for backward compatibility"""

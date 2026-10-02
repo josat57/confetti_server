@@ -13,6 +13,7 @@ import User from "../models/user.model.js";
 import crypto from "crypto";
 import mongoose from "mongoose";
 import redis from "../config/redis.js";
+import { aiPlannerIntelligence } from "./ai-planner-intelligence.js";
 
 /**
  * Universal AI Service for Event Planning
@@ -125,12 +126,14 @@ class UniversalAIService {
         }
         Additional Context: ${additionalContext || "None"}
         
-        Provide comprehensive analysis including:
-        1. Client personality and preferences
-        2. Key requirements and priorities
-        3. Potential challenges
-        4. Recommendations for success
-        5. Cultural or special considerations
+        Provide comprehensive analysis as JSON with exactly these keys:
+        {
+          "personality": "string — client personality and preferences",
+          "priorities": ["string — key requirements and priorities"],
+          "challenges": ["string — potential challenges"],
+          "recommendations": ["string — recommendations for success"],
+          "cultural_considerations": ["string — cultural or special considerations"]
+        }
       `;
 
       // Use available AI models based on user context
@@ -286,6 +289,9 @@ class UniversalAIService {
       guestProfile,
       eventSpecific,
       logistics,
+      // Internal: rebuild an existing saved plan's content. Skips quota
+      // checks/usage, the learning record and auto-save; keeps the planId.
+      regenerateForPlanId,
     } = params;
 
     try {
@@ -297,7 +303,9 @@ class UniversalAIService {
       });
 
       // Check rate limits and usage quotas
-      await this.checkUsageLimits(userContext);
+      if (!regenerateForPlanId) {
+        await this.checkUsageLimits(userContext, { ipAddress });
+      }
 
       // 1. Enhanced client analysis with comprehensive data
       const clientAnalysis = await this.analyzeClientWithAvailableAI({
@@ -342,6 +350,7 @@ class UniversalAIService {
           eventType,
           location,
           budget,
+          guestCount,
           clientAnalysis,
           userContext,
         });
@@ -353,6 +362,7 @@ class UniversalAIService {
       const visualSuggestions = await this.generateVisualIntelligenceForUser({
         theme,
         eventType,
+        guestCount,
         budget,
         clientAnalysis,
         userContext,
@@ -392,15 +402,23 @@ class UniversalAIService {
       // 8. Generate risk analysis based on plan level
       const riskAnalysis = await this.generateRiskAssessmentForUser({
         eventType,
+        eventDate,
+        guestCount,
         budget,
         timeline: intelligentTimeline,
         marketInsights,
+        vendorRecommendations,
         userContext,
       });
 
       // 9. Update learning model for authenticated users
-      if (userContext.isAuthenticated && userContext.planLevel >= 2) {
-        await this.updateLearningModelForUser({
+      let learningInteractionId = null;
+      if (
+        userContext.isAuthenticated &&
+        userContext.planLevel >= 2 &&
+        !regenerateForPlanId
+      ) {
+        learningInteractionId = await this.updateLearningModelForUser({
           userContext,
           eventData: params,
           generatedPlan: {
@@ -411,11 +429,18 @@ class UniversalAIService {
         });
       }
 
+      // Count toward the monthly plan quota
+      if (!regenerateForPlanId) {
+        await this.recordPlanUsage(userContext);
+      }
+
       // 10. Generate session token for guests or plan ID for authenticated users
       const sessionToken = !userContext.isAuthenticated
         ? this.generateSessionToken()
         : null;
-      const sessionInfo = userContext.isAuthenticated
+      const sessionInfo = regenerateForPlanId
+        ? { planId: regenerateForPlanId, saved: true }
+        : userContext.isAuthenticated
         ? { planId: crypto.randomUUID(), saved: false }
         : {
             sessionToken,
@@ -424,6 +449,8 @@ class UniversalAIService {
 
       const comprehensivePlan = {
         ...sessionInfo,
+        // Pass back to POST /ai-planner/feedback to rate this plan
+        learningInteractionId,
         generatedAt: new Date(),
         userType: userContext.userType,
         planLevel: userContext.planLevel,
@@ -517,7 +544,7 @@ class UniversalAIService {
       };
 
       // 11. Auto-save plan for authenticated users
-      if (userContext.isAuthenticated) {
+      if (userContext.isAuthenticated && !regenerateForPlanId) {
         try {
           const savedPlan = await this.autoSavePlan({
             userContext,
@@ -681,119 +708,105 @@ class UniversalAIService {
       this.featureAccess[userContext.planLevel].vendorRecommendations;
 
     try {
-      // Get vendors based on event requirements
+      // formatVendorForAI() shape: { id, name, category, pricing, rating, ... }
       const vendors = await VendorService.findVendorsForEvent({
         eventType: params.eventType,
         location: params.location,
         budget: params.budget,
       });
+      const candidates = vendors.slice(0, 50); // Limit for processing
 
-      // Use Python AI service for intelligent matching
-      const aiMatching = await PythonService.matchVendors({
-        event_type: params.eventType,
-        budget: params.budget,
-        location: params.location,
-        vendors: vendors.slice(0, 50), // Limit for processing
-        client_analysis: params.clientAnalysis,
-        user_context: userContext,
-      });
+      // Score with the Python matcher; if it's unavailable, rank by rating
+      let recommendations = [];
+      let dataSource = "ai_matching";
+      try {
+        const aiMatching = await PythonService.matchVendors({
+          event_type: params.eventType,
+          budget: params.budget?.amount ?? params.budget,
+          guest_count: params.guestCount,
+          location: params.location,
+          vendors: candidates,
+        });
+        const byId = new Map(candidates.map((v) => [String(v.id), v]));
+        recommendations = (aiMatching.matches || [])
+          .filter((match) => byId.has(String(match.vendor_id)))
+          .map((match) =>
+            this.toVendorRecommendation(byId.get(String(match.vendor_id)), match)
+          );
+      } catch (error) {
+        logger.warn("AI vendor matching unavailable, ranking by rating", {
+          error: error.message,
+        });
+      }
+      if (recommendations.length === 0 && candidates.length > 0) {
+        dataSource = "direct";
+        recommendations = [...candidates]
+          .sort((a, b) => (b.rating || 0) - (a.rating || 0))
+          .map((vendor) => this.toVendorRecommendation(vendor));
+      }
 
-      // Apply plan-level limitations
-      const limitedRecommendations =
+      const limited =
         typeof maxRecommendations === "number"
-          ? aiMatching.matches?.slice(0, maxRecommendations) || []
-          : aiMatching.matches || [];
+          ? recommendations.slice(0, maxRecommendations)
+          : recommendations;
 
       return {
         totalVendorsAnalyzed: vendors.length,
-        recommendations: limitedRecommendations,
+        recommendations: limited,
         planLevel: userContext.planLevel,
         maxRecommendations,
-        categoryBreakdown: this.categorizeRecommendations(
-          limitedRecommendations
-        ),
-        collaborationSuggestions:
-          userContext.planLevel >= 3
-            ? await this.generateCollaborationSuggestions(
-                limitedRecommendations
-              )
-            : null,
+        categoryBreakdown: this.categorizeRecommendations(limited),
+        // Higher plans also see the next-best matches beyond their limit
         alternativeOptions:
           userContext.planLevel >= 4
-            ? await this.generateAlternativeOptions(
-                vendors,
-                limitedRecommendations
-              )
+            ? recommendations.slice(limited.length, limited.length + 5)
             : null,
         generatedAt: new Date(),
+        dataSource,
       };
     } catch (error) {
       logger.error("Vendor recommendations failed:", error);
-
-      // Enhanced fallback: try to get vendors directly without AI matching
-      try {
-        const vendors = await VendorService.findVendorsForEvent({
-          eventType: params.eventType,
-          location: params.location,
-          budget: params.budget,
-        });
-
-        // Apply plan-level limitations
-        const maxRecommendations =
-          this.featureAccess[userContext.planLevel].vendorRecommendations;
-        const limitedVendors =
-          typeof maxRecommendations === "number"
-            ? vendors.slice(0, maxRecommendations)
-            : vendors;
-
-        // Convert vendors to recommendation format
-        const recommendations = limitedVendors.map((vendor) => ({
-          vendor: {
-            id: vendor._id,
-            name: vendor.name,
-            category: vendor.category,
-            description: vendor.description,
-            averagePrice: vendor.averagePrice,
-            priceRange: vendor.priceRange,
-            rating: vendor.rating,
-            reviewCount: vendor.reviewCount,
-            location: vendor.address,
-            contact: {
-              email: vendor.email,
-              phone: vendor.phone,
-            },
-            features: vendor.features || [],
-          },
-          matchScore: 0.7, // Default match score
-          matchReasons: [
-            "Category match",
-            "Location match",
-            "Event type match",
-          ],
-          estimatedCost: vendor.averagePrice || 0,
-          availability: "Available",
-          notes: "Direct vendor match (AI matching unavailable)",
-        }));
-
-        return {
-          totalVendorsAnalyzed: vendors.length,
-          recommendations,
-          planLevel: userContext.planLevel,
-          maxRecommendations,
-          categoryBreakdown: this.categorizeRecommendations(recommendations),
-          collaborationSuggestions: null,
-          alternativeOptions: null,
-          generatedAt: new Date(),
-          dataSource: "fallback_direct",
-        };
-      } catch (fallbackError) {
-        logger.error(
-          "Fallback vendor recommendations also failed:",
-          fallbackError
-        );
-        return this.getFallbackVendorRecommendations(params);
-      }
+      return this.getFallbackVendorRecommendations(params);
     }
+  }
+
+  /**
+   * One recommendation shape for the frontend, from a formatVendorForAI()
+   * vendor and, when available, its Python match result.
+   * matchScore and confidence are 0-1; null when the vendor wasn't AI-scored.
+   */
+  toVendorRecommendation(vendor, match = null) {
+    const averagePrice = vendor.pricing?.averagePrice || 0;
+    const estimated = match?.estimated_price?.estimated;
+    return {
+      vendor: {
+        id: String(vendor.id),
+        name: vendor.name,
+        category: vendor.category,
+        subcategory: vendor.subcategory || "",
+        description: vendor.description || "",
+        averagePrice,
+        priceRange: vendor.pricing?.priceRange || null,
+        rating: vendor.rating || 0,
+        reviewCount: vendor.reviewCount || 0,
+        location: vendor.location?.address || {},
+        features: vendor.features || [],
+      },
+      matchScore: match ? Math.round(match.overall_score) / 100 : null,
+      confidence: match?.confidence ?? null,
+      matchReasons: match?.match_reasons || [],
+      estimatedCost: typeof estimated === "number" ? estimated : averagePrice || null,
+      availability: vendor.availabilityStatus || "unknown",
+    };
+  }
+
+  /** Group recommendations by vendor category: { [category]: recommendation[] } */
+  categorizeRecommendations(recommendations) {
+    return recommendations.reduce((groups, rec) => {
+      const category = rec.vendor?.category || "other";
+      (groups[category] ||= []).push(rec);
+      return groups;
+    }, {});
   }
 
   /**
@@ -830,7 +843,8 @@ class UniversalAIService {
           userContext.planLevel >= 3
             ? await this.calculateSeasonalAdjustments(
                 params.budget,
-                params.eventType
+                params.eventType,
+                params.eventDate
               )
             : null,
 
@@ -841,12 +855,15 @@ class UniversalAIService {
 
         budgetSimulator:
           userContext.planLevel >= 3
-            ? await this.generateBudgetSimulator(params.budget)
+            ? await this.generateBudgetSimulator(params.budget, params.eventType)
             : null,
 
         whatIfScenarios:
           userContext.planLevel >= 4
-            ? await this.generateWhatIfScenarios(params.budget)
+            ? await this.generateWhatIfScenarios(params.budget, {
+                guestCount: params.guestCount,
+                eventType: params.eventType,
+              })
             : null,
 
         optimizationScore: optimization.feasibility_score || 0.8,
@@ -927,12 +944,13 @@ class UniversalAIService {
     const { userContext } = params;
 
     try {
+      const phases = await this.generateBasicTimeline(params);
       const timeline = {
         planLevel: userContext.planLevel,
 
         // Basic timeline for all users
-        phases: await this.generateBasicTimeline(params),
-        criticalPath: await this.identifyCriticalPath(params),
+        phases,
+        criticalPath: this.identifyCriticalPath(phases, params.eventType),
 
         // Advanced features based on plan
         riskWindows:
@@ -943,7 +961,8 @@ class UniversalAIService {
         bookingProbabilities:
           userContext.planLevel >= 3
             ? await this.calculateBookingProbabilities(
-                params.vendorRecommendations
+                params.vendorRecommendations,
+                params.eventDate
               )
             : null,
 
@@ -1033,8 +1052,15 @@ class UniversalAIService {
   /**
    * Generate risk assessment based on plan level
    */
-  async generateRiskAssessmentForUser(params) {
-    const { userContext } = params;
+  async generateRiskAssessmentForUser(inputParams) {
+    const { userContext } = inputParams;
+    const params = {
+      ...inputParams,
+      timeline: {
+        ...(inputParams.timeline || {}),
+        eventDate: inputParams.timeline?.eventDate ?? inputParams.eventDate,
+      },
+    };
 
     try {
       const riskAnalysis = {
@@ -1044,7 +1070,8 @@ class UniversalAIService {
         riskCategories: {
           financial: await this.assessFinancialRisks(
             params.budget,
-            params.marketInsights
+            params.marketInsights,
+            params.guestCount
           ),
           operational: await this.assessOperationalRisks(
             params.timeline,
@@ -1102,7 +1129,7 @@ class UniversalAIService {
     const { userContext, eventData, generatedPlan } = params;
 
     if (!userContext.isAuthenticated) {
-      return;
+      return null;
     }
 
     try {
@@ -1156,9 +1183,11 @@ class UniversalAIService {
         newAccuracy: learningModel.learningData.accuracy,
         totalInteractions: learningModel.learningData.interactions.length,
       });
+      return learningModel.learningData.interactions.at(-1)?._id?.toString() || null;
     } catch (error) {
       logger.error("Learning model update failed:", error);
       // Don't throw error as this is not critical for the main flow
+      return null;
     }
   }
 
@@ -1207,10 +1236,10 @@ class UniversalAIService {
   /**
    * Check usage limits and quotas
    */
-  async checkUsageLimits(userContext) {
+  async checkUsageLimits(userContext, { ipAddress } = {}) {
     if (!userContext.isAuthenticated) {
-      // For guests, implement IP-based rate limiting
-      return this.checkGuestRateLimits(userContext);
+      // Guests: per-session / per-IP hourly and daily limits
+      return this.checkGuestRateLimits(userContext, { ipAddress });
     }
 
     const planFeatures = this.featureAccess[userContext.planLevel];
@@ -1298,6 +1327,9 @@ class UniversalAIService {
           riskAssessment: [],
           successMetrics: [],
         },
+
+        // JSON round-trip: plain data only (dates as ISO strings)
+        generatedPlan: JSON.parse(JSON.stringify(aiPlan)),
 
         status: "draft",
 
@@ -1786,21 +1818,8 @@ Respond with this exact JSON schema:
     };
   }
 
-  // Additional helper methods would be implemented here...
-  async generateColorPalette(params) {
-    // Implementation for color palette generation
-    return ["#E8F4F8", "#D4E6F1", "#A9CCE3"];
-  }
 
-  async generateMoodBoardConcepts(params) {
-    // Implementation for mood board concepts
-    return ["elegant", "modern", "rustic"];
-  }
 
-  async generateLayoutSuggestions(params) {
-    // Implementation for layout suggestions
-    return ["Open floor plan", "Intimate seating areas"];
-  }
 
   generateInteractiveElementsForUser(userContext) {
     const features = this.featureAccess[userContext.planLevel];
@@ -1815,164 +1834,9 @@ Respond with this exact JSON schema:
     };
   }
 
-  async getUserHistory(userContext) {
-    try {
-      const events = await Event.find({
-        owner: userContext.userId,
-        ownerType: userContext.userType,
-      })
-        .limit(10)
-        .lean();
 
-      return events;
-    } catch (error) {
-      logger.error("Failed to get user history:", error);
-      return [];
-    }
-  }
 
-  async getMonthlyUsage(userId, month) {
-    try {
-      const count = await Event.countDocuments({
-        owner: userId,
-        aiGenerated: true,
-        createdAt: {
-          $gte: new Date(`${month}-01`),
-          $lt: new Date(`${month}-31`),
-        },
-      });
 
-      return count;
-    } catch (error) {
-      logger.error("Failed to get monthly usage:", error);
-      return 0;
-    }
-  }
-
-  async checkGuestRateLimits(userContext) {
-    // Implement IP-based rate limiting for guests
-    // This would typically use Redis or similar
-    return true;
-  }
-
-  // Placeholder methods for advanced features
-  async calculateRiskAdjustedBudget(budget, marketInsights) {
-    return null;
-  }
-  async calculateSeasonalAdjustments(budget, eventType) {
-    return null;
-  }
-  async identifyNegotiationOpportunities(marketInsights) {
-    return null;
-  }
-  async generateBudgetSimulator(budget) {
-    return null;
-  }
-  async generateWhatIfScenarios(budget) {
-    return null;
-  }
-  async analyzeCurrentDesignTrends(eventType) {
-    return null;
-  }
-  async generatePhotoSuggestions(theme, eventType) {
-    return null;
-  }
-  async generateCustomMoodBoard(params) {
-    return null;
-  }
-  async generate3DVisualization(params) {
-    return null;
-  }
-  async generateVirtualWalkthrough(params) {
-    return null;
-  }
-  async generateBasicTimeline(params) {
-    return [];
-  }
-  async identifyCriticalPath(params) {
-    return [];
-  }
-  async identifyRiskWindows(eventDate, eventType) {
-    return null;
-  }
-  async calculateBookingProbabilities(vendorRecommendations) {
-    return null;
-  }
-  async generateDynamicAdjustments(eventDate) {
-    return null;
-  }
-  async generateScenarioPlanning(eventDate) {
-    return null;
-  }
-  async generateIntelligentAlerts(eventDate, eventType) {
-    return null;
-  }
-  async generatePersonalizedRecommendations(params) {
-    return [];
-  }
-  async analyzeUserStylePreferences(userHistory) {
-    return {};
-  }
-  async identifySuccessPatterns(userHistory) {
-    return [];
-  }
-  async identifyImprovementAreas(userHistory) {
-    return [];
-  }
-  async generateAIPersonalityProfile(userContext) {
-    return null;
-  }
-  async generatePredictiveInsights(userContext) {
-    return null;
-  }
-  async calculateOverallRiskScore(params) {
-    return 0.3;
-  }
-  async assessFinancialRisks(budget, marketInsights) {
-    return { score: 0.2, level: "low" };
-  }
-  async assessOperationalRisks(timeline, eventType) {
-    return { score: 0.3, level: "low" };
-  }
-  async assessMarketRisks(marketInsights) {
-    return { score: 0.4, level: "medium" };
-  }
-  async assessSeasonalRisks(eventDate, eventType) {
-    return null;
-  }
-  async assessVendorRisks(vendorRecommendations) {
-    return null;
-  }
-  async generateMitigationStrategies(params) {
-    return [];
-  }
-  async generateContingencyPlans(params) {
-    return null;
-  }
-  async generateRiskSimulation(params) {
-    return null;
-  }
-  async generatePredictiveRiskModeling(params) {
-    return null;
-  }
-  async updateUserPreferences(learningModel, eventData, userContext) {
-    return;
-  }
-  async calculateModelAccuracy(learningModel) {
-    return 0.75;
-  }
-  categorizeRecommendations(recommendations) {
-    return {};
-  }
-  async generateCollaborationSuggestions(recommendations) {
-    return null;
-  }
-  async generateAlternativeOptions(vendors, recommendations) {
-    return null;
-  }
-  async generateTrendPredictionsForUser(params) {
-    return null;
-  }
 
   async generateLearningInsightsForUser(params) {
     const { userContext } = params;
@@ -2292,6 +2156,40 @@ Respond with this exact JSON schema:
   /**
    * Get plan result by ID (session token or saved plan ID)
    */
+  /**
+   * Full plan content for a saved AIPlan. Plans saved before generatedPlan
+   * existed only kept the original request (their timeline/budget/vendors
+   * were never stored), so rebuild them once from it and store the result.
+   */
+  async ensureGeneratedPlan(savedDoc, userContext) {
+    if (savedDoc.generatedPlan) return savedDoc.generatedPlan;
+
+    const request = savedDoc.originalRequest || {};
+    logger.info("Rebuilding legacy saved plan from its original request", {
+      planId: savedDoc.planId,
+      userId: userContext.userId,
+    });
+    const plan = await this.generateComprehensivePlan({
+      eventType: request.eventType,
+      eventDate: request.date?.preferred,
+      guestCount: request.guestCount,
+      budget: request.budget,
+      location: request.location,
+      theme: request.preferences?.theme,
+      specialRequirements: request.requirements,
+      clientProfile: request.clientProfile,
+      userContext,
+      regenerateForPlanId: savedDoc.planId,
+    });
+    plan.rebuiltFromLegacyAt = new Date().toISOString();
+
+    const generatedPlan = JSON.parse(JSON.stringify(plan));
+    // updateOne: older documents may not pass today's schema validation
+    await AIPlan.updateOne({ _id: savedDoc._id }, { $set: { generatedPlan } });
+    savedDoc.generatedPlan = generatedPlan;
+    return generatedPlan;
+  }
+
   async getPlanResult(params) {
     const { resultId, userContext } = params;
 
@@ -2312,11 +2210,54 @@ Respond with this exact JSON schema:
         };
       }
 
+      // Share links (POST /ai-planner/plans/:planId/share): read-only, any viewer
+      if (/^[a-f0-9]{48}$/.test(resultId)) {
+        const sharedPlan = await AIPlan.findOne({ shareToken: resultId });
+        if (sharedPlan?.generatedPlan) {
+          return {
+            eventPlan: {
+              ...sharedPlan.generatedPlan,
+              // Viewers can't rate or modify someone else's plan
+              planId: undefined,
+              learningInteractionId: null,
+              shared: true,
+            },
+            generatedAt: sharedPlan.createdAt,
+            resultType: "shared",
+            canUpgrade: false,
+          };
+        }
+      }
+
       // If authenticated, try to get from saved plans
       if (userContext.isAuthenticated) {
+        // Auto-saved plans (POST /ai-planner/generate) are AIPlan records
+        const savedPlan = await AIPlan.findOne({
+          planId: resultId,
+          userId: userContext.userId,
+        });
+        if (savedPlan) {
+          const generatedPlan = await this.ensureGeneratedPlan(
+            savedPlan,
+            userContext
+          );
+          const enhancedPlan = await this.enhancePlanForUser(
+            { ...generatedPlan, planId: savedPlan.planId },
+            userContext
+          );
+          return {
+            eventPlan: enhancedPlan,
+            generatedAt: savedPlan.createdAt,
+            resultType: "saved",
+            canUpgrade: userContext.planLevel < 5,
+          };
+        }
+
+        // Plans saved onto an Event (save-generated-plan)
         const savedEvent = await Event.findOne({
           $or: [
-            { _id: resultId },
+            // Only cast to ObjectId when it is one — a UUID planId would throw
+            ...(mongoose.isValidObjectId(resultId) ? [{ _id: resultId }] : []),
             { "aiPlanData.planId": resultId },
             { "aiPlanData.sessionToken": resultId },
           ],
@@ -2502,18 +2443,21 @@ Respond with this exact JSON schema:
             keyHighlights: aiPlan.clientAnalysis?.keyHighlights || [],
           },
 
-          timeline: this.formatTimelineForSave(aiPlan.intelligentTimeline),
-          budgetBreakdown: this.formatBudgetForSave(aiPlan.budgetOptimization),
+          timeline: this.formatTimelineForSave(aiPlan.timeline),
+          budgetBreakdown: this.formatBudgetForSave(aiPlan.budgetBreakdown),
           vendorRecommendations: this.formatVendorsForSave(
             aiPlan.vendorRecommendations
           ),
           visualSuggestions: aiPlan.visualSuggestions || {},
-          logistics: this.formatLogisticsForSave(aiPlan.intelligentTimeline),
+          logistics: this.formatLogisticsForSave(aiPlan.timeline),
           riskAssessment: this.formatRiskAssessmentForSave(aiPlan.riskAnalysis),
           successMetrics: this.formatSuccessMetricsForSave(
             aiPlan.clientAnalysis?.successMetrics || []
           ),
         },
+
+        // JSON round-trip: plain data only (dates as ISO strings)
+        generatedPlan: JSON.parse(JSON.stringify(aiPlan)),
 
         status: "draft",
 
@@ -2606,15 +2550,100 @@ Respond with this exact JSON schema:
   /**
    * Chat with AI about a specific plan
    */
+  /**
+   * General event-planning chat that isn't tied to a saved plan.
+   * history: [{ role: "user" | "assistant", content }], most recent last.
+   */
+  async chatGeneral({ userContext, message, history = [] }) {
+    const startTime = Date.now();
+    const previousMessages = (Array.isArray(history) ? history : [])
+      .slice(-10)
+      .filter((m) => m && typeof m.content === "string")
+      .map((m) => ({
+        role: m.role === "assistant" ? "assistant" : "user",
+        content: m.content.slice(0, 1000),
+      }));
+
+    const conversationContext = {
+      general: true,
+      userMessage: message,
+      previousMessages,
+      prompt: `You are Confetti's event planning assistant for events in Nigeria. Help with budgets, vendors, timelines, etiquette and logistics. Be concise and practical. If the user wants a full plan, suggest using the AI planner.
+
+CONVERSATION HISTORY:
+${previousMessages.map((m) => `${m.role}: ${m.content}`).join("\n") || "(none)"}
+
+USER MESSAGE: "${message}"
+
+Respond in JSON format:
+{
+  "message": "Your conversational response here",
+  "suggestions": ["Follow-up question 1", "Follow-up question 2", "Follow-up question 3"]
+}`,
+    };
+
+    const availableModels = this.featureAccess[userContext.planLevel].aiModels;
+    // The local engine scores plans but can't hold a conversation
+    if (!availableModels.some((model) => model !== "local")) {
+      return {
+        response:
+          "AI chat isn't included in your current plan. You can still create a full event plan with the AI planner, or upgrade to chat with the assistant.",
+        suggestions: ["Create a new event plan", "See plan options"],
+        aiModel: "none",
+        confidence: 0,
+        responseTime: Date.now() - startTime,
+      };
+    }
+    const aiResponse = await this.generateChatResponse(
+      conversationContext,
+      availableModels,
+      userContext
+    );
+
+    return {
+      response: aiResponse.response,
+      suggestions: aiResponse.suggestions || [],
+      aiModel: aiResponse.model,
+      confidence: aiResponse.confidence,
+      responseTime: Date.now() - startTime,
+    };
+  }
+
   async chatWithPlan({ planId, userContext, message, context }) {
     try {
       const startTime = Date.now();
 
-      // Get the existing plan — don't filter by userType as it can change between sessions
-      const existingPlan = await AIPlan.findOne({
+      // Try MongoDB first (saved plans)
+      let existingPlan = await AIPlan.findOne({
         planId,
         userId: userContext.userId,
       });
+
+      // Fall back to Redis session cache (guest/session token plans)
+      if (!existingPlan) {
+        const rawSession = await this.redis.get(`session_plan:${planId}`);
+        if (rawSession) {
+          const sessionData = JSON.parse(rawSession);
+          existingPlan = {
+            planId,
+            title: sessionData.planData?.eventDetails?.eventType
+              ? `${sessionData.planData.eventDetails.eventType} Plan`
+              : "Event Plan",
+            description: "",
+            aiPlan: sessionData.planData,
+            originalRequest: sessionData.planData?.originalRequest || {},
+            status: "active",
+            addInteraction: () => {},
+            save: async () => {
+              await this.redis.setex(
+                `session_plan:${planId}`,
+                24 * 60 * 60,
+                JSON.stringify(sessionData)
+              );
+            },
+          };
+        }
+      }
 
       if (!existingPlan) {
         throw new AppError("Plan not found or access denied", 404);
@@ -2691,7 +2720,8 @@ Respond with this exact JSON schema:
     availableModels,
     userContext
   ) {
-    const chatPrompt = this.buildChatPrompt(conversationContext);
+    const chatPrompt =
+      conversationContext.prompt || this.buildChatPrompt(conversationContext);
 
     try {
       let aiResponse;
@@ -2721,11 +2751,18 @@ Respond with this exact JSON schema:
         });
       }
 
+      // The local engine can't hold a conversation (it returns {}), and a
+      // model may skip the "message" key — use the honest fallback then
+      const reply =
+        typeof aiResponse.response === "string"
+          ? aiResponse.response
+          : aiResponse.response?.message;
+      if (typeof reply !== "string" || !reply.trim()) {
+        return this.getFallbackChatResponse(conversationContext);
+      }
+
       return {
-        response:
-          aiResponse.response?.message ||
-          aiResponse.response ||
-          "I understand your question about the plan. Let me help you with that.",
+        response: reply,
         suggestions: aiResponse.response?.suggestions || [
           "Would you like me to suggest alternatives?",
           "Should we explore budget adjustments?",
@@ -2812,6 +2849,20 @@ Respond in JSON format:
    * Fallback chat response
    */
   getFallbackChatResponse(context) {
+    if (context.general) {
+      return {
+        response:
+          "I can't reach the AI assistant right now. You can still create an event plan with the AI planner, or try your question again in a moment.",
+        suggestions: [
+          "Create a new event plan",
+          "Browse vendors near me",
+          "How do I set a realistic budget?",
+        ],
+        planUpdates: null,
+        model: "fallback",
+        confidence: 0,
+      };
+    }
     return {
       response: `I understand you're asking about your ${
         context.eventType
@@ -2846,13 +2897,31 @@ Respond in JSON format:
 
       // First, try to find as a saved plan (for authenticated users)
       if (userContext.isAuthenticated) {
-        existingPlan = await AIPlan.findOne({
+        const savedDoc = await AIPlan.findOne({
           planId: resultId,
           userId: userContext.userId,
         });
 
-        if (existingPlan) {
+        if (savedDoc) {
           planSource = "saved";
+          const generatedPlan = await this.ensureGeneratedPlan(
+            savedDoc,
+            userContext
+          );
+          // Refine the full generated plan (same shape as session plans)
+          const wrapper = {
+            planId: savedDoc.planId,
+            aiPlan: { ...generatedPlan, planId: savedDoc.planId },
+            originalRequest: savedDoc.originalRequest,
+            addRefinement: (refinement) => savedDoc.addRefinement(refinement),
+            save: async () => {
+              savedDoc.generatedPlan = wrapper.aiPlan;
+              savedDoc.status = "refined";
+              savedDoc.markModified("generatedPlan");
+              await savedDoc.save();
+            },
+          };
+          existingPlan = wrapper;
         }
       }
 
@@ -2913,6 +2982,10 @@ Respond in JSON format:
         refinementType
       );
 
+      // Apply the refined plan data back to the existingPlan object
+      existingPlan.aiPlan = updatedPlan.aiPlan;
+      existingPlan.status = "refined";
+
       // Add refinement to history (only for saved plans)
       if (planSource === "saved" && existingPlan.addRefinement) {
         existingPlan.addRefinement({
@@ -2922,10 +2995,6 @@ Respond in JSON format:
           changes: updatedPlan.changes,
           reasoning: refinementResponse.reasoning,
         });
-
-        // Update the plan
-        existingPlan.aiPlan = updatedPlan.aiPlan;
-        existingPlan.status = "refined";
       }
 
       // Save the updated plan
@@ -3087,14 +3156,32 @@ Respond with a JSON object containing:
         });
       }
 
-      return (
-        aiResponse.response || {
-          refinements: {},
-          reasoning: "AI refinement completed",
-          impact: "Plan has been updated based on your request",
-          additionalSuggestions: [],
+      const fallback = {
+        refinements: {},
+        reasoning: "AI refinement completed",
+        impact: "Plan has been updated based on your request",
+        additionalSuggestions: [],
+      };
+
+      let raw = aiResponse.response;
+      if (!raw) return fallback;
+
+      // AI may return a JSON string — parse it
+      if (typeof raw === "string") {
+        try {
+          const jsonMatch = raw.match(/\{[\s\S]*\}/);
+          raw = jsonMatch ? JSON.parse(jsonMatch[0]) : fallback;
+        } catch {
+          raw = fallback;
         }
-      );
+      }
+
+      // Ensure refinements property exists
+      if (!raw || typeof raw !== "object" || !raw.refinements) {
+        raw = { ...fallback, ...raw, refinements: raw?.refinements || {} };
+      }
+
+      return raw;
     } catch (error) {
       logger.error("AI refinement generation failed:", error);
       return {
@@ -3133,11 +3220,14 @@ Respond with a JSON object containing:
       changes.push("Budget optimized");
     }
 
-    // Apply vendor refinements
+    // Vendor advice from the model is kept as advice: it must not replace
+    // the real vendors matched from the database (the model invents names)
     if (refinementResponse.refinements.vendors) {
-      updatedPlan.vendorRecommendations =
-        refinementResponse.refinements.vendors;
-      changes.push("Vendor recommendations updated");
+      updatedPlan.vendorRecommendations = {
+        ...updatedPlan.vendorRecommendations,
+        aiAdvice: refinementResponse.refinements.vendors,
+      };
+      changes.push("Vendor advice added");
     }
 
     // Apply logistics refinements
@@ -3157,6 +3247,17 @@ Respond with a JSON object containing:
       };
       changes.push("Visual elements updated");
     }
+
+    // Shown to the user so they can see what the refinement did
+    updatedPlan.latestRefinement = {
+      type: refinementType,
+      prompt: refinementPrompt,
+      changes,
+      reasoning: refinementResponse.reasoning || null,
+      impact: refinementResponse.impact || null,
+      suggestions: refinementResponse.additionalSuggestions || [],
+      refinedAt: new Date().toISOString(),
+    };
 
     return {
       aiPlan: updatedPlan,
@@ -3542,56 +3643,40 @@ Respond with a JSON object containing:
       const totalBudget = budget?.amount || 0;
       const currency = budget?.currency || "NGN";
 
-      // Calculate realistic allocations
+      // Calculate allocations: the midpoint of each category's range, scaled
+      // so categories fill exactly (100 - contingency)% of the budget.
+      // Deterministic (same request, same budget) and never over-allocates.
+      const contingencyPercentage = 10;
       const breakdown = {};
-      let allocatedPercentage = 0;
 
       // Sort categories by priority
       const sortedCategories = Object.entries(template).sort(
         (a, b) => a[1].priority - b[1].priority
       );
+      const midpoints = sortedCategories.map(
+        ([, config]) => (config.min + config.max) / 2
+      );
+      const midpointTotal = midpoints.reduce((sum, p) => sum + p, 0);
+      const scale = (100 - contingencyPercentage) / midpointTotal;
 
-      for (const [category, config] of sortedCategories) {
-        const percentage = Math.min(
-          config.max,
-          Math.max(
-            config.min,
-            config.min + Math.random() * (config.max - config.min)
-          )
-        );
-
+      sortedCategories.forEach(([category, config], i) => {
+        const percentage = midpoints[i] * scale;
         breakdown[category] = {
           percentage: Math.round(percentage),
           amount: Math.round(totalBudget * (percentage / 100)),
           priority: config.priority,
           items: [],
         };
+      });
 
-        allocatedPercentage += percentage;
-      }
-
-      // Adjust if over 100%
-      if (allocatedPercentage > 95) {
-        const excess = allocatedPercentage - 90; // Leave 10% for contingency
-        const adjustableCategories = Object.entries(breakdown).filter(
-          ([_, config]) => config.priority >= 3
-        );
-
-        for (const [category, config] of adjustableCategories) {
-          const reduction = excess / adjustableCategories.length;
-          config.percentage = Math.max(
-            config.percentage - reduction,
-            template[category].min
-          );
-          config.amount = Math.round(totalBudget * (config.percentage / 100));
-        }
-      }
-
-      // Add contingency
-      const contingencyPercentage = 10;
+      // Contingency takes the remainder so amounts sum exactly to the budget
+      const allocated = Object.values(breakdown).reduce(
+        (sum, cat) => sum + cat.amount,
+        0
+      );
       breakdown.contingency = {
         percentage: contingencyPercentage,
-        amount: Math.round(totalBudget * (contingencyPercentage / 100)),
+        amount: totalBudget - allocated,
         priority: 0,
         purpose: "Unexpected expenses and last-minute changes",
       };
@@ -3613,7 +3698,9 @@ Respond with a JSON object containing:
             (sum, cat) => sum + cat.amount,
             0
           ),
-          withinBudget: true,
+          withinBudget:
+            Object.values(breakdown).reduce((sum, cat) => sum + cat.amount, 0) <=
+            totalBudget,
           recommendations: this.generateBudgetRecommendations(
             breakdown,
             eventType,
@@ -4236,20 +4323,18 @@ Respond with a JSON object containing:
    */
   calculateDeadline(eventDate, timeframe) {
     const eventDateObj = new Date(eventDate);
+    const WEEK_MS = 7 * 24 * 60 * 60 * 1000;
 
-    if (timeframe.includes("12+")) {
-      return new Date(eventDateObj.getTime() - 12 * 7 * 24 * 60 * 60 * 1000);
-    } else if (timeframe.includes("8-12")) {
-      return new Date(eventDateObj.getTime() - 10 * 7 * 24 * 60 * 60 * 1000);
-    } else if (timeframe.includes("4-8")) {
-      return new Date(eventDateObj.getTime() - 6 * 7 * 24 * 60 * 60 * 1000);
-    } else if (timeframe.includes("2-4")) {
-      return new Date(eventDateObj.getTime() - 3 * 7 * 24 * 60 * 60 * 1000);
-    } else if (timeframe.includes("1-2")) {
-      return new Date(eventDateObj.getTime() - 1.5 * 7 * 24 * 60 * 60 * 1000);
-    } else {
-      return eventDateObj;
-    }
+    // "12+ weeks" -> 12 weeks before; "8-12 weeks" -> 10 (midpoint);
+    // anything without a number ("Day of") -> the event date
+    const range = String(timeframe).match(/(\d+(?:\.\d+)?)\s*-\s*(\d+(?:\.\d+)?)/);
+    const atLeast = String(timeframe).match(/(\d+(?:\.\d+)?)\s*\+/);
+    const weeksBefore = range
+      ? (Number(range[1]) + Number(range[2])) / 2
+      : atLeast
+        ? Number(atLeast[1])
+        : 0;
+    return new Date(eventDateObj.getTime() - weeksBefore * WEEK_MS);
   }
 
   /**
@@ -4548,5 +4633,8 @@ Respond with a JSON object containing:
     }
   }
 }
+
+// Planning intelligence (risk, budget, timeline, personalisation, limits)
+Object.assign(UniversalAIService.prototype, aiPlannerIntelligence);
 
 export default new UniversalAIService();

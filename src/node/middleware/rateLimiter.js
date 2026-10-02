@@ -12,8 +12,11 @@ import { logger } from "../utils/logger.js";
 export function rateLimiter(prefix, maxRequests, windowSeconds) {
   return async (req, res, next) => {
     try {
-      // Get client identifier (IP address)
-      const clientId = req.ip || req.connection.remoteAddress || "unknown";
+      // Per user when authenticated (users behind one NAT/office IP don't
+      // share a budget); per IP otherwise
+      const clientId = req.user?._id
+        ? `user:${req.user._id}`
+        : req.ip || req.connection.remoteAddress || "unknown";
       const key = `rate-limit:${prefix}:${clientId}`;
 
       // Get current count

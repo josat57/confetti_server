@@ -74,7 +74,20 @@ const aiPlanSchema = new mongoose.Schema(
       clientProfile: mongoose.Schema.Types.Mixed,
     },
 
-    // Generated AI plan
+    // Full plan exactly as generated (same shape as the /ai-planner/generate
+    // response's eventPlan) — what the result/refine endpoints serve
+    generatedPlan: { type: mongoose.Schema.Types.Mixed },
+
+    // Read-only share link: /ai-event-planner/result/<shareToken>
+    shareToken: { type: String, index: { unique: true, sparse: true } },
+    sharedWith: [
+      {
+        email: { type: String, lowercase: true, trim: true },
+        sharedAt: { type: Date, default: Date.now },
+      },
+    ],
+
+    // Generated AI plan (summarized, legacy)
     aiPlan: {
       // Core plan structure
       overview: {
@@ -224,6 +237,13 @@ const aiPlanSchema = new mongoose.Schema(
             "vendor_swap",
             "requirement_update",
             "style_change",
+            // Types sent by the planner UI's quick enhancements
+            "general",
+            "timeline",
+            "budget",
+            "vendors",
+            "risks",
+            "sustainability",
           ],
         },
         userPrompt: String,
@@ -246,6 +266,9 @@ const aiPlanSchema = new mongoose.Schema(
             "export",
             "feedback",
             "refinement_request",
+            // Logged by chatWithPlan and updatePlan
+            "chat",
+            "update",
           ],
         },
         details: mongoose.Schema.Types.Mixed,

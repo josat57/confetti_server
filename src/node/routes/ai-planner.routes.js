@@ -1,5 +1,6 @@
 import express from "express";
 import UniversalAIController from "../controllers/universal-ai-planner.controller.js";
+import * as PlanActionsController from "../controllers/ai-plan-actions.controller.js";
 import { rateLimiter } from "../middleware/rateLimiter.js";
 import { protect as authenticate, optionalAuth } from "../middleware/auth.js";
 import {
@@ -436,6 +437,40 @@ router.get(
   authenticate,
   rateLimiter("ai-planner-learning", 20, 60 * 60), // 20 requests per hour
   UniversalAIController.getLearningInsights
+);
+
+/**
+ * @swagger
+ * /ai-planner/feedback:
+ *   post:
+ *     summary: Rate a generated plan
+ *     description: Records a 1-5 rating on a generated plan (defaults to the most recent one) to improve personalization
+ *     tags: [Universal AI Planner]
+ *     security:
+ *       - bearerAuth: []
+ *     requestBody:
+ *       required: true
+ *       content:
+ *         application/json:
+ *           schema:
+ *             type: object
+ *             required: [rating]
+ *             properties:
+ *               rating: { type: integer, minimum: 1, maximum: 5 }
+ *               comments: { type: string }
+ *               successful: { type: boolean }
+ *               interactionId: { type: string, description: "learningInteractionId from the generated plan" }
+ *     responses:
+ *       200:
+ *         description: Feedback recorded
+ *       404:
+ *         description: No generated plan to attach feedback to
+ */
+router.post(
+  "/feedback",
+  authenticate,
+  rateLimiter("ai-planner-feedback", 30, 60 * 60), // 30 requests per hour
+  UniversalAIController.submitPlanFeedback
 );
 
 /**
@@ -886,6 +921,35 @@ router.get(
 
 /**
  * @swagger
+ * /ai-planner/chat:
+ *   post:
+ *     summary: General AI planning chat (not tied to a plan)
+ *     tags: [Universal AI Planner]
+ *     requestBody:
+ *       required: true
+ *       content:
+ *         application/json:
+ *           schema:
+ *             type: object
+ *             required: [message]
+ *             properties:
+ *               message: { type: string, maxLength: 2000 }
+ *               conversationHistory:
+ *                 type: array
+ *                 items: { type: object, properties: { role: { type: string }, content: { type: string } } }
+ *     responses:
+ *       200:
+ *         description: Assistant reply in data.response
+ */
+router.post(
+  "/chat",
+  optionalAuth,
+  rateLimiter("ai-planner-general-chat", 30, 60 * 60), // 30 requests per hour
+  UniversalAIController.chatGeneral
+);
+
+/**
+ * @swagger
  * /ai-planner/plans/{planId}/chat:
  *   post:
  *     summary: Chat with AI about a specific plan (Authenticated Users)
@@ -1264,5 +1328,161 @@ router.post(
  *         description: AI system is unavailable or unhealthy
  */
 router.get("/health", UniversalAIController.healthCheck);
+
+// ---------------------------------------------------------------------------
+// Plan export / share / quote
+// ---------------------------------------------------------------------------
+
+/**
+ * @swagger
+ * /ai-planner/plans/{planId}/export:
+ *   get:
+ *     summary: Download a plan as PDF or JSON
+ *     description: planId may be a saved planId, a guest session token or a share token
+ *     tags: [Universal AI Planner]
+ *     parameters:
+ *       - { in: path, name: planId, required: true, schema: { type: string } }
+ *       - { in: query, name: format, schema: { type: string, enum: [pdf, json], default: pdf } }
+ *     responses:
+ *       200: { description: File download }
+ *       404: { description: Plan not found or expired }
+ */
+router.get(
+  "/plans/:planId/export",
+  optionalAuth,
+  rateLimiter("ai-planner-export", 30, 60 * 60), // 30 requests per hour
+  PlanActionsController.exportPlan
+);
+
+/**
+ * @swagger
+ * /ai-planner/plans/{planId}/share:
+ *   post:
+ *     summary: Email a read-only link to a saved plan
+ *     tags: [Universal AI Planner]
+ *     security:
+ *       - bearerAuth: []
+ *     requestBody:
+ *       required: true
+ *       content:
+ *         application/json:
+ *           schema:
+ *             type: object
+ *             required: [email]
+ *             properties:
+ *               email: { type: string, format: email }
+ *               message: { type: string, maxLength: 1000 }
+ *     responses:
+ *       200: { description: "Shared; data.shareUrl is the read-only link" }
+ *       404: { description: Plan not found (only saved plans can be shared) }
+ */
+router.post(
+  "/plans/:planId/share",
+  authenticate,
+  rateLimiter("ai-planner-share", 10, 60 * 60), // 10 requests per hour
+  PlanActionsController.sharePlan
+);
+
+/**
+ * @swagger
+ * /ai-planner/plans/{planId}/quote:
+ *   post:
+ *     summary: Draft a quote from a saved plan's budget (vendors only)
+ *     tags: [Universal AI Planner]
+ *     security:
+ *       - bearerAuth: []
+ *     requestBody:
+ *       required: true
+ *       content:
+ *         application/json:
+ *           schema:
+ *             type: object
+ *             required: [customerName, customerEmail]
+ *             properties:
+ *               customerName: { type: string }
+ *               customerEmail: { type: string, format: email }
+ *               customerPhone: { type: string }
+ *     responses:
+ *       201: { description: "Draft quote created; data.quoteId" }
+ *       403: { description: Only vendors can convert plans to quotes }
+ */
+router.post(
+  "/plans/:planId/quote",
+  authenticate,
+  rateLimiter("ai-planner-quote", 20, 60 * 60), // 20 requests per hour
+  PlanActionsController.convertPlanToQuote
+);
+
+// ---------------------------------------------------------------------------
+// Saved chat sessions with the AI planning assistant
+// ---------------------------------------------------------------------------
+
+/**
+ * @swagger
+ * /ai-planner/sessions:
+ *   post:
+ *     summary: Start a saved chat session
+ *     tags: [Universal AI Planner]
+ *     security:
+ *       - bearerAuth: []
+ *   get:
+ *     summary: List your chat sessions (most recent first)
+ *     tags: [Universal AI Planner]
+ *     security:
+ *       - bearerAuth: []
+ */
+router.post(
+  "/sessions",
+  authenticate,
+  rateLimiter("ai-planner-session-create", 30, 60 * 60),
+  PlanActionsController.createChatSession
+);
+router.get("/sessions", authenticate, PlanActionsController.listChatSessions);
+
+/**
+ * @swagger
+ * /ai-planner/sessions/{sessionId}:
+ *   get:
+ *     summary: Get a chat session with its messages
+ *     tags: [Universal AI Planner]
+ *     security:
+ *       - bearerAuth: []
+ */
+router.get("/sessions/:sessionId", authenticate, PlanActionsController.getChatSession);
+
+/**
+ * @swagger
+ * /ai-planner/sessions/{sessionId}/messages:
+ *   post:
+ *     summary: Send a message; stores it and the assistant's reply
+ *     tags: [Universal AI Planner]
+ *     security:
+ *       - bearerAuth: []
+ */
+router.post(
+  "/sessions/:sessionId/messages",
+  authenticate,
+  rateLimiter("ai-planner-session-chat", 30, 60 * 60), // 30 requests per hour
+  PlanActionsController.sendChatSessionMessage
+);
+
+/**
+ * @swagger
+ * /ai-planner/sessions/{sessionId}/generate-plan:
+ *   post:
+ *     summary: Generate a full plan from the event details discussed in the chat
+ *     tags: [Universal AI Planner]
+ *     security:
+ *       - bearerAuth: []
+ *     responses:
+ *       201: { description: "data.resultId is the new plan's id" }
+ *       422: { description: The chat is missing required event details }
+ */
+router.post(
+  "/sessions/:sessionId/generate-plan",
+  authenticate,
+  rateLimiter("ai-planner-session-generate", 10, 60 * 60), // 10 requests per hour
+  PlanActionsController.generatePlanFromChatSession
+);
 
 export default router;

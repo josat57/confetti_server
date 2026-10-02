@@ -37,14 +37,16 @@ services:
       context: ./src/python
       dockerfile: Dockerfile
     ports:
-      - "5600:5600"
+      - "127.0.0.1:5600:5600"
     env_file:
       - .env
     environment:
       # Docker-network overrides
       FLASK_ENV: development
       MONGODB_URI: mongodb://mongodb:27017/confetti
-      REDIS_URI: redis://redis:6379
+      REDIS_URL: redis://redis:6379
+    # Auto-reload on source changes (volume-mounted below)
+    command: ["gunicorn", "run:app", "--bind", "0.0.0.0:5600", "--worker-class", "gthread", "--threads", "8", "--timeout", "120", "--keep-alive", "65", "--reload"]
     volumes:
       - ./src/python:/usr/src/app
     depends_on:
