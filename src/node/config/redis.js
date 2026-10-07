@@ -1,11 +1,7 @@
 import Redis from "ioredis";
 import { logger } from "../utils/logger.js";
 
-const redisConfig = {
-  host: process.env.REDIS_HOST || "localhost",
-  port: process.env.REDIS_PORT || 6379,
-  password: process.env.REDIS_PASSWORD,
-  db: process.env.REDIS_DB || 0,
+const redisOptions = {
   retryStrategy: (times) => {
     const delay = Math.min(times * 50, 2000);
     return delay;
@@ -15,8 +11,17 @@ const redisConfig = {
   showFriendlyErrorStack: process.env.NODE_ENV === "development",
 };
 
-// Create Redis client
-const redis = new Redis(redisConfig);
+// REDIS_URL (redis://[user:pass@]host:port[/db]) when set — e.g. a Render
+// Key Value internal URL; otherwise the separate REDIS_HOST/PORT/... settings
+const redis = process.env.REDIS_URL
+  ? new Redis(process.env.REDIS_URL, redisOptions)
+  : new Redis({
+      host: process.env.REDIS_HOST || "localhost",
+      port: process.env.REDIS_PORT || 6379,
+      password: process.env.REDIS_PASSWORD,
+      db: process.env.REDIS_DB || 0,
+      ...redisOptions,
+    });
 
 // Handle Redis events
 redis.on("connect", () => {

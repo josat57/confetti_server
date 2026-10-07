@@ -12,7 +12,7 @@ import { v4 as uuidv4 } from 'uuid';
 class ReportService {
   constructor() {
     this.redis = createClient({
-      url: process.env.REDIS_URI
+      url: process.env.REDIS_URL || process.env.REDIS_URI
     });
     this.redis.connect().catch(err => {
       logger.error('Redis connection error:', err);

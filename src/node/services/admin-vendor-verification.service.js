@@ -581,7 +581,7 @@ class AdminVendorVerificationService {
     // Invalidate any cached search results for this vendor
     try {
       const { createClient } = await import("redis");
-      const redis = createClient({ url: process.env.REDIS_URI });
+      const redis = createClient({ url: process.env.REDIS_URL || process.env.REDIS_URI });
       await redis.connect();
       // Delete vendor search cache keys that might contain this vendor
       const keys = await redis.keys(`search:vendors:*`);

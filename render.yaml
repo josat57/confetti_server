@@ -1,4 +1,4 @@
-# Render Blueprint — Confetti (API + AI service + web frontend + Redis)
+# Render Blueprint — Confetti (API + AI service + web frontend)
 #
 # Deploy: Render Dashboard → New → Blueprint → pick this repo. Render prompts
 # for every `sync: false` value. Full steps: docs/deploy-render.md
@@ -12,6 +12,9 @@
 #   `type: pserv` and point PYTHON_API_URL at its internal address.
 # - No persistent disk on free: files written locally (backups, the email
 #   retry queue) are lost on redeploy. Backups are disabled below.
+# - Redis: uses an existing Key Value instance (REDIS_URL prompt) because the
+#   free tier allows one per workspace. It must be in the same region as
+#   these services (frankfurt) for its Internal URL to work.
 # - Service URLs assume these names are free on onrender.com. If Render gives
 #   a service a different URL (e.g. with a suffix), update FRONTEND_URL,
 #   PYTHON_API_URL and NEXT_PUBLIC_API_URL to match, then redeploy.
@@ -62,21 +65,11 @@ services:
       # Database and cache
       - key: MONGODB_URI
         sync: false # MongoDB Atlas connection string
+      # Existing Key Value instance (free tier allows one per workspace).
+      # Use its Internal URL with a database number, e.g.
+      # redis://red-xxxxxxxx:6379/1 — see docs/deploy-render.md
       - key: REDIS_URL
-        fromService:
-          type: keyvalue
-          name: confetti-redis
-          property: connectionString
-      - key: REDIS_HOST
-        fromService:
-          type: keyvalue
-          name: confetti-redis
-          property: host
-      - key: REDIS_PORT
-        fromService:
-          type: keyvalue
-          name: confetti-redis
-          property: port
+        sync: false
 
       # Auth and encryption
       - key: JWT_ACCESS_SECRET
@@ -173,10 +166,7 @@ services:
       - key: MONGODB_URI
         sync: false # same Atlas connection string as the API
       - key: REDIS_URL
-        fromService:
-          type: keyvalue
-          name: confetti-redis
-          property: connectionString
+        sync: false # same value as confetti-api
       # At least one AI provider; without any, AI features fall back to local
       # scoring and report "degraded" on /health/ai
       - key: OPENAI_API_KEY
@@ -214,15 +204,3 @@ services:
         sync: false
       - key: NEXT_PUBLIC_GOOGLE_MAPS_API_KEY
         sync: false
-
-  # ---------------------------------------------------------------------------
-  # Redis-compatible cache, rate limits and guest sessions (internal only)
-  # ---------------------------------------------------------------------------
-  - type: keyvalue
-    name: confetti-redis
-    plan: free
-    region: frankfurt
-    # Free Key Value has 25 MB and no persistence: evict least-recently-used
-    # keys instead of failing writes when full
-    maxmemoryPolicy: allkeys-lru
-    ipAllowList: [] # no external access; services connect internally
