@@ -13,7 +13,7 @@ MongoDB isn't offered by Render — use MongoDB Atlas.
 
 ## 1. MongoDB Atlas
 
-1. Create a free M0 cluster. Pick a European region (e.g. AWS Frankfurt) — the Render services run in Frankfurt.
+1. Create a free M0 cluster. Pick AWS **Oregon (us-west-2)** if available — the Render services run in Oregon, and every database query crosses that distance.
 2. Database Access: add a user with read/write access.
 3. Network Access: allow `0.0.0.0/0`. Render free services have no fixed outbound IPs.
 4. Copy the connection string and **put the database name in the path**:
@@ -24,7 +24,7 @@ MongoDB isn't offered by Render — use MongoDB Atlas.
 
 The free tier allows one Key Value instance per workspace, so the Blueprint uses the one you already have instead of creating its own.
 
-1. Open the existing Key Value instance in the dashboard and check its **region**. It must be **Frankfurt** (the region in `render.yaml`) for the internal URL to work. If it's elsewhere, change every `region: frankfurt` in `render.yaml` to that region before creating the Blueprint — the region can't be changed after a service is created.
+1. Open the existing Key Value instance in the dashboard and check its **region**. It must be **Oregon** (the region in `render.yaml`) for the internal URL to work. If it's elsewhere, change every `region: oregon` in `render.yaml` to that region before creating the Blueprint — the region can't be changed after a service is created.
 2. Copy its **Internal Key Value URL** (e.g. `redis://red-xxxxxxxx:6379`) and add a database number so Confetti's keys don't mix with the other project's: `redis://red-xxxxxxxx:6379/1`. The other project normally uses database `0`.
 
 ## 3. Push the code

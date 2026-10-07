@@ -14,7 +14,7 @@
 #   retry queue) are lost on redeploy. Backups are disabled below.
 # - Redis: uses an existing Key Value instance (REDIS_URL prompt) because the
 #   free tier allows one per workspace. It must be in the same region as
-#   these services (frankfurt) for its Internal URL to work.
+#   these services (oregon) for its Internal URL to work.
 # - Service URLs assume these names are free on onrender.com. If Render gives
 #   a service a different URL (e.g. with a suffix), update FRONTEND_URL,
 #   PYTHON_API_URL and NEXT_PUBLIC_API_URL to match, then redeploy.
@@ -27,7 +27,7 @@ services:
     name: confetti-api
     runtime: node
     plan: free
-    region: frankfurt
+    region: oregon
     branch: apidev
     buildCommand: npm ci --omit=dev
     startCommand: npm start
@@ -145,7 +145,7 @@ services:
     name: confetti-ai
     runtime: docker
     plan: free
-    region: frankfurt
+    region: oregon
     branch: apidev
     dockerfilePath: ./src/python/Dockerfile
     dockerContext: ./src/python
@@ -181,7 +181,7 @@ services:
     name: confetti-web
     runtime: node
     plan: free
-    region: frankfurt
+    region: oregon
     repo: https://github.com/josat57/confetti_
     branch: develop
     # Don't set NODE_ENV: npm ci needs devDependencies to build;
