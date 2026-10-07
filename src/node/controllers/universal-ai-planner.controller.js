@@ -40,8 +40,9 @@ export const getUserContext = async (req) => {
       logger.debug("Guest session detected", {
         sessionToken: guestSessionToken.substring(0, 10) + "...",
         planLevel: context.planLevel,
+        // Sessions come back from Redis as JSON, so createdAt is a string
         sessionAge: guestSession.createdAt
-          ? Date.now() - guestSession.createdAt.getTime()
+          ? Date.now() - new Date(guestSession.createdAt).getTime()
           : 0,
       });
     }
