@@ -56,27 +56,39 @@ app.use("/api/v1", generalLimiter);
 app.use("/api/v1/auth", authLimiter);
 
 // Configure CORS
+// Browser origins allowed to call the API with credentials. Extra origins
+// (e.g. a custom domain alongside the onrender.com one) go in ALLOWED_ORIGINS,
+// comma-separated.
+const getAllowedOrigins = () =>
+  [
+    process.env.FRONTEND_URL || "http://localhost:3000",
+    ...(process.env.ALLOWED_ORIGINS || "").split(","),
+    "http://localhost:3000",
+    "http://localhost:3001",
+    "http://localhost:8080",
+    "http://localhost:8000",
+    "http://127.0.0.1:3000",
+    "http://127.0.0.1:3001",
+    process.env.PUBLIC_NGROK_URL,
+  ]
+    .map((o) => (o || "").trim().replace(/\/$/, ""))
+    .filter(Boolean);
+
 const corsOptions = {
   origin: function (origin, callback) {
     // Allow requests with no origin (like mobile apps or curl requests)
     if (!origin) return callback(null, true);
 
-    const allowedOrigins = [
-      process.env.FRONTEND_URL || "http://localhost:3000",
-      "http://localhost:3000",
-      "http://localhost:3001",
-      "http://localhost:8080",
-      "http://localhost:8000",
-      "http://127.0.0.1:3000",
-      "http://127.0.0.1:3001",
-      process.env.PUBLIC_NGROK_URL,
-    ].filter(Boolean); // Remove any undefined values
+    const allowedOrigins = getAllowedOrigins();
 
     if (allowedOrigins.indexOf(origin) !== -1) {
       callback(null, true);
     } else if (process.env.NODE_ENV === "production") {
+      // Rejecting (not just omitting CORS headers) stops the request before
+      // any route runs — this is also the CSRF protection for cookie auth
+      // when COOKIE_SAMESITE=none, including plain cross-site form posts
       logger.warn(`CORS blocked origin: ${origin}`);
-      callback(new Error("Not allowed by CORS"));
+      callback(new AppError("Not allowed by CORS", 403));
     } else {
       logger.warn(`CORS: allowing unlisted origin in development: ${origin}`);
       callback(null, true);

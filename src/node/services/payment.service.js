@@ -94,6 +94,7 @@ class PaymentService {
           redirect_url: `${
             process.env.PUBLIC_NGROK_URL ||
             process.env.PUBLIC_URL ||
+            process.env.RENDER_EXTERNAL_URL || // set automatically on Render
             "http://localhost:9600"
           }/api/v1/subscriptions/payment-callback`,
           customer: {
@@ -160,6 +161,7 @@ class PaymentService {
           callback_url: `${
             process.env.PUBLIC_NGROK_URL ||
             process.env.PUBLIC_URL ||
+            process.env.RENDER_EXTERNAL_URL || // set automatically on Render
             "http://localhost:9600"
           }/api/v1/subscriptions/payment-callback`,
           metadata: {

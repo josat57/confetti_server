@@ -5,6 +5,7 @@ import { Strategy as TwitterStrategy } from 'passport-twitter';
 import User from '../models/user.model.js';
 import { generateTokenPair } from '../utils/auth.js';
 import RefreshToken from '../models/refreshToken.model.js';
+import { authCookieOptions } from "../utils/cookie-options.js";
 
 class OAuthService {
   constructor() {
@@ -193,19 +194,13 @@ class OAuthService {
       });
 
       // Set cookies
-      res.cookie('accessToken', tokens.accessToken, {
-        httpOnly: true,
-        secure: process.env.NODE_ENV === 'production',
-        sameSite: 'strict',
-        maxAge: 15 * 60 * 1000 // 15 minutes
-      });
+      res.cookie('accessToken', tokens.accessToken, authCookieOptions({
+        maxAge: 15 * 60 * 1000, // 15 minutes
+      }));
 
-      res.cookie('refreshToken', tokens.refreshToken, {
-        httpOnly: true,
-        secure: process.env.NODE_ENV === 'production',
-        sameSite: 'strict',
-        maxAge: 7 * 24 * 60 * 60 * 1000 // 7 days
-      });
+      res.cookie('refreshToken', tokens.refreshToken, authCookieOptions({
+        maxAge: 7 * 24 * 60 * 60 * 1000, // 7 days
+      }));
 
       // Redirect to frontend with success
       res.redirect(`${process.env.FRONTEND_URL}/auth/success`);

@@ -18,6 +18,7 @@ import { logger } from "../utils/logger.js";
 import { Console } from "console";
 import securityMonitor from "../services/security-monitor.service.js";
 import { closeUserAccount } from "../services/account-closure.service.js";
+import { authCookieOptions } from "../utils/cookie-options.js";
 
 export const register = async (req, res, next) => {
   try {
@@ -194,19 +195,13 @@ export const login = async (req, res, next) => {
     });
 
     // Set cookies
-    res.cookie("accessToken", tokens.accessToken, {
-      httpOnly: true,
-      secure: process.env.NODE_ENV === "production",
-      sameSite: "strict",
+    res.cookie("accessToken", tokens.accessToken, authCookieOptions({
       maxAge: 15 * 60 * 1000, // 15 minutes
-    });
+    }));
 
-    res.cookie("refreshToken", tokens.refreshToken, {
-      httpOnly: true,
-      secure: process.env.NODE_ENV === "production",
-      sameSite: "strict",
+    res.cookie("refreshToken", tokens.refreshToken, authCookieOptions({
       maxAge: 7 * 24 * 60 * 60 * 1000, // 7 days
-    });
+    }));
 
     user.lastLogin = Date.now();
     if (user.loginAttempts || user.lockUntil) {
@@ -248,8 +243,8 @@ export const logout = async (req, res, next) => {
       }
     }
 
-    res.clearCookie("accessToken");
-    res.clearCookie("refreshToken");
+    res.clearCookie("accessToken", authCookieOptions());
+    res.clearCookie("refreshToken", authCookieOptions());
 
     res.json({
       status: "success",
@@ -389,19 +384,13 @@ export const verifyEmail = async (req, res, next) => {
     });
 
     // Set cookies
-    res.cookie("accessToken", tokens.accessToken, {
-      httpOnly: true,
-      secure: process.env.NODE_ENV === "production",
-      sameSite: "strict",
+    res.cookie("accessToken", tokens.accessToken, authCookieOptions({
       maxAge: 15 * 60 * 1000, // 15 minutes
-    });
+    }));
 
-    res.cookie("refreshToken", tokens.refreshToken, {
-      httpOnly: true,
-      secure: process.env.NODE_ENV === "production",
-      sameSite: "strict",
+    res.cookie("refreshToken", tokens.refreshToken, authCookieOptions({
       maxAge: 7 * 24 * 60 * 60 * 1000, // 7 days
-    });
+    }));
 
     res.status(200).json({
       status: "success",
@@ -538,19 +527,13 @@ export const resetPassword = async (req, res, next) => {
     });
 
     // Set cookies
-    res.cookie("accessToken", tokens.accessToken, {
-      httpOnly: true,
-      secure: process.env.NODE_ENV === "production",
-      sameSite: "strict",
+    res.cookie("accessToken", tokens.accessToken, authCookieOptions({
       maxAge: 15 * 60 * 1000, // 15 minutes
-    });
+    }));
 
-    res.cookie("refreshToken", tokens.refreshToken, {
-      httpOnly: true,
-      secure: process.env.NODE_ENV === "production",
-      sameSite: "strict",
+    res.cookie("refreshToken", tokens.refreshToken, authCookieOptions({
       maxAge: 7 * 24 * 60 * 60 * 1000, // 7 days
-    });
+    }));
 
     res.status(200).json({
       status: "success",
@@ -644,19 +627,13 @@ export const refreshToken = async (req, res, next) => {
     });
 
     // Set cookies
-    res.cookie("accessToken", tokens.accessToken, {
-      httpOnly: true,
-      secure: process.env.NODE_ENV === "production",
-      sameSite: "strict",
+    res.cookie("accessToken", tokens.accessToken, authCookieOptions({
       maxAge: 15 * 60 * 1000, // 15 minutes
-    });
+    }));
 
-    res.cookie("refreshToken", tokens.refreshToken, {
-      httpOnly: true,
-      secure: process.env.NODE_ENV === "production",
-      sameSite: "strict",
+    res.cookie("refreshToken", tokens.refreshToken, authCookieOptions({
       maxAge: 7 * 24 * 60 * 60 * 1000, // 7 days
-    });
+    }));
 
     res.json({
       status: "success",
@@ -690,8 +667,8 @@ export const revokeRefreshToken = async (req, res, next) => {
     await token.revoke();
 
     // Clear cookies
-    res.clearCookie("accessToken");
-    res.clearCookie("refreshToken");
+    res.clearCookie("accessToken", authCookieOptions());
+    res.clearCookie("refreshToken", authCookieOptions());
 
     res.json({
       status: "success",
@@ -842,8 +819,8 @@ export const disableAccount = async (req, res, next) => {
 
     // Deactivate, cancel subscriptions, remove cards, revoke sessions, email confirmation
     await closeUserAccount(user, reason || "User requested account disable");
-    res.clearCookie("accessToken");
-    res.clearCookie("refreshToken");
+    res.clearCookie("accessToken", authCookieOptions());
+    res.clearCookie("refreshToken", authCookieOptions());
 
     // Log the action
     logger.info(`Account disabled for user ${user._id}`, {

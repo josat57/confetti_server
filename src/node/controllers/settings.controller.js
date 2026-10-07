@@ -11,6 +11,7 @@ import {
   deleteFromGridFS,
   fileToBase64,
 } from "../utils/gridfs.js";
+import { authCookieOptions } from "../utils/cookie-options.js";
 
 /**
  * Get all user settings
@@ -978,8 +979,8 @@ export const deleteAccount = async (req, res, next) => {
 
     // Deactivate, cancel subscriptions, remove cards, revoke sessions, email confirmation
     await closeUserAccount(user, req.body.reason || "User deleted account");
-    res.clearCookie("accessToken");
-    res.clearCookie("refreshToken");
+    res.clearCookie("accessToken", authCookieOptions());
+    res.clearCookie("refreshToken", authCookieOptions());
 
     res.status(200).json({
       status: "success",

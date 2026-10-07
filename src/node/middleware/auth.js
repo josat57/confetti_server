@@ -6,6 +6,7 @@ import Admin from "../models/Admin.js";
 import { createError } from "../utils/error.js";
 import speakeasy from "speakeasy";
 import { logger } from "../utils/logger.js";
+import { authCookieOptions } from "../utils/cookie-options.js";
 
 export const protect = async (req, res, next) => {
   try {
@@ -193,13 +194,10 @@ export const handleTokenRefresh = async (req, res, next) => {
               { expiresIn: "15m" }
             );
 
-            res.cookie("accessToken", newAccessToken, {
-              httpOnly: true,
-              secure: process.env.NODE_ENV === "production",
-              sameSite: "strict",
+            res.cookie("accessToken", newAccessToken, authCookieOptions({
               maxAge: 15 * 60 * 1000, // 15 minutes
               path: "/",
-            });
+            }));
 
             req.admin = admin;
             return next();
@@ -207,8 +205,8 @@ export const handleTokenRefresh = async (req, res, next) => {
         }
       } catch (refreshError) {
         // Refresh token is invalid, clear cookies
-        res.clearCookie("accessToken", { path: "/" });
-        res.clearCookie("refreshToken", { path: "/api/v1/admin/refresh" });
+        res.clearCookie("accessToken", authCookieOptions({ path: "/" }));
+        res.clearCookie("refreshToken", authCookieOptions({ path: "/api/v1/admin/refresh" }));
         return next(createError(401, "Session expired. Please login again."));
       }
     }

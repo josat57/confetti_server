@@ -37,6 +37,7 @@ import adminRealtimeService from "../services/admin-realtime.service.js";
 import adminAdvancedReportingService from "../services/admin-advanced-reporting.service.js";
 import adminSystemMonitoringService from "../services/admin-system-monitoring.service.js";
 import { escapeRegExp } from "../utils/escape-regex.js";
+import { authCookieOptions } from "../utils/cookie-options.js";
 
 // Helper function to set secure cookies and return tokens
 const setSecureCookies = (res, admin) => {
@@ -53,22 +54,16 @@ const setSecureCookies = (res, admin) => {
   );
 
   // Set access token cookie (short-lived)
-  res.cookie("accessToken", accessToken, {
-    httpOnly: true,
-    secure: process.env.NODE_ENV === "production",
-    sameSite: "strict",
+  res.cookie("accessToken", accessToken, authCookieOptions({
     maxAge: 15 * 60 * 1000, // 15 minutes
     path: "/",
-  });
+  }));
 
   // Set refresh token cookie (long-lived)
-  res.cookie("refreshToken", refreshToken, {
-    httpOnly: true,
-    secure: process.env.NODE_ENV === "production",
-    sameSite: "strict",
+  res.cookie("refreshToken", refreshToken, authCookieOptions({
     maxAge: 7 * 24 * 60 * 60 * 1000, // 7 days
     path: "/api/v1/admin/refresh",
-  });
+  }));
 
   // Return tokens for frontend use (SPAs, mobile apps)
   return { accessToken, refreshToken };
@@ -76,8 +71,8 @@ const setSecureCookies = (res, admin) => {
 
 // Helper function to clear cookies
 const clearCookies = (res) => {
-  res.clearCookie("accessToken", { path: "/" });
-  res.clearCookie("refreshToken", { path: "/api/v1/admin/refresh" });
+  res.clearCookie("accessToken", authCookieOptions({ path: "/" }));
+  res.clearCookie("refreshToken", authCookieOptions({ path: "/api/v1/admin/refresh" }));
 };
 
 // Create initial super admin
