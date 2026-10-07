@@ -33,7 +33,6 @@ const config = {
     ];
     
     for (const variable of required) {
-        console.log(process.env[variable]);
       if (!process.env[variable]) {
         throw new Error(`Environment variable ${variable} is required`);
       }

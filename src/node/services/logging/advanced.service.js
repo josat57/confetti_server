@@ -30,13 +30,17 @@ const logger = winston.createLogger({
             filename: 'logs/combined.log'
         })
     ],
-    // Handle exceptions and rejections
+    // Handle exceptions and rejections. Also to the console: on hosts like
+    // Render the log files aren't visible, so a startup crash would otherwise
+    // show only "Exited with status 1"
     exceptionHandlers: [
+        new winston.transports.Console(),
         new winston.transports.File({
             filename: 'logs/exceptions.log'
         })
     ],
     rejectionHandlers: [
+        new winston.transports.Console(),
         new winston.transports.File({
             filename: 'logs/rejections.log'
         })

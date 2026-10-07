@@ -62,3 +62,7 @@ data/
 
 # Local env backups (contain secrets)
 .env.bak*
+
+# Local credential files
+atlas-credentials.env
+*-credentials.env

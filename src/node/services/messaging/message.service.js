@@ -3,8 +3,7 @@ import Redis from 'ioredis';
 import logger from '../logging/advanced.service.js';
 import Message from '../../models/message.model.js';
 import User from '../../models/user.model.js';
-import pkg from 'uuid';
-const { v4: uuidv4 } = pkg;
+import { v4 as uuidv4 } from 'uuid';
 import { sendMessageNotification } from '../../utils/email.js';
 import { AppError } from '../../utils/AppError.js';
 
