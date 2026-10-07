@@ -1,7 +1,7 @@
 import Subscription from "../models/subscription.model.js";
 import User from "../models/user.model.js";
 import Flutterwave from "flutterwave-node-v3";
-import Paystack from "paystack";
+import axios from "axios";
 import { sendSubscriptionEmail } from "../utils/email.js";
 import { AppError } from "../utils/AppError.js";
 
@@ -26,10 +26,36 @@ try {
   flutterwave = null;
 }
 
+// Paystack REST API, called directly: the `paystack` npm package depends on
+// the deprecated, vulnerable `request` library. Same shape as that package —
+// methods resolve to Paystack's JSON body ({ status, message, data }).
+const paystackRequest = async (method, path, data) => {
+  try {
+    const response = await axios({
+      method,
+      url: `https://api.paystack.co${path}`,
+      data,
+      headers: { Authorization: `Bearer ${process.env.PAYSTACK_SECRET_KEY}` },
+      timeout: 30000,
+    });
+    return response.data;
+  } catch (error) {
+    throw new Error(error.response?.data?.message || error.message);
+  }
+};
+
+const createPaystackClient = () => ({
+  transaction: {
+    initialize: (params) => paystackRequest("post", "/transaction/initialize", params),
+    verify: (reference) =>
+      paystackRequest("get", `/transaction/verify/${encodeURIComponent(reference)}`),
+  },
+});
+
 let paystack;
 try {
   if (process.env.PAYSTACK_SECRET_KEY) {
-    paystack = new Paystack(process.env.PAYSTACK_SECRET_KEY);
+    paystack = createPaystackClient();
   } else {
     console.warn(
       "Paystack key not configured, payment functionality will be limited"
