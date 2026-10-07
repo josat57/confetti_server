@@ -102,3 +102,4 @@ In `render.yaml`, then sync the Blueprint:
 | AI features return defaults / `/health/ai` is degraded | No AI key on `confetti-ai`, or its `MONGODB_URI` is wrong |
 | AI calls fail with 401 | `PYTHON_API_KEY` differs between services — redeploy `confetti-api` after changing it on `confetti-ai` |
 | Payment returns to an ngrok error page | `PUBLIC_NGROK_URL` is set on the API — remove it |
+| Can't sign in as super admin | Check the API logs at startup. "A super admin already exists … does not match" means an admin was created earlier with other credentials (e.g. by a local run against this database): sign in with those, or set `SUPER_ADMIN_RESET=true` on `confetti-api` for one deploy to apply `SUPER_ADMIN_EMAIL`/`SUPER_ADMIN_PASSWORD`, then remove it |

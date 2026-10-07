@@ -113,9 +113,20 @@ export const authorizeAdminCreation = async (req, res, next) => {
   }
 };
 
+/**
+ * Startup: create the super admin from SUPER_ADMIN_EMAIL / SUPER_ADMIN_PASSWORD
+ * if none exists. An existing super admin is never changed, unless
+ * SUPER_ADMIN_RESET=true — then its email and password are set from those
+ * variables (remove the flag after one deploy).
+ *
+ * Outcomes are logged at warn level so they show in production logs.
+ */
 export const ensureSuperAdminExists = async () => {
   try {
-    if (!process.env.SUPER_ADMIN_PASSWORD) {
+    const password = process.env.SUPER_ADMIN_PASSWORD;
+    const email = SUPER_ADMIN_CONFIG.defaultEmail.toLowerCase();
+
+    if (!password) {
       logger.warn("SUPER_ADMIN_PASSWORD not set — skipping automatic super admin creation");
       return;
     }
@@ -123,13 +134,34 @@ export const ensureSuperAdminExists = async () => {
     const superAdmin = await findSuperAdmin();
 
     if (!superAdmin) {
-      logger.info("No super admin found during initialization. Creating default super admin...");
-      await createSuperAdmin();
-      logger.info("Default super admin created successfully");
+      await createSuperAdmin(email, password);
+      logger.warn(`Super admin created: ${email}`);
+      return;
+    }
+
+    if (process.env.SUPER_ADMIN_RESET === "true") {
+      superAdmin.email = email;
+      superAdmin.password = password; // hashed by the model's pre-save hook
+      superAdmin.isActive = true;
+      await superAdmin.save();
+      logger.warn(
+        `Super admin credentials reset to SUPER_ADMIN_EMAIL/SUPER_ADMIN_PASSWORD (${email}). ` +
+          "Remove SUPER_ADMIN_RESET now so later restarts don't reset it again."
+      );
+      return;
+    }
+
+    const emailMatches = superAdmin.email === email;
+    const passwordMatches = await superAdmin.comparePassword(password);
+    if (emailMatches && passwordMatches) {
+      logger.info(`✓ Super admin exists: ${superAdmin.email}`);
     } else {
-      logger.info(`✓ Super admin initialized: ${superAdmin.email}`);
-      logger.info(`  - Created: ${superAdmin.createdAt}`);
-      logger.info(`  - Last login: ${superAdmin.lastLogin || "Never"}`);
+      logger.warn(
+        `A super admin already exists (${superAdmin.email}, created ${superAdmin.createdAt?.toISOString?.() || superAdmin.createdAt}) ` +
+          `and its ${emailMatches ? "password does not" : "email does not"} match SUPER_ADMIN_` +
+          `${emailMatches ? "PASSWORD" : "EMAIL"}, so those settings were not applied. ` +
+          "Sign in with the existing credentials, or set SUPER_ADMIN_RESET=true for one deploy to apply them."
+      );
     }
   } catch (error) {
     logger.error("Error ensuring super admin exists:", error);
