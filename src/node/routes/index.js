@@ -51,6 +51,9 @@ import webhookManagementRoutes from "./webhook.routes.js";
 import dataExchangeRoutes from "./data-exchange.routes.js";
 import paymentWebhookRoutes from "./payment-webhook.routes.js";
 import eventPassRoutes from "./event-pass.routes.js";
+import checklistRoutes from "./checklist.routes.js";
+import invitationRoutes from "./invitation.routes.js";
+import rsvpRoutes from "./rsvp.routes.js";
 import taskRoutes, { eventTaskRoutes } from "./task.routes.js";
 import guestRoutes, {
   eventGuestRoutes,
@@ -116,6 +119,10 @@ router.use("/messages", messageRoutes);
 router.use("/events/:eventId/tasks", eventTaskRoutes);
 router.use("/events/:eventId/guests", eventGuestRoutes);
 router.use("/events/:eventId/seating", eventSeatingRoutes);
+router.use("/events/:eventId/checklist", checklistRoutes);
+router.use("/events/:eventId/invitation", invitationRoutes);
+// Public RSVP links (no login)
+router.use("/rsvp", rsvpRoutes);
 router.use("/events/:eventId/documents", eventDocumentRoutes);
 router.use("/events/:eventId/budget", eventBudgetRoutes);
 router.use("/events", eventRoutes);

@@ -12,6 +12,7 @@
     "test:plans": "node --test --test-force-exit __tests__/integration/plans.test.mjs",
     "test:issues": "node --test --test-force-exit __tests__/integration/open-issues.test.mjs",
     "test:passes": "node --test --test-force-exit __tests__/integration/event-passes.test.mjs",
+    "test:event-screens": "node --test --test-force-exit __tests__/integration/event-screens.test.mjs",
     "test:performance": "jest --testMatch='**/__tests__/performance/**/*.test.js' --runInBand",
     "test:performance:properties": "jest --testMatch='**/__tests__/performance/properties/**/*.test.js' --runInBand",
     "seed": "node scripts/seed-all.js",

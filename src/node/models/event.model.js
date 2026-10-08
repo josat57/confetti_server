@@ -145,12 +145,36 @@ const eventSchema = new mongoose.Schema(
           enum: ["pending", "in_progress", "completed"],
           default: "pending",
         },
+        // Checklist fields
+        category: String,
+        priority: { type: String, enum: ["low", "medium", "high"], default: "medium" },
+        completedAt: Date,
         assignedTo: {
           type: mongoose.Schema.Types.ObjectId,
           ref: "User",
         },
       },
     ],
+    // Seating plan tables (guests reference them by name in tableAssignment)
+    seatingTables: [
+      {
+        name: { type: String, required: true, trim: true },
+        capacity: { type: Number, min: 1, default: 10 },
+      },
+    ],
+    // Digital invitation design
+    invitation: {
+      title: { type: String, trim: true, maxlength: 120 },
+      hosts: { type: String, trim: true, maxlength: 200 },
+      message: { type: String, trim: true, maxlength: 2000 },
+      dressCode: { type: String, trim: true, maxlength: 120 },
+      venueText: { type: String, trim: true, maxlength: 300 },
+      theme: { type: String, enum: ["classic", "floral", "modern", "festive", "elegant"], default: "classic" },
+      accentColor: { type: String, match: /^#[0-9a-fA-F]{6}$/, default: "#7c3aed" },
+      rsvpDeadline: Date,
+      allowPlusOnes: { type: Boolean, default: true },
+      updatedAt: Date,
+    },
     timeline: [
       {
         title: {
@@ -292,17 +316,20 @@ eventSchema.index({ status: 1, category: 1 });
 
 // Virtual for event duration in hours
 eventSchema.virtual("duration").get(function () {
+  if (!this.endDate || !this.startDate) return undefined;
   return (this.endDate - this.startDate) / (1000 * 60 * 60);
 });
 
 // Virtual for days until event
 eventSchema.virtual("daysUntil").get(function () {
+  if (!this.startDate) return undefined;
   return Math.ceil((this.startDate - new Date()) / (1000 * 60 * 60 * 24));
 });
 
 // Virtual for confirmed guest count
 eventSchema.virtual("confirmedGuestCount").get(function () {
-  return this.guests.filter((guest) => guest.status === "confirmed").length;
+  // guests isn't loaded when an event is populated with a field selection
+  return (this.guests || []).filter((guest) => guest.status === "confirmed").length;
 });
 
 // Method to check if event is in the past

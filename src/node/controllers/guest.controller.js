@@ -1,62 +1,101 @@
+import mongoose from "mongoose";
 import Guest from "../models/guest.model.js";
 import Event from "../models/event.model.js";
 import { AppError } from "../utils/AppError.js";
 import { escapeRegExp } from "../utils/escape-regex.js";
-import { assertWithinLimit } from "../services/plan-access.service.js";
+import { findOwnedEvent, ownsEvent } from "../utils/event-access.js";
+import { assertWithinLimit, getRequestPlan } from "../services/plan-access.service.js";
 
-// Events made with POST /events have createdBy/organizer but may have no planner
-const ownsEvent = (event, user) =>
-  [event.planner, event.createdBy, event.organizer].some(
-    (id) => id && id.toString() === user._id.toString()
-  );
+/**
+ * Guest list, RSVPs (organizer side) and seating for an event the user owns.
+ * Public RSVP links live in rsvp.controller.js.
+ */
+
+const MAX_IMPORT = 1000;
+const STATUSES = ["pending", "accepted", "declined", "tentative"];
+
+/** Fields an organizer may set on a guest */
+const pickGuestFields = (body = {}) => {
+  const out = {};
+  for (const key of ["name", "email", "phone", "plusOneName", "specialRequirements", "category", "relationship", "notes", "tableAssignment"]) {
+    if (typeof body[key] === "string") out[key] = body[key].trim();
+  }
+  if (typeof body.plusOne === "boolean") out.plusOne = body.plusOne;
+  if (Number.isInteger(body.seatNumber) && body.seatNumber > 0) out.seatNumber = body.seatNumber;
+  if (Array.isArray(body.dietaryRestrictions)) {
+    out.dietaryRestrictions = body.dietaryRestrictions.filter((d) => typeof d === "string" && d.trim()).map((d) => d.trim());
+  } else if (typeof body.dietaryRestrictions === "string" && body.dietaryRestrictions.trim()) {
+    out.dietaryRestrictions = body.dietaryRestrictions.split(/[,;]/).map((d) => d.trim()).filter(Boolean);
+  }
+  if (STATUSES.includes(body.rsvpStatus)) out.rsvpStatus = body.rsvpStatus;
+  if (out.email === "") delete out.email;
+  return out;
+};
+
+/** The guest if it belongs to an event the user owns */
+const findOwnedGuest = async (guestId, user) => {
+  if (!mongoose.isValidObjectId(guestId)) throw new AppError("Guest not found", 404);
+  const guest = await Guest.findById(guestId);
+  if (!guest) throw new AppError("Guest not found", 404);
+  const event = await Event.findById(guest.event).select("planner createdBy organizer");
+  if (!event || !ownsEvent(event, user)) throw new AppError("Guest not found", 404);
+  return guest;
+};
+
+/** Guest limit for this event, for the screen ("72 of 100") */
+const guestLimitInfo = async (req, eventId, used) => {
+  const { plan } = await getRequestPlan(req);
+  const max = plan?.limits?.guestsPerEvent;
+  if (max === undefined || max === null) return { max: null, used };
+  const eventPassService = (await import("../services/event-pass.service.js")).default;
+  if ((await eventPassService.featuresFor(eventId)).unlimitedGuests) return { max: null, used, viaPass: true };
+  return { max, used };
+};
 
 /**
  * List guests for an event
- * GET /api/v1/events/:eventId/guests
+ * GET /api/v1/events/:eventId/guests?rsvpStatus=&tableAssignment=&search=
  */
 export const listEventGuests = async (req, res, next) => {
   try {
+    const event = await findOwnedEvent(req.params.eventId, req.user);
     const { rsvpStatus, tableAssignment, search } = req.query;
-    const query = { event: req.params.eventId };
+    const query = { event: event._id };
 
-    if (rsvpStatus) query.rsvpStatus = rsvpStatus;
-    if (tableAssignment) query.tableAssignment = tableAssignment;
-    if (search) {
-      query.$or = [
-        { name: { $regex: escapeRegExp(search), $options: "i" } },
-        { email: { $regex: escapeRegExp(search), $options: "i" } },
-      ];
+    if (STATUSES.includes(rsvpStatus)) query.rsvpStatus = rsvpStatus;
+    if (typeof tableAssignment === "string" && tableAssignment) query.tableAssignment = tableAssignment;
+    if (typeof search === "string" && search) {
+      const rx = { $regex: escapeRegExp(search), $options: "i" };
+      query.$or = [{ name: rx }, { email: rx }, { phone: rx }];
     }
 
-    const guests = await Guest.find(query).sort({ name: 1 }).lean();
-
-    // Get statistics
-    const stats = await Guest.aggregate([
-      { $match: { event: req.params.eventId } },
-      {
-        $group: {
-          _id: "$rsvpStatus",
-          count: { $sum: 1 },
-        },
-      },
+    const [guests, all] = await Promise.all([
+      Guest.find(query).sort({ name: 1 }).lean(),
+      Guest.find({ event: event._id }).select("plusOne rsvpStatus invitation.status").lean(),
     ]);
 
-    const totalGuests = guests.length;
-    const totalWithPlusOne = guests.filter((g) => g.plusOne).length;
+    const byStatus = Object.fromEntries(STATUSES.map((s) => [s, 0]));
+    for (const g of all) byStatus[g.rsvpStatus || "pending"] += 1;
+    const plusOnes = all.filter((g) => g.plusOne).length;
+    const invitations = all.reduce((acc, g) => {
+      const status = g.invitation?.status || "not_sent";
+      acc[status] = (acc[status] || 0) + 1;
+      return acc;
+    }, {});
 
     res.status(200).json({
       status: "success",
       data: {
         guests,
         stats: {
-          total: totalGuests,
-          withPlusOne: totalWithPlusOne,
-          estimatedAttendance: totalGuests + totalWithPlusOne,
-          byStatus: stats.reduce((acc, s) => {
-            acc[s._id] = s.count;
-            return acc;
-          }, {}),
+          total: all.length,
+          withPlusOne: plusOnes,
+          estimatedAttendance: all.length + plusOnes,
+          attending: byStatus.accepted + all.filter((g) => g.plusOne && g.rsvpStatus === "accepted").length,
+          byStatus,
+          invitations,
         },
+        limit: await guestLimitInfo(req, event._id, all.length),
       },
     });
   } catch (error) {
@@ -70,73 +109,56 @@ export const listEventGuests = async (req, res, next) => {
  */
 export const addGuest = async (req, res, next) => {
   try {
-    // Verify event exists and user has access
-    const event = await Event.findById(req.params.eventId);
-    if (!event) {
-      return next(new AppError("Event not found", 404));
-    }
+    const event = await findOwnedEvent(req.params.eventId, req.user);
+    const fields = pickGuestFields(req.body);
+    if (!fields.name) throw new AppError("Guest name is required", 400);
 
-    if (!ownsEvent(event, req.user)) {
-      return next(new AppError("Access denied", 403));
-    }
+    await assertWithinLimit(req, "guestsPerEvent", { eventId: event._id });
 
-    await assertWithinLimit(req, "guestsPerEvent", { eventId: req.params.eventId });
-
-    const guest = await Guest.create({
-      ...req.body,
-      event: req.params.eventId,
-    });
-
-    res.status(201).json({
-      status: "success",
-      data: { guest },
-    });
+    const guest = await Guest.create({ ...fields, event: event._id, planner: req.user._id });
+    res.status(201).json({ status: "success", data: { guest } });
   } catch (error) {
     next(error);
   }
 };
 
 /**
- * Bulk import guests
- * POST /api/v1/events/:eventId/guests/import
+ * Bulk import guests (e.g. from a CSV). Rows without a name, and emails already
+ * on the list, are skipped.
+ * POST /api/v1/events/:eventId/guests/import  { guests: [{ name, email, phone, … }] }
  */
 export const importGuests = async (req, res, next) => {
   try {
-    const { guests } = req.body;
-
+    const event = await findOwnedEvent(req.params.eventId, req.user);
+    const { guests } = req.body || {};
     if (!Array.isArray(guests) || guests.length === 0) {
-      return next(new AppError("Guests array is required", 400));
+      throw new AppError("Guests array is required", 400);
     }
+    if (guests.length > MAX_IMPORT) throw new AppError(`Import up to ${MAX_IMPORT} guests at a time`, 400);
 
-    // Verify event exists and user has access
-    const event = await Event.findById(req.params.eventId);
-    if (!event) {
-      return next(new AppError("Event not found", 404));
+    const existingEmails = new Set(
+      (await Guest.find({ event: event._id, email: { $exists: true } }).select("email").lean()).map((g) => g.email)
+    );
+    const rows = [];
+    let skipped = 0;
+    for (const raw of guests) {
+      const fields = pickGuestFields(raw);
+      const email = fields.email?.toLowerCase();
+      if (!fields.name || (email && existingEmails.has(email))) {
+        skipped += 1;
+        continue;
+      }
+      if (email) existingEmails.add(email);
+      rows.push({ ...fields, event: event._id, planner: req.user._id });
     }
+    if (rows.length === 0) throw new AppError("No new guests to import (each needs a name; emails already listed are skipped)", 400);
 
-    if (!ownsEvent(event, req.user)) {
-      return next(new AppError("Access denied", 403));
-    }
+    await assertWithinLimit(req, "guestsPerEvent", { eventId: event._id, adding: rows.length });
 
-    await assertWithinLimit(req, "guestsPerEvent", {
-      eventId: req.params.eventId,
-      adding: guests.length,
-    });
-
-    // Add event ID to each guest
-    const guestsWithEvent = guests.map((g) => ({
-      ...g,
-      event: req.params.eventId,
-    }));
-
-    const importedGuests = await Guest.insertMany(guestsWithEvent);
-
+    const imported = await Guest.insertMany(rows);
     res.status(201).json({
       status: "success",
-      data: {
-        imported: importedGuests.length,
-        guests: importedGuests,
-      },
+      data: { imported: imported.length, skipped, guests: imported },
     });
   } catch (error) {
     next(error);
@@ -149,19 +171,9 @@ export const importGuests = async (req, res, next) => {
  */
 export const getGuest = async (req, res, next) => {
   try {
-    const guest = await Guest.findById(req.params.id).populate(
-      "event",
-      "name type"
-    );
-
-    if (!guest) {
-      return next(new AppError("Guest not found", 404));
-    }
-
-    res.status(200).json({
-      status: "success",
-      data: { guest },
-    });
+    const guest = await findOwnedGuest(req.params.id, req.user);
+    await guest.populate("event", "title eventType startDate");
+    res.status(200).json({ status: "success", data: { guest } });
   } catch (error) {
     next(error);
   }
@@ -173,19 +185,17 @@ export const getGuest = async (req, res, next) => {
  */
 export const updateGuest = async (req, res, next) => {
   try {
-    const guest = await Guest.findByIdAndUpdate(req.params.id, req.body, {
-      new: true,
-      runValidators: true,
-    });
-
-    if (!guest) {
-      return next(new AppError("Guest not found", 404));
+    const guest = await findOwnedGuest(req.params.id, req.user);
+    const fields = pickGuestFields(req.body);
+    if ("name" in fields && !fields.name) throw new AppError("Guest name is required", 400);
+    if (req.body?.email === "") guest.email = undefined;
+    guest.set(fields);
+    if (fields.rsvpStatus) {
+      guest.rsvpDate = new Date();
+      guest.respondedVia = "organizer";
     }
-
-    res.status(200).json({
-      status: "success",
-      data: { guest },
-    });
+    await guest.save();
+    res.status(200).json({ status: "success", data: { guest } });
   } catch (error) {
     next(error);
   }
@@ -197,109 +207,133 @@ export const updateGuest = async (req, res, next) => {
  */
 export const deleteGuest = async (req, res, next) => {
   try {
-    const guest = await Guest.findByIdAndDelete(req.params.id);
-
-    if (!guest) {
-      return next(new AppError("Guest not found", 404));
-    }
-
-    res.status(200).json({
-      status: "success",
-      message: "Guest deleted successfully",
-    });
+    const guest = await findOwnedGuest(req.params.id, req.user);
+    await guest.deleteOne();
+    res.status(200).json({ status: "success", message: "Guest deleted successfully" });
   } catch (error) {
     next(error);
   }
 };
 
 /**
- * Update RSVP status
- * POST /api/v1/guests/:id/rsvp
+ * Record a guest's RSVP for them (the organizer heard back by phone, etc.)
+ * POST /api/v1/guests/:id/rsvp { status }
  */
 export const updateRSVP = async (req, res, next) => {
   try {
-    const { status } = req.body;
-
-    if (!["accepted", "declined", "tentative"].includes(status)) {
-      return next(new AppError("Invalid RSVP status", 400));
-    }
-
-    const guest = await Guest.findById(req.params.id);
-
-    if (!guest) {
-      return next(new AppError("Guest not found", 404));
-    }
-
-    await guest.updateRSVP(status);
-
-    res.status(200).json({
-      status: "success",
-      data: { guest },
-    });
+    const { status } = req.body || {};
+    if (!STATUSES.includes(status)) throw new AppError("Invalid RSVP status", 400);
+    const guest = await findOwnedGuest(req.params.id, req.user);
+    guest.rsvpStatus = status;
+    guest.rsvpDate = new Date();
+    guest.respondedVia = "organizer";
+    await guest.save();
+    res.status(200).json({ status: "success", data: { guest } });
   } catch (error) {
     next(error);
   }
 };
 
 /**
- * Get seating chart
+ * Seating plan: tables and who sits where
  * GET /api/v1/events/:eventId/seating
  */
 export const getSeatingChart = async (req, res, next) => {
   try {
-    const guests = await Guest.find({ event: req.params.eventId })
-      .select("name tableAssignment seatNumber rsvpStatus")
-      .sort({ tableAssignment: 1, seatNumber: 1 })
+    const event = await findOwnedEvent(req.params.eventId, req.user);
+    const guests = await Guest.find({ event: event._id })
+      .select("name tableAssignment seatNumber rsvpStatus plusOne plusOneName")
+      .sort({ tableAssignment: 1, seatNumber: 1, name: 1 })
       .lean();
 
-    // Group by table
+    // Tables named on guests but not (yet) defined still show up
+    const tables = (event.seatingTables || []).map((t) => ({ _id: t._id, name: t.name, capacity: t.capacity }));
+    const known = new Set(tables.map((t) => t.name));
+    for (const g of guests) {
+      if (g.tableAssignment && !known.has(g.tableAssignment)) {
+        known.add(g.tableAssignment);
+        tables.push({ name: g.tableAssignment, capacity: null });
+      }
+    }
+
     const seatingChart = guests.reduce((acc, guest) => {
       const table = guest.tableAssignment || "Unassigned";
-      if (!acc[table]) {
-        acc[table] = [];
-      }
-      acc[table].push(guest);
+      (acc[table] ||= []).push(guest);
       return acc;
     }, {});
 
-    res.status(200).json({
-      status: "success",
-      data: { seatingChart },
-    });
+    res.status(200).json({ status: "success", data: { tables, seatingChart, guests } });
   } catch (error) {
     next(error);
   }
 };
 
 /**
- * Update seating assignments
- * POST /api/v1/events/:eventId/seating
+ * Save the event's tables
+ * PUT /api/v1/events/:eventId/seating/tables { tables: [{ name, capacity }] }
+ * Guests at a removed table become unassigned.
+ */
+export const updateSeatingTables = async (req, res, next) => {
+  try {
+    const event = await findOwnedEvent(req.params.eventId, req.user);
+    const { tables } = req.body || {};
+    if (!Array.isArray(tables) || tables.length > 200) throw new AppError("tables must be a list (up to 200)", 400);
+
+    const seen = new Set();
+    const clean = [];
+    for (const t of tables) {
+      const name = typeof t?.name === "string" ? t.name.trim().slice(0, 60) : "";
+      if (!name || seen.has(name.toLowerCase())) continue;
+      seen.add(name.toLowerCase());
+      const capacity = Number.isInteger(Number(t.capacity)) && Number(t.capacity) > 0 ? Math.min(Number(t.capacity), 1000) : 10;
+      clean.push({ name, capacity });
+    }
+
+    const removed = (event.seatingTables || []).map((t) => t.name).filter((n) => !clean.some((c) => c.name === n));
+    event.seatingTables = clean;
+    await event.save({ validateModifiedOnly: true });
+    if (removed.length) {
+      await Guest.updateMany(
+        { event: event._id, tableAssignment: { $in: removed } },
+        { $unset: { tableAssignment: 1, seatNumber: 1 } }
+      );
+    }
+    res.status(200).json({ status: "success", data: { tables: event.seatingTables } });
+  } catch (error) {
+    next(error);
+  }
+};
+
+/**
+ * Update seating assignments (only guests of this event)
+ * POST /api/v1/events/:eventId/seating { assignments: [{ guestId, table, seat }] }
+ * An empty table unassigns the guest.
  */
 export const updateSeating = async (req, res, next) => {
   try {
-    const { assignments } = req.body;
+    const event = await findOwnedEvent(req.params.eventId, req.user);
+    const { assignments } = req.body || {};
+    if (!Array.isArray(assignments)) throw new AppError("Assignments array is required", 400);
 
-    if (!Array.isArray(assignments)) {
-      return next(new AppError("Assignments array is required", 400));
-    }
-
-    // Bulk update
-    const updates = assignments.map((a) =>
-      Guest.findByIdAndUpdate(
-        a.guestId,
-        {
-          tableAssignment: a.table,
-          seatNumber: a.seat,
-        },
-        { new: true }
-      )
-    );
-
-    await Promise.all(updates);
+    const ops = assignments
+      .filter((a) => mongoose.isValidObjectId(a?.guestId))
+      .map((a) => {
+        const table = typeof a.table === "string" ? a.table.trim() : "";
+        return {
+          updateOne: {
+            filter: { _id: a.guestId, event: event._id },
+            update: table
+              ? { $set: { tableAssignment: table, ...(Number.isInteger(a.seat) && a.seat > 0 ? { seatNumber: a.seat } : {}) } }
+              : { $unset: { tableAssignment: 1, seatNumber: 1 } },
+          },
+        };
+      });
+    const result = ops.length ? await Guest.bulkWrite(ops) : { modifiedCount: 0 };
 
     res.status(200).json({
       status: "success",
       message: "Seating updated successfully",
+      data: { updated: result.modifiedCount || 0 },
     });
   } catch (error) {
     next(error);

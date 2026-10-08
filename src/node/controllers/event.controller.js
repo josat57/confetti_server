@@ -287,30 +287,6 @@ export const addTimelineItem = async (req, res) => {
   }
 };
 
-export const addChecklistItem = async (req, res) => {
-  try {
-    const event = await Event.findById(req.params.id);
-
-    if (!event) {
-      return res.status(404).json({ message: "Event not found" });
-    }
-
-    // Check if user has permission to add checklist items
-    const isCreator = event.createdBy && event.createdBy.equals(req.user.id);
-    const isPlanner = event.planner && event.planner.equals(req.user.id);
-
-    if (!isCreator && !isPlanner) {
-      return res.status(403).json({ message: "Access denied" });
-    }
-
-    const { category, item } = req.body;
-    await event.addChecklistItem(category, item);
-    res.json(event);
-  } catch (error) {
-    handleError(res, error);
-  }
-};
-
 export const addDocument = async (req, res) => {
   try {
     const event = await Event.findById(req.params.id);

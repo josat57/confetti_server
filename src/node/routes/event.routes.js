@@ -22,7 +22,6 @@ import {
   updateBudget,
   updateSchedule,
   addTimelineItem,
-  addChecklistItem,
   addDocument,
   addNote,
   getEventById,
@@ -1199,11 +1198,6 @@ router.post(
  *             schema:
  *               $ref: '#/components/schemas/Error'
  */
-router.post(
-  "/:id/checklist",
-  validateRequest("addChecklistItem"),
-  addChecklistItem
-);
 
 // Document and note routes
 

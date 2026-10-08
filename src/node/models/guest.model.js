@@ -75,6 +75,27 @@ const guestSchema = new mongoose.Schema(
       ref: "User",
     },
     notes: String,
+    // Public RSVP link (/rsvp/:token); random and unguessable
+    rsvpToken: {
+      type: String,
+      unique: true,
+      sparse: true,
+      select: false,
+    },
+    rsvpMessage: { type: String, trim: true, maxlength: 1000 },
+    respondedVia: { type: String, enum: ["link", "organizer"] },
+    // Digital invitation delivery for this guest
+    invitation: {
+      status: {
+        type: String,
+        enum: ["not_sent", "sent", "failed", "opened"],
+        default: "not_sent",
+      },
+      channel: { type: String, enum: ["email", "whatsapp"] },
+      sentAt: Date,
+      openedAt: Date,
+      lastError: String,
+    },
   },
   {
     timestamps: true,

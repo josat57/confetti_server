@@ -116,16 +116,51 @@ Gaps between the plans in the business case (section 6) and the code, in build o
   - The client events list crashed on the API's date field.
 - [x] **Tests:** `npm run test:passes`.
 
-## Phase 4: Client event screens (API mostly exists)
+## Phase 4: Client event screens ✅ done
 
-- [ ] **FE:** Guest list page: add, edit, delete, import a CSV, filter by RSVP status, show the free limit. Backend: `guest.routes.js`.
-- [ ] **FE:** Budget and expenses page: set the budget, add, edit and delete expenses, see the overview and payments due. Backend: `budget.routes.js`.
-- [ ] **FE:** Checklist page. Backend: `/events/:id/checklist`.
-- [ ] **FE:** Seating page. Backend: `eventSeatingRoutes`.
-- [ ] **API:** Public RSVP link: a signed token for each guest, a public `GET/POST /rsvp/:token` with no login, and protection against brute force and abuse.
-- [ ] **FE:** Public RSVP page that works well on mobile.
-- [ ] **API:** Digital invitations: an invitation template, sending by email (and a link that can be shared on WhatsApp), delivery and open status for each guest. Requires the Pass.
-- [ ] **FE:** Invitation designer, preview, and the "Send to guests" / "Copy WhatsApp link" actions.
+Screens are under `/user/dashboard/events/[id]/…` with tabs: Overview, Guests, Budget, Checklist, Seating, Invitations.
+
+- [x] **FE Guests:**
+  - add, edit and delete
+  - CSV import with a template (rows without a name, or with an email already listed, are skipped)
+  - filter by reply and search
+  - set a guest's RSVP by hand
+  - stats (attending, awaiting reply, expected including plus-ones) and the free 100-guest meter
+  - per-guest invitation status, with "copy RSVP link" and WhatsApp buttons (pass)
+- [x] **FE Budget:**
+  - set the total and currency
+  - overview: spent, remaining, by category, alerts
+  - payments due
+  - expenses: add, edit, delete (pass; without one, the screen explains)
+- [x] **FE Checklist:** add, tick off, edit, delete, progress and overdue count, and "Suggest tasks". The starter checklist is based on the event type, with due dates counted back from the event, and isn't duplicated.
+- [x] **FE Seating:**
+  - tables with names and capacities
+  - seat each guest from a dropdown
+  - capacity counts plus-ones and warns when a table is over
+  - removing a table unseats its guests
+- [x] **API Public RSVP:** `GET/POST /rsvp/:token` with no login.
+  - The token is 64 random hex characters (unguessable); invalid tokens always get a 404.
+  - Rate limited per IP (it fails open if Redis is down).
+  - The RSVP deadline and the event date are enforced.
+  - The host is notified of each change of answer.
+- [x] **FE Public RSVP page:** `/rsvp/[token]`, mobile-first. It records the answer, plus-one, dietary needs and a note, and the answer can be changed later.
+- [x] **API Digital invitations:** `/events/:eventId/invitation`.
+  - The design (title, hosts, message, dress code, venue, theme, accent colour, deadline, plus-ones) needs a pass to save.
+  - Emails go out with each guest's RSVP link (pass); a send can be all not yet invited, everyone again, or chosen guests.
+  - WhatsApp links per guest, with Nigerian numbers converted (080… → 23480…).
+  - Per-guest status: not sent, sent, failed or opened (opened is tracked by the email pixel or a visit to the link).
+- [x] **FE Invitation designer:**
+  - live preview, the same card guests see
+  - save, "email guests not yet invited", "resend to everyone"
+  - delivery stats
+- [x] **Fixed along the way:**
+  - Adding or importing guests always failed (`planner` was never set).
+  - The event guest and seating routes had **no authentication**, and guest edit, delete and RSVP had no ownership check.
+  - Guest updates wrote whatever the request contained; the RSVP stats were always empty.
+  - The budget didn't work for clients' events.
+  - The checklist endpoint always returned 500 (it called a model method that doesn't exist).
+  - An Event virtual crashed whenever an event was populated with selected fields, affecting the budget, bookings, plans and more.
+- [x] **Tests:** `npm run test:event-screens`.
 
 ## Phase 5: Escrow and booking commission
 

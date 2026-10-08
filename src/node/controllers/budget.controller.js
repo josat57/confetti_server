@@ -1,3 +1,4 @@
+import mongoose from "mongoose";
 import Budget from "../models/budget.model.js";
 import Event from "../models/event.model.js";
 import { applyBudgetTemplate } from "../config/budget-templates.js";
@@ -8,10 +9,13 @@ export const createOrUpdateBudget = async (req, res) => {
     const { eventId } = req.params;
     const { totalBudget, currency, categories, contingency, notes } = req.body;
 
-    const event = await Event.findOne({
-      _id: eventId,
-      planner: req.user._id,
-    });
+    // Planners' events and events clients created themselves
+    const event = mongoose.isValidObjectId(eventId)
+      ? await Event.findOne({
+          _id: eventId,
+          $or: [{ planner: req.user._id }, { createdBy: req.user._id }, { organizer: req.user._id }],
+        })
+      : null;
 
     if (!event) {
       return res.status(404).json({
@@ -59,9 +63,10 @@ export const createOrUpdateBudget = async (req, res) => {
       data: budget,
     });
   } catch (error) {
-    res.status(500).json({
+    const invalid = error.name === "ValidationError" || error.name === "CastError";
+    res.status(invalid ? 400 : 500).json({
       success: false,
-      message: "Error creating/updating budget",
+      message: invalid ? error.message : "Error creating/updating budget",
       error: process.env.NODE_ENV === "production" ? undefined : error.message,
     });
   }
@@ -135,9 +140,10 @@ export const addExpense = async (req, res) => {
       alerts,
     });
   } catch (error) {
-    res.status(500).json({
+    const invalid = error.name === "ValidationError" || error.name === "CastError";
+    res.status(invalid ? 400 : 500).json({
       success: false,
-      message: "Error adding expense",
+      message: invalid ? error.message : "Error adding expense",
       error: process.env.NODE_ENV === "production" ? undefined : error.message,
     });
   }
@@ -171,9 +177,10 @@ export const updateExpense = async (req, res) => {
       alerts,
     });
   } catch (error) {
-    res.status(500).json({
+    const invalid = error.name === "ValidationError" || error.name === "CastError";
+    res.status(invalid ? 400 : 500).json({
       success: false,
-      message: "Error updating expense",
+      message: invalid ? error.message : "Error updating expense",
       error: process.env.NODE_ENV === "production" ? undefined : error.message,
     });
   }
@@ -203,9 +210,10 @@ export const deleteExpense = async (req, res) => {
       data: budget,
     });
   } catch (error) {
-    res.status(500).json({
+    const invalid = error.name === "ValidationError" || error.name === "CastError";
+    res.status(invalid ? 400 : 500).json({
       success: false,
-      message: "Error deleting expense",
+      message: invalid ? error.message : "Error deleting expense",
       error: process.env.NODE_ENV === "production" ? undefined : error.message,
     });
   }
