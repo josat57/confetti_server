@@ -239,3 +239,94 @@ export const cheapestPlanWhere = (planType, test) =>
   byType(planType).find((p) => test(p)) || null;
 
 export const listPlans = (planType) => byType(planType);
+
+/**
+ * Per-event passes for people planning their own event (role "user").
+ * Bought once per event; a pass unlocks its features for that event (and full
+ * AI for the account while any pass is active). `includes` lists lower tiers.
+ */
+export const EVENT_PASSES = [
+  {
+    key: "celebration",
+    displayName: "Celebration Pass",
+    rank: 1,
+    prices: { NGN: 15000 },
+    description: "Everything you need to plan one event",
+    features: {
+      fullAI: true,
+      unlimitedGuests: true,
+      rsvp: true,
+      invites: true,
+      budgetTracking: true,
+      pdfExport: true,
+      sharing: true,
+    },
+    featureList: [
+      "Full AI plan with refinements and chat",
+      "Unlimited guests, RSVPs, digital invites",
+      "Budget tracking and PDF export",
+      "Share with family; rate and refine",
+    ],
+    available: true,
+  },
+  {
+    key: "plus",
+    displayName: "Celebration Plus",
+    rank: 2,
+    prices: { NGN: 45000 },
+    description: "For big days with many moving parts",
+    features: {
+      fullAI: true,
+      unlimitedGuests: true,
+      rsvp: true,
+      invites: true,
+      budgetTracking: true,
+      pdfExport: true,
+      sharing: true,
+      runSheet: true,
+      giftTracking: true,
+      asoEbi: true,
+      prioritySupport: true,
+      curatedShortlist: true,
+    },
+    featureList: [
+      "Everything in the Celebration Pass",
+      "Day-of schedule and vendor run sheet",
+      "Gift and aso-ebi tracking",
+      "Priority support and a curated vendor shortlist",
+    ],
+    available: true,
+  },
+  {
+    key: "diaspora",
+    displayName: "Diaspora Pass",
+    rank: 2,
+    prices: { USD: 39, GBP: 30 },
+    description: "Plan a Nigerian event from abroad",
+    features: {
+      fullAI: true,
+      unlimitedGuests: true,
+      rsvp: true,
+      invites: true,
+      budgetTracking: true,
+      pdfExport: true,
+      sharing: true,
+      runSheet: true,
+      giftTracking: true,
+      asoEbi: true,
+      prioritySupport: true,
+      curatedShortlist: true,
+      escrow: true,
+      videoCalls: true,
+    },
+    featureList: [
+      "Plus features, paid in dollars or pounds",
+      "Escrow-protected payments to Nigerian vendors",
+      "Video calls with vendors",
+    ],
+    // Needs escrow and video calls (roadmap Phase 10)
+    available: false,
+  },
+];
+
+export const findPass = (key) => EVENT_PASSES.find((p) => p.key === key) || null;

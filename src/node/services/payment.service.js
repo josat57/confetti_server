@@ -450,6 +450,12 @@ class PaymentService {
     );
     if (!claimed) return { payment, alreadyProcessed: true };
 
+    if (claimed.eventPass) {
+      const eventPassService = (await import("./event-pass.service.js")).default;
+      await eventPassService.activateFromPayment(claimed._id);
+      return { payment: claimed, alreadyProcessed: false };
+    }
+
     if (claimed.paymentType === "subscription" && claimed.subscription) {
       const subscriptionService = (await import("./subscription.service.js")).default;
       if (claimed.subscriptionDetails?.isUpgrade) {
@@ -459,6 +465,61 @@ class PaymentService {
       }
     }
     return { payment: claimed, alreadyProcessed: false };
+  }
+
+  /**
+   * Start a one-time checkout with the provider (event passes and other purchases).
+   * `amountMinor` is in kobo/cents. Returns the provider's payment page URL.
+   */
+  async startProviderCheckout({ provider, amountMinor, currency, reference, email, name, redirectUrl, title, description, meta }) {
+    if (provider === "flutterwave") {
+      if (!process.env.FLUTTERWAVE_SECRET_KEY) throw new AppError("Flutterwave not configured", 500);
+      try {
+        const response = await axios.post(
+          "https://api.flutterwave.com/v3/payments",
+          {
+            tx_ref: reference,
+            amount: amountMinor / 100, // Flutterwave takes major units
+            currency,
+            redirect_url: redirectUrl,
+            customer: { email, name: name || email },
+            customizations: { title, description, logo: `${process.env.FRONTEND_URL}/logo.png` },
+            meta,
+          },
+          { headers: { Authorization: `Bearer ${process.env.FLUTTERWAVE_SECRET_KEY}`, "Content-Type": "application/json" } }
+        );
+        if (response.data.status !== "success") throw new Error(response.data.message || "Failed to initialize payment");
+        return response.data.data.link;
+      } catch (error) {
+        logger.error("Flutterwave checkout error", { detail: error.response?.data || error.message });
+        throw new AppError(`Payment initialization failed: ${error.response?.data?.message || error.message}`, 502);
+      }
+    }
+    if (provider === "paystack") {
+      if (!process.env.PAYSTACK_SECRET_KEY) throw new AppError("Paystack not configured", 500);
+      try {
+        const response = await axios.post(
+          "https://api.paystack.co/transaction/initialize",
+          { amount: amountMinor, currency, email, reference, callback_url: redirectUrl, metadata: meta },
+          { headers: { Authorization: `Bearer ${process.env.PAYSTACK_SECRET_KEY}`, "Content-Type": "application/json" } }
+        );
+        return response.data.data.authorization_url;
+      } catch (error) {
+        logger.error("Paystack checkout error", { detail: error.response?.data || error.message });
+        throw new AppError(`Payment initialization failed: ${error.response?.data?.message || error.message}`, 502);
+      }
+    }
+    throw new AppError("Invalid payment provider", 400);
+  }
+
+  /** Public base URL of this API (payment redirects) */
+  publicApiUrl() {
+    return (
+      process.env.PUBLIC_NGROK_URL ||
+      process.env.PUBLIC_URL ||
+      process.env.RENDER_EXTERNAL_URL ||
+      "http://localhost:9600"
+    );
   }
 
   async createPayment(paymentData) {

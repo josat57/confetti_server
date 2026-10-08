@@ -3,6 +3,7 @@ import Subscription from "../models/subscription.model.js";
 import { AppError } from "../utils/AppError.js";
 import { logger } from "../utils/logger.js";
 import {
+  EVENT_PASSES,
   cheapestPlanWhere,
   freePlan,
   planTypeForRole,
@@ -41,7 +42,9 @@ export class PlanLimitError extends AppError {
     );
     const label = RESOURCE_LABELS[resource] || resource;
     const message =
-      limit === 0
+      resource === "events" && planType === "client"
+        ? "You can plan one event at a time for free. Get a pass for your current event to start another."
+        : limit === 0
         ? `Your ${plan.displayName} plan doesn't include ${label}.${upgrade ? ` Upgrade to ${upgrade.displayName} to add them.` : ""}`
         : `You've reached the ${limit} ${label} included in your ${plan.displayName} plan.${upgrade ? ` Upgrade to ${upgrade.displayName} for more.` : ""}`;
     super(message, 403);
@@ -192,10 +195,12 @@ const countUsage = {
     });
   },
 
-  /** All events the user created that weren't cancelled */
+  /** Events the user created that weren't cancelled and have no pass (one free event at a time) */
   async events(user) {
     const Event = (await import("../models/event.model.js")).default;
-    return Event.countDocuments({ createdBy: oid(user), status: { $ne: "cancelled" } });
+    const EventPass = (await import("../models/event-pass.model.js")).default;
+    const withPass = await EventPass.distinct("event", { user: oid(user), status: "active" });
+    return Event.countDocuments({ createdBy: oid(user), status: { $ne: "cancelled" }, _id: { $nin: withPass } });
   },
 
   /** Guest list entries plus registered users invited on the event itself */
@@ -223,6 +228,12 @@ export const assertWithinLimit = async (req, resource, { adding = 1, eventId } =
   if (!plan || !(resource in plan.limits)) return;
   const limit = plan.limits[resource];
   if (limit === null || limit === undefined) return;
+
+  // An event pass with unlimited guests lifts the guest limit for that event
+  if (resource === "guestsPerEvent" && eventId) {
+    const eventPassService = (await import("./event-pass.service.js")).default;
+    if ((await eventPassService.featuresFor(eventId)).unlimitedGuests) return;
+  }
 
   const used = await countUsage[resource](req.user, planType, { eventId });
   if (used + adding > limit) {
@@ -312,4 +323,48 @@ export const assertCanCreateEvent = async (req) => {
   if (!plan) return;
   const resource = "activeEvents" in plan.limits ? "activeEvents" : "events";
   await assertWithinLimit(req, resource);
+};
+
+// ---------------------------------------------------------------------------
+// Event passes (clients, role "user")
+// ---------------------------------------------------------------------------
+
+export class PassRequiredError extends AppError {
+  constructor({ feature, label, eventId }) {
+    super(`${label || "This feature"} comes with an event pass. Upgrade your event to use it.`, 403);
+    this.code = "PASS_REQUIRED";
+    this.details = { feature, eventId: eventId ? String(eventId) : null, upgradeTo: cheapestPassWith(feature) };
+  }
+}
+
+const cheapestPassWith = (feature) =>
+  EVENT_PASSES.filter((p) => p.available && p.features[feature]).sort((a, b) => a.rank - b.rank)[0]?.key || null;
+
+/**
+ * Clients need a pass on the event (req.params[param]) that includes `feature`.
+ * Planners and vendors aren't affected (their plans apply).
+ */
+export const requireEventPass = (feature, { param = "eventId", label } = {}) => async (req, res, next) => {
+  try {
+    if (req.user?.role !== "user") return next();
+    const eventId = req.params[param];
+    const eventPassService = (await import("./event-pass.service.js")).default;
+    if ((await eventPassService.featuresFor(eventId))[feature]) return next();
+    next(new PassRequiredError({ feature, label, eventId }));
+  } catch (error) {
+    next(error);
+  }
+};
+
+/** Clients need an active pass (any event) that includes `feature`; others pass through */
+export const requireClientPass = (feature, { label } = {}) => async (req, res, next) => {
+  try {
+    if (req.user?.role !== "user") return next();
+    const EventPass = (await import("../models/event-pass.model.js")).default;
+    const tiers = EVENT_PASSES.filter((p) => p.features[feature]).map((p) => p.key);
+    if (await EventPass.exists({ user: req.user._id, status: "active", tier: { $in: tiers } })) return next();
+    next(new PassRequiredError({ feature, label }));
+  } catch (error) {
+    next(error);
+  }
 };

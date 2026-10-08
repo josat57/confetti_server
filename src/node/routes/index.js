@@ -50,6 +50,7 @@ import whatsNewRoutes from "./whats-new.routes.js";
 import webhookManagementRoutes from "./webhook.routes.js";
 import dataExchangeRoutes from "./data-exchange.routes.js";
 import paymentWebhookRoutes from "./payment-webhook.routes.js";
+import eventPassRoutes from "./event-pass.routes.js";
 import taskRoutes, { eventTaskRoutes } from "./task.routes.js";
 import guestRoutes, {
   eventGuestRoutes,
@@ -105,6 +106,7 @@ router.use("/help", helpRoutes);
 router.use("/whats-new", whatsNewRoutes);
 router.use("/webhooks", webhookManagementRoutes);
 router.use("/webhooks/payment", paymentWebhookRoutes);
+router.use("/event-passes", eventPassRoutes);
 router.use("/data", dataExchangeRoutes);
 router.use("/events/:eventId/guests/stats", eventGuestStatsRouter);
 router.use("/tasks", taskRoutes);

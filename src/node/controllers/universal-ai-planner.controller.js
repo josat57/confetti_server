@@ -73,8 +73,16 @@ export const getUserContext = async (req) => {
       context.userType = planType === "client" ? "user" : planType;
       context.planLevel = plan?.aiLevel || 2;
       context.planName = plan?.key || "free";
-      // Free plans plan from local data only
+      // Free plans plan from local data only; a client with an event pass gets full AI
       if (plan?.aiModels) context.aiModels = plan.aiModels;
+      if (planType === "client") {
+        const { default: eventPassService } = await import("../services/event-pass.service.js");
+        if (await eventPassService.hasActivePass(req.user._id || req.user.id)) {
+          context.planLevel = 3;
+          context.planName = "Celebration";
+          delete context.aiModels;
+        }
+      }
       context.subscription = subscription;
       context.profile = req.vendor || req.planner || req.user;
     }

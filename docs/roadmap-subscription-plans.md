@@ -89,15 +89,32 @@ Gaps between the plans in the business case (section 6) and the code, in build o
 - Any signed-in user could edit or delete any vendor through `/vendors/:id` routes. These are now owner or admin only.
 - Free vendors failed the frontend tier check (`basic` is level 0); upgrade buttons sent signed-in users to the public sign-up page.
 
-## Phase 3: Per-event passes for clients
+## Phase 3: Per-event passes for clients ✅ done
 
-- [ ] **API:** Add an `EventPass` model (`event`, `user`, `tier`: celebration / plus / diaspora, `amount`, `currency`, `paymentRef`, `status`).
-- [ ] **API:** One-time payment with Paystack and Flutterwave: initiate, verify, webhook. Activate the pass on a successful webhook.
-- [ ] **API:** Make `requireEventPass(tier)` middleware that checks the pass for that event.
-  - Free: 1 event, AI plan from local data, 100 guests, vendor search and messaging, checklist and budget overview
-  - Celebration Pass (₦15,000): full AI plan with refinements and chat, unlimited guests, RSVPs, digital invites, budget tracking and PDF export, sharing with family, rating and refining
-  - Celebration Plus (₦45,000): everything in Pass, plus the day-of run sheet, gift and aso-ebi tracking, priority support and a curated shortlist
-- [ ] **FE:** "Upgrade this event" screen, checkout, and pass badges on the event page.
+- [x] **API:** `EventPass` model, one per event: `event`, `user`, `tier` (celebration / plus / diaspora), `status`, `amount`, `currency`, `paymentRef`, history. Passes are defined in `config/plans.js` (`EVENT_PASSES`).
+- [x] **API:** One-time payment with Flutterwave or Paystack (`POST /event-passes/checkout`).
+  - Completion is atomic and checks the amount: through the production webhooks (`/webhooks/payment/…`, reference `PASS-…`) or the redirect (`GET /event-passes/callback` → the event page).
+  - Upgrading Celebration → Plus charges only the difference.
+  - Only client accounts can buy a pass, and only for their own events.
+- [x] **API:** `requireEventPass(feature)` (per event) and `requireClientPass(feature)` (any pass on the account). Planners and vendors aren't affected.
+  - **Free:** one event at a time (events with a pass don't count), local-data AI, 100 guests, vendor search and messaging, budget overview.
+  - **Celebration Pass (₦15,000):**
+    - unlimited guests
+    - expense tracking
+    - full AI for the account
+    - AI plan chat, refinement and chat sessions
+    - PDF export and sharing with family
+  - **Celebration Plus (₦45,000):** everything in the Celebration Pass. Its own features (run sheet, gifts, aso-ebi, priority support, curated shortlist) carry flags that Phases 7–8 will use.
+  - **Diaspora Pass:** defined, not on sale until Phase 10.
+- [x] **FE:**
+  - Client event page (`/user/dashboard/events/[id]`) with the pass badge and an "Upgrade this event" panel that goes to checkout and back.
+  - Pass badges on the events list.
+  - An "Upgrade your event" prompt when a pass feature is used.
+- [x] **Fixed along the way:**
+  - `GET /events` returned every user's events. It now returns only the user's own.
+  - Client event creation failed validation (wrong field names).
+  - The client events list crashed on the API's date field.
+- [x] **Tests:** `npm run test:passes`.
 
 ## Phase 4: Client event screens (API mostly exists)
 

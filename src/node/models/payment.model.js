@@ -16,6 +16,15 @@ const paymentSchema = new mongoose.Schema(
       type: mongoose.Schema.Types.ObjectId,
       ref: "Subscription",
     },
+    // Event pass purchase (paymentType "event")
+    eventPass: {
+      type: mongoose.Schema.Types.ObjectId,
+      ref: "EventPass",
+    },
+    passDetails: {
+      tier: String,
+      previousTier: String,
+    },
     paymentType: {
       type: String,
       enum: ["subscription", "event", "refund"],

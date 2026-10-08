@@ -51,9 +51,13 @@ export const getEvents = async (req, res) => {
       limit = 10,
     } = req.query;
 
-    const query = {};
+    // Only the user's own events (admins see all)
+    const me = req.user._id || req.user.id;
+    const query = ["admin", "super_admin"].includes(req.user.role)
+      ? {}
+      : { $or: [{ createdBy: me }, { planner: me }, { organizer: me }] };
 
-    if (type) query.type = type;
+    if (type) query.eventType = type;
     if (status) query.status = status;
     if (startDate && endDate) {
       query.startDate = { $gte: new Date(startDate) };

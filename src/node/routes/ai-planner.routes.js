@@ -3,7 +3,7 @@ import UniversalAIController from "../controllers/universal-ai-planner.controlle
 import * as PlanActionsController from "../controllers/ai-plan-actions.controller.js";
 import { rateLimiter } from "../middleware/rateLimiter.js";
 import { protect as authenticate, optionalAuth } from "../middleware/auth.js";
-import { requirePlanFeature } from "../services/plan-access.service.js";
+import { requireClientPass, requirePlanFeature } from "../services/plan-access.service.js";
 import {
   requireBusinessPlan,
   requireProfessionalPlan,
@@ -1043,6 +1043,7 @@ router.post(
 router.post(
   "/plans/:planId/chat",
   authenticate,
+  requireClientPass("fullAI", { label: "Chatting about your plan" }),
   rateLimiter("ai-planner-chat", 20, 60 * 60), // 20 requests per hour
   UniversalAIController.chatWithPlan
 );
@@ -1132,6 +1133,7 @@ router.post(
 router.post(
   "/refine/:planId",
   authenticate,
+  requireClientPass("fullAI", { label: "Refining your plan" }),
   rateLimiter("ai-planner-refine", 10, 60 * 60), // 10 requests per hour
   UniversalAIController.refinePlan
 );
@@ -1352,6 +1354,7 @@ router.get("/health", UniversalAIController.healthCheck);
 router.get(
   "/plans/:planId/export",
   optionalAuth,
+  requireClientPass("pdfExport", { label: "PDF export" }),
   rateLimiter("ai-planner-export", 30, 60 * 60), // 30 requests per hour
   PlanActionsController.exportPlan
 );
@@ -1381,6 +1384,7 @@ router.get(
 router.post(
   "/plans/:planId/share",
   authenticate,
+  requireClientPass("sharing", { label: "Sharing with family" }),
   rateLimiter("ai-planner-share", 10, 60 * 60), // 10 requests per hour
   PlanActionsController.sharePlan
 );
@@ -1464,6 +1468,7 @@ router.get("/sessions/:sessionId", authenticate, PlanActionsController.getChatSe
 router.post(
   "/sessions/:sessionId/messages",
   authenticate,
+  requireClientPass("fullAI", { label: "AI planning chat" }),
   rateLimiter("ai-planner-session-chat", 30, 60 * 60), // 30 requests per hour
   PlanActionsController.sendChatSessionMessage
 );
@@ -1483,6 +1488,7 @@ router.post(
 router.post(
   "/sessions/:sessionId/generate-plan",
   authenticate,
+  requireClientPass("fullAI", { label: "Planning from your chat" }),
   rateLimiter("ai-planner-session-generate", 10, 60 * 60), // 10 requests per hour
   PlanActionsController.generatePlanFromChatSession
 );

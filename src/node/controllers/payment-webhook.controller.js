@@ -6,6 +6,35 @@ import { logger } from "../utils/logger.js";
 import { sendVerificationEmail } from "../utils/email.js";
 
 /**
+ * Webhooks for event pass payments (reference PASS-…). Returns true when handled.
+ * The signature is already verified; completion still checks amount and currency.
+ */
+const handlePassWebhook = async (provider, payload, succeeded, res) => {
+  const reference = provider === "flutterwave" ? payload.data?.tx_ref : payload.data?.reference;
+  if (!reference || !String(reference).startsWith("PASS-")) return false;
+  try {
+    const Payment = (await import("../models/payment.model.js")).default;
+    const payment = await Payment.findOne({ reference });
+    if (!payment?.eventPass) {
+      res.status(404).json({ message: "Payment not found" });
+      return true;
+    }
+    if (succeeded) {
+      const paymentService = (await import("../services/payment.service.js")).default;
+      await paymentService.completeSubscriptionPayment(payment._id, { provider, data: payload.data });
+    } else if (payment.status === "pending" && /failed/i.test(payload.data?.status || "")) {
+      payment.status = "failed";
+      await payment.save();
+    }
+    res.status(200).json({ message: "Webhook processed successfully" });
+  } catch (error) {
+    logger.error("Event pass webhook failed", { reference, error: error.message });
+    res.status(error.statusCode && error.statusCode < 500 ? 200 : 500).json({ message: error.message });
+  }
+  return true;
+};
+
+/**
  * Handle Flutterwave webhook
  */
 export const handleFlutterwaveWebhook = async (req, res, next) => {
@@ -36,6 +65,9 @@ export const handleFlutterwaveWebhook = async (req, res, next) => {
       txRef: payload.data?.tx_ref,
       status: payload.data?.status,
     });
+
+    // Event pass purchases are completed from their Payment record
+    if (await handlePassWebhook("flutterwave", payload, payload.event === "charge.completed" && payload.data?.status === "successful", res)) return;
 
     // Handle successful payment
     if (
@@ -148,6 +180,9 @@ export const handlePaystackWebhook = async (req, res, next) => {
       reference: payload.data?.reference,
       status: payload.data?.status,
     });
+
+    // Event pass purchases are completed from their Payment record
+    if (await handlePassWebhook("paystack", payload, payload.event === "charge.success", res)) return;
 
     // Handle successful payment
     if (payload.event === "charge.success") {

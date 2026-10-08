@@ -1,4 +1,5 @@
 import express from "express";
+import { requireEventPass } from "../services/plan-access.service.js";
 import {
   createOrUpdateBudget,
   getBudget,
@@ -25,6 +26,8 @@ eventBudgetRoutes.use(protect);
 
 eventBudgetRoutes.put("/", createOrUpdateBudget);
 eventBudgetRoutes.get("/", getBudget);
-eventBudgetRoutes.post("/expenses", addExpense);
-eventBudgetRoutes.put("/expenses/:expenseId", updateExpense);
-eventBudgetRoutes.delete("/expenses/:expenseId", deleteExpense);
+// Tracking expenses is a pass feature for clients (the budget overview is free)
+const budgetTracking = requireEventPass("budgetTracking", { label: "Budget tracking" });
+eventBudgetRoutes.post("/expenses", budgetTracking, addExpense);
+eventBudgetRoutes.put("/expenses/:expenseId", budgetTracking, updateExpense);
+eventBudgetRoutes.delete("/expenses/:expenseId", budgetTracking, deleteExpense);
