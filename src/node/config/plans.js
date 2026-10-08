@@ -330,3 +330,13 @@ export const EVENT_PASSES = [
 ];
 
 export const findPass = (key) => EVENT_PASSES.find((p) => p.key === key) || null;
+
+/** Featured listing boosts for vendors (roadmap Phase 6) */
+export const FEATURED_BOOST = {
+  weeklyPrice: { NGN: 5000 },
+  maxWeeks: 4,
+  // Paid and credit boosts running at the same time in one category
+  slotsPerCategory: Number(process.env.FEATURED_SLOTS_PER_CATEGORY) || 6,
+  // Featured results shown at the top of the first search page
+  slotsPerPage: 3,
+};

@@ -450,6 +450,12 @@ class PaymentService {
     );
     if (!claimed) return { payment, alreadyProcessed: true };
 
+    if (claimed.featuredBoost) {
+      const featuredService = (await import("./featured.service.js")).default;
+      await featuredService.activateFromPayment(claimed._id);
+      return { payment: claimed, alreadyProcessed: false };
+    }
+
     if (claimed.escrowPayment) {
       const escrowService = (await import("./escrow.service.js")).default;
       await escrowService.markHeldFromPayment(claimed._id);

@@ -16,6 +16,11 @@ const paymentSchema = new mongoose.Schema(
       type: mongoose.Schema.Types.ObjectId,
       ref: "Subscription",
     },
+    // Featured listing boost (paymentType "boost")
+    featuredBoost: {
+      type: mongoose.Schema.Types.ObjectId,
+      ref: "FeaturedBoost",
+    },
     // Booking payment held in escrow (paymentType "escrow")
     escrowPayment: {
       type: mongoose.Schema.Types.ObjectId,
@@ -32,7 +37,7 @@ const paymentSchema = new mongoose.Schema(
     },
     paymentType: {
       type: String,
-      enum: ["subscription", "event", "refund", "escrow"],
+      enum: ["subscription", "event", "refund", "escrow", "boost"],
       required: true,
       default: "event",
     },

@@ -3,6 +3,49 @@ import VendorBooking from "../models/vendor-booking.model.js";
 import User from "../models/user.model.js";
 import { escapeRegExp } from "../utils/escape-regex.js";
 
+// Category labels used by the website → stored categories
+const CATEGORY_LABELS = {
+  "music & entertainment": "entertainment",
+  "mc / host": "entertainment",
+  "makeup & beauty": "other",
+  "event planning": "event_planning",
+  "audio visual": "audio_visual",
+  "cake & desserts": "cake_desserts",
+  "bar services": "bar_services",
+  "favors & gifts": "favors_gifts",
+  "valet parking": "valet_parking",
+};
+const normalizeCategory = (value) => {
+  const v = String(value || "").trim().toLowerCase();
+  return CATEGORY_LABELS[v] || v.replace(/\s+/g, "_");
+};
+
+const SEARCH_FIELDS =
+  "name businessName category rating reviewCount priceRange address location services availabilityStatus logo verificationStatus registrationNumber yearEstablished description photos email phone website isFeatured featuredUntil";
+
+/** A vendor as the directory cards expect it */
+const formatSearchVendor = (vendor, featured) => {
+  const v = vendor.toObject ? vendor.toObject() : vendor;
+  return {
+    ...v,
+    businessName: v.businessName || v.name,
+    location: {
+      address: v.address?.street || "",
+      city: v.address?.city || "",
+      state: v.address?.state || "",
+      country: v.address?.country || "",
+      coordinates: v.location?.coordinates,
+    },
+    pricing: { startingPrice: v.priceRange?.min || 0, currency: "NGN" },
+    portfolio: (v.photos || []).filter((p) => p?.url).map((p) => ({ url: p.url, caption: p.caption })),
+    contactInfo: { email: v.email, phone: v.phone, website: v.website },
+    services: (v.services || []).map((sv) => (typeof sv === "string" ? sv : sv?.name)).filter(Boolean),
+    isBusinessVerified: v.verificationStatus === "verified",
+    hasVerifiedBadge: v.verificationStatus === "verified",
+    featured: !!featured,
+  };
+};
+
 export const searchVendors = async (req, res) => {
   try {
     const {
@@ -10,17 +53,17 @@ export const searchVendors = async (req, res) => {
       location,
       minPrice,
       maxPrice,
-      rating,
       search,
-      page = 1,
-      limit = 20,
       sortBy = "rating",
     } = req.query;
+    const rating = req.query.rating || req.query.minRating;
+    const page = Math.max(parseInt(req.query.page) || 1, 1);
+    const limit = Math.min(Math.max(parseInt(req.query.limit) || 20, 1), 100);
 
     const query = { status: "approved", isActive: true };
 
     if (category) {
-      query.category = category;
+      query.category = normalizeCategory(category);
     }
 
     if (rating) {
@@ -28,8 +71,7 @@ export const searchVendors = async (req, res) => {
     }
 
     if (minPrice || maxPrice) {
-      query["priceRange.min"] = {};
-      if (minPrice) query["priceRange.min"].$gte = parseFloat(minPrice);
+      if (minPrice) query["priceRange.min"] = { $gte: parseFloat(minPrice) };
       if (maxPrice) query["priceRange.max"] = { $lte: parseFloat(maxPrice) };
     }
 
@@ -64,41 +106,42 @@ export const searchVendors = async (req, res) => {
         sortOptions = { verificationStatus: -1, rating: -1 };
     }
 
-    const skip = (page - 1) * limit;
+    const [vendors, total] = await Promise.all([
+      Vendor.find(query).select(SEARCH_FIELDS).skip((page - 1) * limit).limit(limit).sort(sortOptions),
+      Vendor.countDocuments(query),
+    ]);
 
-    const vendors = await Vendor.find(query)
-      .select(
-        "name businessName category rating reviewCount priceRange address location services availabilityStatus logo verificationStatus registrationNumber yearEstablished"
-      )
-      .skip(skip)
-      .limit(parseInt(limit))
-      .sort(sortOptions);
+    // First page: a few featured vendors matching the search go on top (limited, rotated slots)
+    let results = vendors.map((v) => formatSearchVendor(v, false));
+    if (page === 1) {
+      const featuredService = (await import("../services/featured.service.js")).default;
+      const featured = await featuredService.featuredForSearch(query, SEARCH_FIELDS);
+      if (featured.length) {
+        const ids = new Set(featured.map((f) => String(f._id)));
+        results = [
+          ...featured.map((f) => formatSearchVendor(f, true)),
+          ...results.filter((r) => !ids.has(String(r._id))),
+        ].slice(0, limit);
+      }
+    }
 
-    // Add verification badge and format response
-    const formattedVendors = vendors.map((vendor) => {
-      const vendorData = vendor.toObject();
-      vendorData.isBusinessVerified = vendor.verificationStatus === "verified";
-      vendorData.hasVerifiedBadge = vendor.verificationStatus === "verified";
-      return vendorData;
-    });
-
-    const total = await Vendor.countDocuments(query);
-
+    const totalPages = Math.max(Math.ceil(total / limit), 1);
     res.status(200).json({
       success: true,
-      data: formattedVendors,
-      pagination: {
-        page: parseInt(page),
-        limit: parseInt(limit),
-        total,
-        pages: Math.ceil(total / limit),
-      },
+      // Shape the directory pages read
+      vendors: results,
+      total,
+      page,
+      totalPages,
+      // Older shape
+      data: results,
+      pagination: { page, limit, total, pages: totalPages },
     });
   } catch (error) {
     res.status(500).json({
       success: false,
       message: "Error searching vendors",
-      error: error.message,
+      error: process.env.NODE_ENV === "production" ? undefined : error.message,
     });
   }
 };

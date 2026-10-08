@@ -141,6 +141,9 @@ services:
         value: "3"
       - key: ESCROW_PAYOUTS
         value: manual
+      # Featured listing spots per category at any one time
+      - key: FEATURED_SLOTS_PER_CATEGORY
+        value: "6"
 
       # Nothing persists on free-tier disks; enable with a Persistent Disk
       - key: BACKUP_ENABLED

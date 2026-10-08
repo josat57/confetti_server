@@ -185,13 +185,21 @@ Screens are under `/user/dashboard/events/[id]/…` with tabs: Overview, Guests,
 - [x] **Admin:** Commission report: collected, commission earned, held, under review, owed to vendors, by month and by rate.
 - [x] **Tests:** `npm run test:escrow`.
 
-## Phase 6: Paid featured placement
+## Phase 6: Paid featured placement ✅ done
 
-- [ ] **API:** ₦5,000/week boost purchase that sets `isFeatured` and `featuredUntil`.
-- [ ] **API:** Cap boosts per category so search stays fair. Show "sold out" when a category is full.
-- [ ] **API:** Monthly featured credits for Business and Venue plans, and a featured venue listing for the Venue plan.
-- [ ] **API:** Search ranking: mark boosted results as "Featured", with limited slots.
-- [ ] **FE:** "Boost my listing" screen, plus credits balance and expiry.
+- [x] **API:** ₦5,000/week boost purchase (1–4 weeks) through the same atomic, amount-checked payment path (`BOOST-…`).
+  - It sets `isFeatured`/`featuredUntil`, so the existing `/vendors/featured` endpoint and dashboard show it.
+  - A vendor's boosts run back to back.
+  - Only approved profiles can be boosted.
+- [x] **API:** A cap per category (`FEATURED_SLOTS_PER_CATEGORY`, default 6) over the boost dates. When full: "sold out" with the date the next slot opens. A vendor's own running boost doesn't block extending it.
+- [x] **API:** Monthly featured credits (Business 1 week, Venue 2) that expire at the month's end. The featured venue listing: Venue-plan venues are always in the rotation for venue searches.
+- [x] **API:** Search ranking: the first results page shows up to 3 featured vendors matching the filters, rotated at random, marked `featured: true` and deduplicated from the organic results.
+- [x] **FE:** "Boost listing" page (`/vendor/dashboard/boost`): featured status, slots or sold out, credits (balance and expiry), buying 1–4 weeks, past boosts.
+- [x] **Fixed along the way:** the vendor directory (client "Find Vendors" and planner "Vendors") always showed "No vendors found".
+  - The search returned `data`, while the pages read `vendors`/`total`/`totalPages`.
+  - The rating filter (`minRating`) and the category labels ("Music & Entertainment" …) weren't understood.
+  - The cards' fields (`location.city`, `pricing`, `portfolio`, `contactInfo`, `description`) were missing.
+- [x] **Tests:** `npm run test:featured`.
 
 ## Phase 7: Support and planner client portal
 

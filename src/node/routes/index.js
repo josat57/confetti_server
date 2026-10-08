@@ -55,6 +55,7 @@ import checklistRoutes from "./checklist.routes.js";
 import invitationRoutes from "./invitation.routes.js";
 import rsvpRoutes from "./rsvp.routes.js";
 import escrowRoutes, { vendorPayoutRoutes, adminEscrowRoutes } from "./escrow.routes.js";
+import vendorBoostRoutes, { featuredCallbackRoutes } from "./featured.routes.js";
 import taskRoutes, { eventTaskRoutes } from "./task.routes.js";
 import guestRoutes, {
   eventGuestRoutes,
@@ -112,6 +113,7 @@ router.use("/webhooks", webhookManagementRoutes);
 router.use("/webhooks/payment", paymentWebhookRoutes);
 router.use("/event-passes", eventPassRoutes);
 router.use("/escrow", escrowRoutes);
+router.use("/featured", featuredCallbackRoutes);
 router.use("/data", dataExchangeRoutes);
 router.use("/events/:eventId/guests/stats", eventGuestStatsRouter);
 router.use("/tasks", taskRoutes);
@@ -139,6 +141,7 @@ router.use("/vendors/locations", locationRoutes);
 router.use("/vendors/security", securityRoutes);
 router.use("/vendors/bookings", vendorBookingRoutes);
 router.use("/vendors/payouts", vendorPayoutRoutes);
+router.use("/vendors/boost", vendorBoostRoutes);
 // Vendor AI routes are now part of universal AI planner at /ai-planner
 // router.use("/vendors/ai-planner", vendorAIRoutes);
 // General vendor routes (with /:id) must come AFTER specific routes
