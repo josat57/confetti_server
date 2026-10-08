@@ -58,8 +58,13 @@ Secrets such as the JWT keys, `PYTHON_API_KEY` and the encryption keys are gener
    - Paystack: `https://confetti-api.onrender.com/api/v1/webhooks/payment/paystack`
    - Flutterwave: `https://confetti-api.onrender.com/api/v1/webhooks/payment/flutterwave`
 
+   The same webhook URLs receive event pass, escrow and payout transfer events.
    Payment redirect/callback URLs use the API's Render URL automatically. Don't set `PUBLIC_NGROK_URL` on Render.
 4. **Admin:** sign in at https://confetti-web.onrender.com/admin/login with the super admin from step 4.
+
+## Escrow payouts
+
+Booking payments are held by Confetti and released after the event. Until Paystack approves holding funds and enables Transfers on the account, leave `ESCROW_PAYOUTS=manual`: released payouts appear under Admin → Escrow & Commission → "Payouts to make", where an admin pays the vendor and marks it paid. Once Transfers are enabled, set `ESCROW_PAYOUTS=paystack` and redeploy. Vendors add their bank under Payouts in their dashboard.
 
 ## Free tier: what to expect
 

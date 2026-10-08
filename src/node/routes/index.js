@@ -54,6 +54,7 @@ import eventPassRoutes from "./event-pass.routes.js";
 import checklistRoutes from "./checklist.routes.js";
 import invitationRoutes from "./invitation.routes.js";
 import rsvpRoutes from "./rsvp.routes.js";
+import escrowRoutes, { vendorPayoutRoutes, adminEscrowRoutes } from "./escrow.routes.js";
 import taskRoutes, { eventTaskRoutes } from "./task.routes.js";
 import guestRoutes, {
   eventGuestRoutes,
@@ -110,6 +111,7 @@ router.use("/whats-new", whatsNewRoutes);
 router.use("/webhooks", webhookManagementRoutes);
 router.use("/webhooks/payment", paymentWebhookRoutes);
 router.use("/event-passes", eventPassRoutes);
+router.use("/escrow", escrowRoutes);
 router.use("/data", dataExchangeRoutes);
 router.use("/events/:eventId/guests/stats", eventGuestStatsRouter);
 router.use("/tasks", taskRoutes);
@@ -136,6 +138,7 @@ router.use("/vendors/clients", crmRoutes);
 router.use("/vendors/locations", locationRoutes);
 router.use("/vendors/security", securityRoutes);
 router.use("/vendors/bookings", vendorBookingRoutes);
+router.use("/vendors/payouts", vendorPayoutRoutes);
 // Vendor AI routes are now part of universal AI planner at /ai-planner
 // router.use("/vendors/ai-planner", vendorAIRoutes);
 // General vendor routes (with /:id) must come AFTER specific routes
@@ -150,6 +153,7 @@ router.use("/admin/api", adminApiManagementRoutes);
 router.use("/admin/backups", adminBackupRoutes);
 router.use("/admin/business-profiles", businessVerificationRoutes);
 // General admin router (wildcard /:id catch-all must come after specific prefixes)
+router.use("/admin/escrow", adminEscrowRoutes);
 router.use("/admin", adminRoutes);
 router.use("/admin", featureFlagRoutes);
 router.use("/admin", couponRoutes);

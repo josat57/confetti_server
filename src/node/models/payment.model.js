@@ -16,6 +16,11 @@ const paymentSchema = new mongoose.Schema(
       type: mongoose.Schema.Types.ObjectId,
       ref: "Subscription",
     },
+    // Booking payment held in escrow (paymentType "escrow")
+    escrowPayment: {
+      type: mongoose.Schema.Types.ObjectId,
+      ref: "EscrowPayment",
+    },
     // Event pass purchase (paymentType "event")
     eventPass: {
       type: mongoose.Schema.Types.ObjectId,
@@ -27,7 +32,7 @@ const paymentSchema = new mongoose.Schema(
     },
     paymentType: {
       type: String,
-      enum: ["subscription", "event", "refund"],
+      enum: ["subscription", "event", "refund", "escrow"],
       required: true,
       default: "event",
     },

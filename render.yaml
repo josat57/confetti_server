@@ -134,6 +134,14 @@ services:
       - key: CLOUDINARY_API_SECRET
         sync: false
 
+      # Escrow: booking payments are released this many days after the event.
+      # Payouts: "manual" (admins pay vendors and mark them paid) until Paystack
+      # Transfers are enabled on the account, then set to "paystack".
+      - key: ESCROW_AUTO_RELEASE_DAYS
+        value: "3"
+      - key: ESCROW_PAYOUTS
+        value: manual
+
       # Nothing persists on free-tier disks; enable with a Persistent Disk
       - key: BACKUP_ENABLED
         value: "false"

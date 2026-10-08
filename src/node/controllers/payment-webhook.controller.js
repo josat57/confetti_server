@@ -6,16 +6,44 @@ import { logger } from "../utils/logger.js";
 import { sendVerificationEmail } from "../utils/email.js";
 
 /**
- * Webhooks for event pass payments (reference PASS-…). Returns true when handled.
+ * Payout transfer results (reference PAYOUT-…). Returns true when handled.
+ */
+const handleTransferWebhook = async (provider, payload, res) => {
+  const data = payload.data || {};
+  let succeeded;
+  if (provider === "paystack" && /^transfer\./.test(payload.event || "")) {
+    succeeded = payload.event === "transfer.success";
+  } else if (provider === "flutterwave" && payload.event === "transfer.completed") {
+    succeeded = String(data.status).toUpperCase() === "SUCCESSFUL";
+  } else {
+    return false;
+  }
+  try {
+    const escrowService = (await import("../services/escrow.service.js")).default;
+    await escrowService.handleTransferEvent({
+      reference: data.reference,
+      succeeded,
+      failureReason: data.complete_message || data.reason || payload.event,
+    });
+    res.status(200).json({ message: "Webhook processed successfully" });
+  } catch (error) {
+    logger.error("Transfer webhook failed", { reference: data.reference, error: error.message });
+    res.status(500).json({ message: error.message });
+  }
+  return true;
+};
+
+/**
+ * Webhooks for event pass and escrow payments (references PASS-… / ESC-…). Returns true when handled.
  * The signature is already verified; completion still checks amount and currency.
  */
 const handlePassWebhook = async (provider, payload, succeeded, res) => {
   const reference = provider === "flutterwave" ? payload.data?.tx_ref : payload.data?.reference;
-  if (!reference || !String(reference).startsWith("PASS-")) return false;
+  if (!reference || !/^(PASS|ESC)-/.test(String(reference))) return false;
   try {
     const Payment = (await import("../models/payment.model.js")).default;
     const payment = await Payment.findOne({ reference });
-    if (!payment?.eventPass) {
+    if (!payment?.eventPass && !payment?.escrowPayment) {
       res.status(404).json({ message: "Payment not found" });
       return true;
     }
@@ -66,7 +94,8 @@ export const handleFlutterwaveWebhook = async (req, res, next) => {
       status: payload.data?.status,
     });
 
-    // Event pass purchases are completed from their Payment record
+    // Payout transfers, then event pass and escrow payments (completed from their Payment record)
+    if (await handleTransferWebhook("flutterwave", payload, res)) return;
     if (await handlePassWebhook("flutterwave", payload, payload.event === "charge.completed" && payload.data?.status === "successful", res)) return;
 
     // Handle successful payment
@@ -181,7 +210,8 @@ export const handlePaystackWebhook = async (req, res, next) => {
       status: payload.data?.status,
     });
 
-    // Event pass purchases are completed from their Payment record
+    // Payout transfers, then event pass and escrow payments (completed from their Payment record)
+    if (await handleTransferWebhook("paystack", payload, res)) return;
     if (await handlePassWebhook("paystack", payload, payload.event === "charge.success", res)) return;
 
     // Handle successful payment

@@ -162,19 +162,28 @@ Screens are under `/user/dashboard/events/[id]/…` with tabs: Overview, Guests,
   - An Event virtual crashed whenever an event was populated with selected fields, affecting the budget, bookings, plans and more.
 - [x] **Tests:** `npm run test:event-screens`.
 
-## Phase 5: Escrow and booking commission
+## Phase 5: Escrow and booking commission ✅ built (needs the partner agreement to go live)
 
-- [ ] **Business:** Agree split payments or subaccounts and an escrow arrangement with Paystack or Flutterwave, a licensed partner.
-- [ ] **API:** Create a Paystack subaccount when a vendor is verified (bank details are needed at that point).
-- [ ] **API:** Add an `EscrowPayment` model (`booking`, `client`, `vendor`, `amount`, `commissionRate`, `commissionAmount`, `status`: held / released / refunded / disputed).
-- [ ] **API:** Set the commission rate from the vendor's plan at payment time: Listing 5%, Pro 3%, Business and Venue 2%.
-- [ ] **API:** Release rules: the client confirms delivery, or funds auto-release N days after the event. Add refunds and a dispute flow handled by admins.
-- [ ] **API:** Payment webhooks for escrow events. Use the paid escrow record as the source of vendor revenue; Payment has no `vendor` field.
-- [ ] **FE:**
-  - Client: "Pay through Confetti" checkout on bookings and quotes
-  - Vendor: payouts page
-  - Admin: escrow and disputes screens
-- [ ] **Admin:** Commission revenue report.
+- [ ] **Business:** agree escrow and payouts with Paystack (or Flutterwave). Holding customer funds needs their approval, and Paystack Transfers must be enabled before `ESCROW_PAYOUTS=paystack`. Until then payouts run in **manual** mode: admins pay vendors and mark the payouts paid.
+- [x] **API:** Vendor payout account (`/vendors/payouts/account`).
+  - The bank account is checked with Paystack and a transfer recipient is created.
+  - A split subaccount is created when the vendor is verified, by a Vendor model hook that covers every approval path.
+  - The account number is kept only encrypted; screens show the last 4 digits.
+- [x] **API:** `EscrowPayment` model (booking, client, vendor, amount, commission rate, status held / released / refunded / disputed, plus payout, refund, dispute and history).
+- [x] **API:** The commission rate comes from the vendor's plan at payment time: Listing 5%, Pro 3%, Business and Venue 2%.
+- [x] **API:** Client checkout (`POST /escrow/checkout`) on vendor-confirmed or quoted bookings, for the balance or part of it. Paying a quote accepts it.
+- [x] **API:** Release when the client confirms delivery, or automatically `ESCROW_AUTO_RELEASE_DAYS` (3) after the event (hourly job).
+  - Disputes from either side stop the automatic release.
+  - Admin resolution: release, refund, or split (refund part, release the rest with commission on the released part).
+  - Refunds go through the original provider; if the provider refuses, the refund is marked for a manual refund.
+- [x] **API:** Webhooks: escrow payments (`ESC-…`) complete atomically with the amount checked; payout transfers (`PAYOUT-…`, Paystack `transfer.*`, Flutterwave `transfer.completed`) update the payout status.
+- [x] **API:** Escrow payments count in the vendor's dashboard revenue and on the booking's paid and outstanding amounts.
+- [x] **FE:**
+  - Client: "Pay through Confetti" on the client booking page and the planner bookings page, with confirm delivery and report a problem.
+  - Vendor: Payouts page (`/vendor/dashboard/payouts`) with the payout account, totals and every payment's fee and payout status.
+  - Admin: Escrow & Commission page with disputes and payouts.
+- [x] **Admin:** Commission report: collected, commission earned, held, under review, owed to vendors, by month and by rate.
+- [x] **Tests:** `npm run test:escrow`.
 
 ## Phase 6: Paid featured placement
 

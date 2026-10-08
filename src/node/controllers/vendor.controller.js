@@ -898,9 +898,35 @@ export const getDashboardSummary = async (req, res, next) => {
         { $limit: 12 }, // Last 12 months
       ]),
     ]);
-    const revenueByMonth = revenueByMonthDesc
-      .reverse()
-      .map((row) => ({ ...row, count: row.count.length }));
+    // Plus booking payments made through Confetti (escrow), net of refunds (naira)
+    const EscrowPayment = (await import("../models/escrow-payment.model.js")).default;
+    const escrowMatch = {
+      vendor: vendor._id,
+      status: { $in: ["held", "released", "disputed", "refunded"] },
+      ...(Object.keys(dateFilter).length > 0 ? { paidAt: dateFilter } : {}),
+    };
+    const escrowNet = { $divide: [{ $subtract: ["$amount", { $ifNull: ["$refund.amount", 0] }] }, 100] };
+    const [escrowRows, escrowByMonth] = await Promise.all([
+      EscrowPayment.aggregate([{ $match: escrowMatch }, { $project: { amount: escrowNet } }, { $match: { amount: { $gt: 0 } } }]),
+      EscrowPayment.aggregate([
+        { $match: escrowMatch },
+        { $group: { _id: { year: { $year: "$paidAt" }, month: { $month: "$paidAt" } }, revenue: { $sum: escrowNet }, count: { $sum: 1 } } },
+      ]),
+    ]);
+    payments.push(...escrowRows);
+
+    const months = new Map();
+    for (const row of revenueByMonthDesc) {
+      months.set(`${row._id.year}-${row._id.month}`, { _id: row._id, revenue: row.revenue, count: row.count.length });
+    }
+    for (const row of escrowByMonth) {
+      const key = `${row._id.year}-${row._id.month}`;
+      const existing = months.get(key) || { _id: row._id, revenue: 0, count: 0 };
+      months.set(key, { _id: row._id, revenue: existing.revenue + row.revenue, count: existing.count + row.count });
+    }
+    const revenueByMonth = [...months.values()]
+      .sort((a, b) => a._id.year - b._id.year || a._id.month - b._id.month)
+      .slice(-12);
 
     const periodRevenue = payments.reduce((sum, p) => sum + p.amount, 0);
     const periodBookings = payments.length;

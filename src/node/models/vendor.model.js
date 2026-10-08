@@ -14,6 +14,19 @@ const vendorSchema = new mongoose.Schema(
       ref: "Subscription",
       index: true,
     },
+    // Where escrow payouts go. Only the last 4 digits are kept; Paystack holds the account.
+    payoutAccount: {
+      bankCode: String,
+      bankName: String,
+      accountLast4: String,
+      accountName: String,
+      currency: { type: String, default: "NGN" },
+      recipientCode: String, // Paystack transfer recipient
+      subaccountCode: String, // Paystack split subaccount (created once the vendor is verified)
+      accountNumberEnc: { type: String, select: false }, // encrypted (utils/secret-crypto.js)
+      verifiedAt: Date,
+      updatedAt: Date,
+    },
 
     // Basic Info
     name: {
@@ -522,6 +535,18 @@ vendorSchema.methods.isBusinessVerified = function () {
 // Ensure virtuals are included in JSON
 vendorSchema.set("toJSON", { virtuals: true });
 vendorSchema.set("toObject", { virtuals: true });
+
+// When a vendor becomes verified, set up their Paystack split subaccount (needs a payout account)
+vendorSchema.pre("save", function (next) {
+  this.$locals.becameVerified = this.isModified("isVerified") && this.isVerified === true;
+  next();
+});
+vendorSchema.post("save", function (doc) {
+  if (!doc.$locals?.becameVerified) return;
+  import("../services/vendor-payout.service.js")
+    .then(({ ensureSubaccount }) => ensureSubaccount(doc._id))
+    .catch(() => {});
+});
 
 const Vendor = mongoose.model("Vendor", vendorSchema);
 

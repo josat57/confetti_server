@@ -190,6 +190,8 @@ const vendorBookingSchema = new mongoose.Schema(
         method: String,
         notes: String,
         paidAt: { type: Date, default: Date.now },
+        // Paid through Confetti (escrow); amount drops if part is refunded
+        escrow: { type: mongoose.Schema.Types.ObjectId, ref: "EscrowPayment" },
       },
     ],
     depositPaidAt: Date,

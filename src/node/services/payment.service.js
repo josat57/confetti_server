@@ -450,6 +450,12 @@ class PaymentService {
     );
     if (!claimed) return { payment, alreadyProcessed: true };
 
+    if (claimed.escrowPayment) {
+      const escrowService = (await import("./escrow.service.js")).default;
+      await escrowService.markHeldFromPayment(claimed._id);
+      return { payment: claimed, alreadyProcessed: false };
+    }
+
     if (claimed.eventPass) {
       const eventPassService = (await import("./event-pass.service.js")).default;
       await eventPassService.activateFromPayment(claimed._id);
@@ -510,6 +516,32 @@ class PaymentService {
       }
     }
     throw new AppError("Invalid payment provider", 400);
+  }
+
+  /**
+   * Look up a transaction with the provider (after a redirect back from the payment page).
+   * `id` is Flutterwave's transaction id or Paystack's reference. Returns the provider's data.
+   */
+  async verifyProviderTransaction(id, provider) {
+    try {
+      const response =
+        provider === "flutterwave"
+          ? await axios.get(`https://api.flutterwave.com/v3/transactions/${encodeURIComponent(id)}/verify`, {
+              headers: { Authorization: `Bearer ${process.env.FLUTTERWAVE_SECRET_KEY}` },
+              timeout: 30000,
+            })
+          : await axios.get(`https://api.paystack.co/transaction/verify/${encodeURIComponent(id)}`, {
+              headers: { Authorization: `Bearer ${process.env.PAYSTACK_SECRET_KEY}` },
+              timeout: 30000,
+            });
+      const data = response.data?.data;
+      if (!data) throw new AppError("Payment not found", 404);
+      if (!["success", "successful"].includes(data.status)) throw new AppError("Payment was not completed", 400);
+      return data;
+    } catch (error) {
+      if (error instanceof AppError) throw error;
+      throw new AppError(`Failed to verify payment: ${error.response?.data?.message || error.message}`, 502);
+    }
   }
 
   /** Public base URL of this API (payment redirects) */

@@ -74,6 +74,14 @@ const startServer = async () => {
       logger.error("Subscription plan sync failed:", error.message);
     }
 
+    // Escrow: release booking payments after the event, hourly
+    try {
+      const { startEscrowJobs } = await import("./services/escrow.service.js");
+      startEscrowJobs();
+    } catch (error) {
+      logger.error("Escrow jobs failed to start:", error.message);
+    }
+
     // Subscription renewals (saved cards) and expiry reminders, hourly
     try {
       const { startSubscriptionJobs } = await import("./services/subscription-renewal.service.js");
