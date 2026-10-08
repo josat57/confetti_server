@@ -50,16 +50,25 @@ class SubscriptionReminderService {
       const endOfDay = new Date(targetDate);
       endOfDay.setHours(23, 59, 59, 999);
 
-      // Find subscriptions expiring on this day
-      // Only send reminders for active subscriptions with autoRenew disabled
-      const expiringSubscriptions = await Subscription.find({
-        status: "active",
-        autoRenew: false, // Only remind users who won't auto-renew
+      // Paid subscriptions ending that day. Remind those that won't renew by
+      // themselves: auto-renew off, or no saved card to charge.
+      const candidates = await Subscription.find({
+        status: { $in: ["active", "cancelled"] },
+        amount: { $gt: 0 },
         endDate: {
           $gte: startOfDay,
           $lte: endOfDay,
         },
-      }).populate("user", "email username firstName lastName");
+      }).populate("user", "email username firstName lastName paymentMethods");
+      const expiringSubscriptions = candidates.filter((subscription) => {
+        // Already reminded at this stage (or a later one) for this period
+        const last = subscription.lastReminder;
+        if (last?.endDate?.getTime() === subscription.endDate.getTime() && last.days <= daysRemaining) {
+          return false;
+        }
+        const hasCard = (subscription.user?.paymentMethods || []).some((m) => m.providerPaymentMethodId);
+        return !subscription.autoRenew || !hasCard;
+      });
 
       logger.info(
         `Found ${expiringSubscriptions.length} subscriptions expiring in ${daysRemaining} day(s)`
@@ -79,6 +88,10 @@ class SubscriptionReminderService {
             subscription.user,
             subscription,
             daysRemaining
+          );
+          await Subscription.updateOne(
+            { _id: subscription._id },
+            { $set: { lastReminder: { endDate: subscription.endDate, days: daysRemaining, sentAt: new Date() } } }
           );
 
           logger.info(

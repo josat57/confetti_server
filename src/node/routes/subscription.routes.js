@@ -14,6 +14,11 @@ import {
   getCurrentSubscription,
   getSubscriptionUsage,
   getSubscriptionPayments,
+  changePlan,
+  cancelMySubscription,
+  reactivateSubscription,
+  getMyUsage,
+  getMyHistory,
 } from "../controllers/subscription.controller.js";
 import { protect } from "../middleware/auth.js";
 
@@ -123,6 +128,15 @@ router.use(protect);
 router.post("/trial", startTrial);
 router.post("/payment-intent", createPaymentIntent);
 router.post("/verify-payment", verifyPayment);
+
+// My subscription: change plan (paid upgrades, downgrades at period end), cancel, usage
+router.post("/change-plan", changePlan);
+router.post("/upgrade", changePlan);
+router.post("/downgrade", changePlan);
+router.post("/cancel", cancelMySubscription);
+router.post("/reactivate", reactivateSubscription);
+router.get("/usage", getMyUsage);
+router.get("/history", getMyHistory);
 
 /**
  * @swagger

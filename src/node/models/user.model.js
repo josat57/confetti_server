@@ -39,7 +39,8 @@ const userSchema = new mongoose.Schema(
     },
     role: {
       type: String,
-      enum: ["admin", "event-planner", "vendor"],
+      // "user" = someone planning their own event (client dashboard)
+      enum: ["admin", "event-planner", "vendor", "user"],
       default: "event-planner",
     },
     status: {

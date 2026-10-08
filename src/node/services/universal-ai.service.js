@@ -104,6 +104,15 @@ class UniversalAIService {
   }
 
   /**
+   * AI models a user may use: their plan's own list (free plans: local data only),
+   * otherwise the models for their plan level
+   */
+  modelsFor(userContext) {
+    if (Array.isArray(userContext?.aiModels)) return userContext.aiModels;
+    return (this.featureAccess[userContext?.planLevel] || this.featureAccess[1]).aiModels;
+  }
+
+  /**
    * Analyze client requirements using AI
    */
   async analyzeClientRequirements(params) {
@@ -138,7 +147,7 @@ class UniversalAIService {
 
       // Use available AI models based on user context
       const availableModels = userContext
-        ? this.featureAccess[userContext.planLevel].aiModels
+        ? this.modelsFor(userContext)
         : ["local"];
 
       let aiResponse;
@@ -608,7 +617,7 @@ class UniversalAIService {
    */
   async analyzeClientWithAvailableAI(params) {
     const { userContext } = params;
-    const availableModels = this.featureAccess[userContext.planLevel].aiModels;
+    const availableModels = this.modelsFor(userContext);
 
     try {
       const analysisPrompt = this.buildClientAnalysisPrompt(params);
@@ -2582,7 +2591,7 @@ Respond in JSON format:
 }`,
     };
 
-    const availableModels = this.featureAccess[userContext.planLevel].aiModels;
+    const availableModels = this.modelsFor(userContext);
     // The local engine scores plans but can't hold a conversation
     if (!availableModels.some((model) => model !== "local")) {
       return {
@@ -2667,7 +2676,7 @@ Respond in JSON format:
 
       // Generate AI response using available models
       const availableModels =
-        this.featureAccess[userContext.planLevel].aiModels;
+        this.modelsFor(userContext);
       const aiResponse = await this.generateChatResponse(
         conversationContext,
         availableModels,
@@ -3100,7 +3109,7 @@ Respond in JSON format:
     refinementType,
     userContext,
   }) {
-    const availableModels = this.featureAccess[userContext.planLevel].aiModels;
+    const availableModels = this.modelsFor(userContext);
 
     const refinementContext = {
       existingPlan: JSON.stringify(existingPlan, null, 2),

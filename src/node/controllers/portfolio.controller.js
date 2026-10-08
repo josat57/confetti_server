@@ -2,6 +2,7 @@ import Portfolio from "../models/portfolio.model.js";
 import Vendor from "../models/vendor.model.js";
 import { AppError } from "../utils/AppError.js";
 import { logger } from "../utils/logger.js";
+import { assertWithinLimit } from "../services/plan-access.service.js";
 
 /**
  * Get all portfolio items for vendor
@@ -89,6 +90,9 @@ export const createPortfolioItem = async (req, res, next) => {
     if (!vendor) {
       return next(new AppError("Vendor profile not found", 404));
     }
+
+    const newPhotos = Array.isArray(req.body?.photos) ? req.body.photos.length : 0;
+    if (newPhotos > 0) await assertWithinLimit(req, "portfolioPhotos", { adding: newPhotos });
 
     const portfolioItem = await Portfolio.create({
       ...req.body,
@@ -278,6 +282,8 @@ export const addPhotos = async (req, res, next) => {
     if (!photos || !Array.isArray(photos)) {
       return next(new AppError("Photos array is required", 400));
     }
+
+    await assertWithinLimit(req, "portfolioPhotos", { adding: photos.length });
 
     photos.forEach((photo) => {
       portfolioItem.photos.push({

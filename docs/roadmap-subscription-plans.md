@@ -31,42 +31,63 @@ Gaps between the plans in the business case (section 6) and the code, in build o
   - backfill of older messages and the planner endpoints
   - access control, validation and concurrent creation
 
-## Phase 2: Plan limits and the new prices
+## Phase 2: Plan limits and the new prices ✅ done
 
 **Prices and billing**
 
-- [ ] **API:** Replace the plan table in `services/subscription.service.js` with the document's plans:
-  - Vendors: Listing ₦0, Pro ₦7,500, Business ₦20,000, Venue ₦30,000
-  - Planners: Solo ₦0, Studio ₦15,000, Agency ₦40,000
-  - Corporate: from ₦500,000/year
-- [ ] **API:** Map the new plan names to plan levels in `universal-ai.service.js` `featureAccess`, and migrate existing subscribers to the nearest new plan.
-- [ ] **API:** Make yearly billing real: charge 10× the monthly price for 12 months, honour `billingCycle: "yearly"` at checkout and set the correct expiry date.
-- [ ] **API:** Let admins edit prices, so the yearly increase of up to 10% needs no code change.
-- [ ] **FE:** Update the pricing and upgrade pages (vendor, planner, public) with the new plans and a monthly/yearly toggle.
+- [x] **One plan catalogue,** `config/plans.js`, defines plan names, levels, limits and features.
+  - Vendors: Listing ₦0, Pro ₦7,500, Business ₦20,000, Venue ₦30,000.
+  - Planners: Solo ₦0, Studio ₦15,000, Agency ₦40,000.
+  - Corporate (from ₦500,000/year) appears on the pricing page as "Talk to us"; it's sold by the team (Phase 11).
+- [x] **Plan sync at startup** (`services/plan-catalogue.service.js`).
+  - Writes the plans into `SubscriptionPlan`, where admins edit prices.
+  - Retires the old names and never overwrites an admin's price change.
+  - `scripts/seed-subscription-plans.js` resets every plan to the defaults.
+- [x] **Existing subscribers keep working without a data migration.** Old names map to the new plans: Basic→Listing, Professional→Pro, Enterprise→Venue (vendors); Starter→Solo, Professional/Business→Studio, Enterprise→Agency (planners).
+- [x] **Yearly billing** costs 10× monthly for 12 months. It works at sign-up and when changing plan.
+- [x] **Admins edit prices** through the existing plan admin; restarts keep the edits.
+- [x] **FE:**
+  - Public pricing has a monthly/yearly toggle, the Corporate card and correct copy.
+  - Vendor billing and planner subscription pages use the shared `PlanPicker` and `PlanUsage`.
 
-**Limit enforcement:** one `enforcePlanLimit(resource)` middleware plus a usage counter.
+**Limits** (`services/plan-access.service.js`, counted from real data):
 
-| Limit | Plan | Where to enforce |
+| Limit | Plan | Enforced in |
 |---|---|---|
-| 10 portfolio photos | Vendor Listing | Portfolio and photo upload routes |
-| 5 lead replies a month | Vendor Listing | Lead reply and quote send |
-| Team up to 5 | Vendor Business (and Venue) | Vendor team invite |
-| 2 active events | Planner Solo | Event create |
-| 15 active events | Planner Studio | Event create |
-| Team of 3 / 15 | Planner Studio / Agency | Planner team invite |
-| 1 event | Client Free | Event create |
-| 100 guests | Client Free | Guest create and import |
+| 10 portfolio photos | Vendor Listing | new portfolio item, add photos, gallery upload |
+| 5 lead replies a month | Vendor Listing | first message in a conversation that month, quote sending |
+| Team (0 / 5) | Vendor Listing+Pro / Business+Venue | vendor team invite and reactivate |
+| 2 / 15 / unlimited active events | Planner Solo / Studio / Agency | `POST /events`, saving an AI plan, mobile sync |
+| Team (0 / 3 / 15) | Planner Solo / Studio / Agency | planner team invite (members plus open invitations) |
+| 1 event, 100 guests | Client Free | event create, guest add/import, event guests (active once the client role exists) |
 
-- [ ] **API:** Implement the middleware and apply it to every route in the table.
-- [ ] **API:** Feature gates:
-  - AI proposal writer: Business and above
-  - Advanced analytics: Business and above. Split the analytics response into basic and advanced.
-  - Branded proposals and exports: Agency
-  - API access: Agency only. `api-access.routes.js` is currently open to every signed-in user.
-  - Full AI vs local-data AI: Free and Solo get the local model only
-- [ ] **API:** Return a consistent `402/403 PLAN_LIMIT_REACHED` error with an upgrade hint.
-- [ ] **FE:** Show usage meters ("7 of 10 photos") and an upgrade prompt when that error is returned.
-- [ ] **Promo:** Use `couponRoutes` to offer Pro free for 3 months for the launch campaign.
+- [x] **Feature gates:**
+  - Vendor AI routes and the AI proposal writer need Business or above (planners: Studio or above).
+  - Advanced analytics need Business or above; revenue totals need Pro or above. The dashboard summary says what's locked.
+  - Branded proposals and exports need Agency. New planner branding endpoints at `/planner/settings/branding`.
+  - Creating API keys or webhooks needs API access: Agency, plus Venue for vendors moved from the old Enterprise plan.
+  - Free plans use local-data AI, with external AI only when local data is too thin. Studio and Business and above get full AI.
+- [x] **Errors:** 403 with `code: PLAN_LIMIT_REACHED` / `PLAN_FEATURE_REQUIRED` and `details` (limit, used, upgradeTo).
+- [x] **FE:** usage meters, plus an upgrade prompt in every dashboard when an action hits a limit.
+- [x] **Promo:** an admin creates a `free_trial` coupon (value = months, e.g. 3) limited to the "Pro" plan and to vendors. It applies when changing plan. It can't yet be entered at sign-up.
+
+**Billing bugs fixed along the way**
+
+- Upgrades were free: a duplicate `upgradeSubscription` switched plans without charging, and vendor settings "change plan" did the same.
+- Paystack charged 100× the price; proration charged 1/100th.
+- A payment could be applied twice (webhook plus redirect). Confirmation is now atomic and checks the amount and currency paid.
+- Paystack payers always landed on the error page (the callback expected a `status` that Paystack doesn't send).
+- Subscription upgrade, downgrade, cancel and usage endpoints worked on anyone's subscription. Ownership is now checked.
+- `GET /subscriptions/plans` always returned 500.
+- Cancelling removed paid features at once. They now last until the paid period ends, and cancellation can be undone.
+- Downgrades now apply at the end of the period.
+- Free plans expired after a month.
+- Trials could be restarted over and over (now once per account).
+- USD sign-ups failed the price check (floating point); a second, conflicting verification email was sent after payment.
+- Old plan names locked paying planners out of reports and calendar sync, and AI plan levels were 0 for every paying user.
+- The vendor plan gate rejected every vendor (it read a subscription link that's never set).
+- Any signed-in user could edit or delete any vendor through `/vendors/:id` routes. These are now owner or admin only.
+- Free vendors failed the frontend tier check (`basic` is level 0); upgrade buttons sent signed-in users to the public sign-up page.
 
 ## Phase 3: Per-event passes for clients
 
@@ -150,13 +171,37 @@ Gaps between the plans in the business case (section 6) and the code, in build o
 - [ ] **API:** Annual contract billing (from ₦500,000/year), paid by invoice or bank transfer.
 - [ ] **FE:** Company dashboard, approvals inbox and reports.
 
-## Issues found during Phase 1 (not yet fixed)
+## Issues found during Phases 1–2 ✅ all fixed
 
-- [ ] **No client accounts.** Registration only creates `vendor` or `event-planner` (`controllers/auth.controller.js`), and the User schema has no `user` role. The client dashboard (`/user/dashboard`, which requires `role === "user"`) is unreachable, so people planning their own event use the planner dashboard. Fix before Phase 3/4: add the `user` role and a "planning my own event" option at sign-up.
-- [ ] **Vendors see no bookings.** `/vendors/bookings` uses the planner booking controller, which filters `planner: req.user._id`. It also returns `VendorBooking` documents, while the vendor booking page expects a `client` object.
-- [ ] **Planner "Book" flow** redirects to `/planner/dashboard/bookings`, which doesn't exist.
-- [ ] **Planner "View Profile"** on vendor cards links to `/planner/dashboard/vendors/[id]`, which doesn't exist.
-- [ ] **Leads can't be messaged.** Leads have no linked user account, so vendors reply to leads by email or phone. Linking a lead to the client's account when they're signed in would allow it.
+- [x] **Client accounts.**
+  - New `user` role, and a "My event" tab on the pricing page that signs people up for the free client plan (no subscription).
+  - Vendor search and booking requests are mounted before the planner-only `/planner` router and allow both planners and clients.
+- [x] **Client bookings.** New `/users/bookings` endpoints (request, list, detail, cancel) and `/users/dashboard/stats` and `/users/activity`.
+  - A quote request creates a booking the client owns, plus a lead for the vendor, and notifies the vendor.
+  - The client dashboard calls these directly; the silent fallbacks are gone.
+- [x] **Vendors see their bookings.** `/vendors/bookings` has its own controller (`controllers/vendor-booking.controller.js`) for the vendor dashboard:
+  - list, stats, upcoming bookings, detail, create, edit
+  - confirm, cancel and complete, which notify the client
+  - notes, payments and deposits
+  - a confirmation email and a PDF contract
+- [x] **Planner "Book" flow:** a new `/planner/dashboard/bookings` page, also in the sidebar.
+- [x] **Planner "View Profile":** a new `/planner/dashboard/vendors/[id]` page with Save, Message and Book.
+- [x] **Leads can be messaged.** Leads from signed-in clients store `customerUser`, and the lead page has "Message Client".
+- [x] **Vendor dashboard revenue** comes from payments recorded on the vendor's invoices. The monthly trend now shows the latest 12 months.
+- [x] **`POST /vendors/:id/portfolio`** stores items in the Portfolio collection, with the photo limit applied.
+- [x] **`req.planner` is set.** The planner profile lookup uses `userId`.
+- [x] **API access for planners**, at `/planner/api-access/api-keys` and `/planner/api-access/webhooks`.
+  - Keys belong to a user and are accepted through the `x-api-key` header. On every call the key must be active, unexpired and from an allowed IP, and the owner's plan must still include API access.
+  - Account, billing and key endpoints refuse keys.
+  - Before this, creating keys and webhooks always failed, and nothing accepted keys.
+- [x] **Automatic renewal** (`services/subscription-renewal.service.js`, hourly).
+  - The saved card is charged for the next period, which starts where the old one ends, and a scheduled downgrade is applied at renewal.
+  - Up to 3 attempts, 12 hours apart. Without a card the plan lapses to free.
+  - The expiry reminders now actually run: once per stage, for subscriptions that won't renew automatically.
+- [x] **Coupons at sign-up.** The code is checked before the account is created. Free-months coupons apply at once; discounts lead to the reduced payment.
+- [x] **Security:** `GET /users`, `GET /users/:id` and `PATCH /users/:id/active|lock` were open to any signed-in user. They're now admin-only.
+
+Tests: `npm run test:messaging`, `npm run test:plans`, `npm run test:issues` (in `src/node`).
 
 ## Dependencies
 

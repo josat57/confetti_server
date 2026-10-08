@@ -173,6 +173,31 @@ const vendorBookingSchema = new mongoose.Schema(
         note: String,
       },
     ],
+    // Vendor-side details (vendor bookings page)
+    address: {
+      street: String,
+      city: String,
+      state: String,
+      country: String,
+      postalCode: String,
+    },
+    eventNotes: String,
+    lead: { type: mongoose.Schema.Types.ObjectId, ref: "Lead" },
+    quoteRef: { type: mongoose.Schema.Types.ObjectId, ref: "Quote" },
+    payments: [
+      {
+        amount: { type: Number, required: true, min: 0 },
+        method: String,
+        notes: String,
+        paidAt: { type: Date, default: Date.now },
+      },
+    ],
+    depositPaidAt: Date,
+    confirmedAt: Date,
+    completedAt: Date,
+    cancelledAt: Date,
+    cancellationReason: String,
+    cancelledBy: { type: String, enum: ["vendor", "client"] },
   },
   {
     timestamps: true,

@@ -1,4 +1,5 @@
 import mongoose from "mongoose";
+import { resolvePlan } from "../config/plans.js";
 
 const aiPlannerUsageSchema = new mongoose.Schema(
   {
@@ -94,15 +95,9 @@ aiPlannerUsageSchema.statics.canUseFeature = async function (
   usageType,
   planName
 ) {
-  // Define tier limits
-  const tierLimits = {
-    Starter: 2,
-    Professional: Infinity,
-    Business: Infinity,
-    Enterprise: Infinity,
-  };
-
-  const limit = tierLimits[planName] || 0;
+  // Free planner plan (Solo): 2 a month; paid plans: unlimited. Old plan names resolve too.
+  const plan = resolvePlan("planner", planName);
+  const limit = !plan || plan.level <= 1 ? 2 : Infinity;
 
   if (limit === Infinity) {
     return { allowed: true, remaining: Infinity };

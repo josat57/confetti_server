@@ -6,6 +6,7 @@ import { AppError } from "../utils/AppError.js";
 import { logger } from "../utils/logger.js";
 import crypto from "crypto";
 import { sendEmailDirect } from "../utils/email.js";
+import { assertWithinLimit } from "../services/plan-access.service.js";
 
 /**
  * Get all team members
@@ -127,6 +128,9 @@ export const inviteTeamMember = async (req, res, next) => {
     if (!email) {
       return next(new AppError("Email is required", 400));
     }
+
+    // Team size is set by the plan (members and open invitations)
+    await assertWithinLimit(req, "teamMembers");
 
     // Check if user exists
     let user = await User.findOne({ email: email.toLowerCase() });
@@ -498,6 +502,10 @@ export const reactivateTeamMember = async (req, res, next) => {
 
     if (!teamMember) {
       return next(new AppError("Team member not found", 404));
+    }
+
+    if (teamMember.status === "inactive") {
+      await assertWithinLimit(req, "teamMembers");
     }
 
     if (teamMember.status !== "inactive") {

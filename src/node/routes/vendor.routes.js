@@ -1,5 +1,7 @@
 import express from "express";
 import { protect, restrictTo } from "../middleware/auth.js";
+import mongoose from "mongoose";
+import VendorModel from "../models/vendor.model.js";
 import {
   uploadLogo as uploadLogoMiddleware,
   uploadMedia as uploadMediaMiddleware,
@@ -1339,7 +1341,24 @@ router.post("/", createVendor);
  *             schema:
  *               $ref: '#/components/schemas/Error'
  */
-router.patch("/:id", updateVendor);
+// Changing a vendor profile by id: only its owner or an admin
+const requireVendorOwner = async (req, res, next) => {
+  try {
+    if (!mongoose.isValidObjectId(req.params.id)) {
+      return res.status(404).json({ status: "fail", message: "Vendor not found" });
+    }
+    const vendor = await VendorModel.findById(req.params.id).select("owner").lean();
+    if (!vendor) return res.status(404).json({ status: "fail", message: "Vendor not found" });
+    if (req.user.role !== "admin" && String(vendor.owner) !== String(req.user._id)) {
+      return res.status(403).json({ status: "fail", message: "You can only change your own vendor profile" });
+    }
+    next();
+  } catch (error) {
+    next(error);
+  }
+};
+
+router.patch("/:id", requireVendorOwner, updateVendor);
 
 /**
  * @swagger
@@ -1397,11 +1416,11 @@ router.patch("/:id", updateVendor);
  *             schema:
  *               $ref: '#/components/schemas/Error'
  */
-router.delete("/:id", deleteVendor);
+router.delete("/:id", requireVendorOwner, deleteVendor);
 
-router.post("/:id/services", addOrUpdateService);
-router.post("/:id/portfolio", addOrUpdatePortfolioItem);
-router.post("/:id/availability", manageAvailability);
+router.post("/:id/services", requireVendorOwner, addOrUpdateService);
+router.post("/:id/portfolio", requireVendorOwner, addOrUpdatePortfolioItem);
+router.post("/:id/availability", requireVendorOwner, manageAvailability);
 router.post("/:id/reviews", addReview);
 
 /**

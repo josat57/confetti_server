@@ -66,6 +66,22 @@ const startServer = async () => {
       );
     }
 
+    // Subscription plans: create missing ones and retire old names (keeps admin price edits)
+    try {
+      const { ensurePlans } = await import("./services/plan-catalogue.service.js");
+      await ensurePlans();
+    } catch (error) {
+      logger.error("Subscription plan sync failed:", error.message);
+    }
+
+    // Subscription renewals (saved cards) and expiry reminders, hourly
+    try {
+      const { startSubscriptionJobs } = await import("./services/subscription-renewal.service.js");
+      startSubscriptionJobs();
+    } catch (error) {
+      logger.error("Subscription jobs failed to start:", error.message);
+    }
+
     // Initialize GridFS for file storage
     try {
       initializeGridFS();

@@ -2,7 +2,7 @@ import UniversalAIService from "../services/universal-ai.service.js";
 import PythonService from "../services/python.service.js";
 import { logger } from "../utils/logger.js";
 import { AppError } from "../utils/AppError.js";
-import { getPlanLevel } from "../middleware/subscription.js";
+import { getActivePlan } from "../services/plan-access.service.js";
 import crypto from "crypto";
 
 /**
@@ -62,34 +62,21 @@ export const getUserContext = async (req) => {
       userRole: req.user.role,
     });
 
-    // Determine user type and get subscription info
-    if (req.vendor) {
-      context.userType = "vendor";
-      context.planLevel = getPlanLevel(
-        req.vendor.subscription?.planName || "basic"
-      );
-      context.planName = req.vendor.subscription?.planName || "basic";
-      context.subscription = req.vendor.subscription;
-      context.profile = req.vendor;
-    } else if (req.planner) {
-      context.userType = "planner";
-      context.planLevel = getPlanLevel(
-        req.planner.subscription?.planName || "basic"
-      );
-      context.planName = req.planner.subscription?.planName || "basic";
-      context.subscription = req.planner.subscription;
-      context.profile = req.planner;
-    } else if (req.user.role === "admin" || req.user.role === "super_admin") {
+    // Determine user type and plan (from the user's subscription)
+    if (req.user.role === "admin" || req.user.role === "super_admin") {
       context.userType = "admin";
       context.planLevel = 5; // Admin gets highest level access
       context.planName = "admin";
       context.profile = req.user;
     } else {
-      // Regular authenticated user without specific profile
-      context.userType = "user";
-      context.planLevel = 2; // Starter level for basic authenticated users
-      context.planName = "starter";
-      context.profile = req.user;
+      const { plan, planType, subscription } = await getActivePlan(req.user);
+      context.userType = planType === "client" ? "user" : planType;
+      context.planLevel = plan?.aiLevel || 2;
+      context.planName = plan?.key || "free";
+      // Free plans plan from local data only
+      if (plan?.aiModels) context.aiModels = plan.aiModels;
+      context.subscription = subscription;
+      context.profile = req.vendor || req.planner || req.user;
     }
   }
 

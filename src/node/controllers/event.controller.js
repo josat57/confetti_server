@@ -9,6 +9,7 @@ import {
 } from "../utils/gridfs.js";
 import { AppError } from "../utils/AppError.js";
 import { escapeRegExp } from "../utils/escape-regex.js";
+import { assertCanCreateEvent, assertWithinLimit } from "../services/plan-access.service.js";
 
 /**
  * Helper function to check if user has access to event
@@ -25,6 +26,7 @@ const hasEventAccess = (event, userId) => {
 
 export const createEvent = async (req, res) => {
   try {
+    await assertCanCreateEvent(req);
     const event = new Event({
       ...req.body,
       createdBy: req.user.id,
@@ -418,6 +420,8 @@ export const addGuest = async (req, res) => {
     if (!isCreator && !isPlanner) {
       return res.status(403).json({ message: "Access denied" });
     }
+
+    await assertWithinLimit(req, "guestsPerEvent", { eventId: event._id });
 
     const { userId, plusOne } = req.body;
     await event.addGuest(userId, plusOne);

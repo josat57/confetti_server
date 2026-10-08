@@ -16,11 +16,27 @@ import {
   deleteCoverPhoto,
 } from "../controllers/user.controller.js";
 import { upload } from "../middleware/upload.js";
+import {
+  requestBooking,
+  listMyBookings,
+  getMyBooking,
+  cancelMyBooking,
+  getMyDashboardStats,
+  getMyActivity,
+} from "../controllers/client-booking.controller.js";
 
 const router = express.Router();
 
 // User routes (require authentication)
 router.use(protect);
+
+// Client dashboard: bookings and overview (before the admin /:id routes)
+router.get("/dashboard/stats", getMyDashboardStats);
+router.get("/activity", getMyActivity);
+router.post("/bookings/request", requestBooking);
+router.get("/bookings", listMyBookings);
+router.get("/bookings/:id", getMyBooking);
+router.patch("/bookings/:id/cancel", cancelMyBooking);
 
 router.get("/me", getProfile);
 router.patch("/me", updateProfile);
@@ -136,7 +152,9 @@ router.use(restrictTo("admin"));
  *             schema:
  *               $ref: '#/components/schemas/Error'
  */
-router.get("/", listUsers);
+// Account administration: admins only (these used to be open to any signed-in user)
+const adminOnly = restrictTo("admin", "super_admin");
+router.get("/", adminOnly, listUsers);
 
 /**
  * @swagger
@@ -446,8 +464,8 @@ router.get("/", listUsers);
  *             schema:
  *               $ref: '#/components/schemas/Error'
  */
-router.get("/:id", getUserById);
-router.patch("/:id/active", setUserActiveStatus);
-router.patch("/:id/lock", setUserLockStatus);
+router.get("/:id", adminOnly, getUserById);
+router.patch("/:id/active", adminOnly, setUserActiveStatus);
+router.patch("/:id/lock", adminOnly, setUserLockStatus);
 
 export default router;

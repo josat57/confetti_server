@@ -1,4 +1,5 @@
 import mongoose from "mongoose";
+import { resolvePlan } from "../config/plans.js";
 
 const subscriptionPlanSchema = new mongoose.Schema(
   {
@@ -113,12 +114,17 @@ subscriptionPlanSchema.statics.getActivePlans = function (planType, currency) {
   return this.find(query).sort({ sortOrder: 1, planName: 1 });
 };
 
-// Static method to find plan by type and name
-subscriptionPlanSchema.statics.findByTypeAndName = function (
+// Static method to find plan by type and name. Old plan names (Basic,
+// Professional, Starter, Enterprise …) resolve to the catalogue plan that replaced them.
+subscriptionPlanSchema.statics.findByTypeAndName = async function (
   planType,
   planName
 ) {
-  return this.findOne({ planType, planName, isActive: true });
+  const exact = await this.findOne({ planType, planName, isActive: true });
+  if (exact) return exact;
+  const current = resolvePlan(planType, planName);
+  if (!current || current.key === planName) return null;
+  return this.findOne({ planType, planName: current.key, isActive: true });
 };
 
 // Virtual for formatted price display

@@ -31,6 +31,7 @@ import plannerDocumentRoutes from "./planner-document.routes.js";
 import { accessSharedDocument } from "../controllers/planner-document.controller.js";
 import plannerClientRoutes from "./planner-client.routes.js";
 import plannerVendorRoutes, { bookingRouter } from "./planner-vendor.routes.js";
+import vendorBookingRoutes from "./vendor-booking.routes.js";
 import plannerTaskRoutes from "./planner-task.routes.js";
 import plannerGuestRoutes, {
   eventGuestStatsRouter,
@@ -79,12 +80,14 @@ router.use("/team", teamRouterRoutes);
 router.use("/settings", settingsRoutes);
 router.use("/business-profile", businessProfileRoutes);
 router.use("/branding", brandingRoutes);
+// Vendor search and booking requests serve clients as well as planners, so they're
+// mounted before /planner (which only admits planners)
+router.use("/planner/vendors", plannerVendorRoutes);
+router.use("/planner/bookings", bookingRouter);
 router.use("/planner", plannerRoutes);
 router.use("/planner/dashboard", plannerDashboardRoutes);
 router.use("/planner/documents", plannerDocumentRoutes);
 router.use("/planner/clients", plannerClientRoutes);
-router.use("/planner/vendors", plannerVendorRoutes);
-router.use("/planner/bookings", bookingRouter);
 router.use("/planner/budget", budgetRoutes);
 router.use("/planner/budgets", budgetRoutes);
 router.use("/planner/tasks", plannerTaskRoutes);
@@ -123,12 +126,14 @@ router.use("/vendors/payments", paymentRoutes);
 router.use("/vendors/clients", crmRoutes);
 router.use("/vendors/locations", locationRoutes);
 router.use("/vendors/security", securityRoutes);
-router.use("/vendors/bookings", bookingRouter);
+router.use("/vendors/bookings", vendorBookingRoutes);
 // Vendor AI routes are now part of universal AI planner at /ai-planner
 // router.use("/vendors/ai-planner", vendorAIRoutes);
 // General vendor routes (with /:id) must come AFTER specific routes
 router.use("/vendors", vendorRoutes);
 router.use("/vendors", apiAccessRoutes);
+// Planner API keys and webhooks (same handlers; keys act as the planner)
+router.use("/planner/api-access", apiAccessRoutes);
 router.use("/vendors", financialRoutes);
 router.use("/quotes", quoteRoutes); // Public quote routes
 // Specific admin sub-routes MUST come before the general /admin router

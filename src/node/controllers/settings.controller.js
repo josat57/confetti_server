@@ -552,113 +552,43 @@ export const setDefaultPaymentMethod = async (req, res, next) => {
 };
 
 /**
- * Change subscription plan
- * POST /api/v1/settings/billing/change-plan
+ * Change subscription plan (vendor settings page)
+ * POST /api/v1/settings/billing/change-plan  { planId | planName, billingCycle, paymentProvider }
+ * Upgrades return a paymentUrl and apply once paid; cheaper plans apply when the period ends.
  */
 export const changeSubscriptionPlan = async (req, res, next) => {
   try {
-    // Accept both planId and planName for backward compatibility
-    const { planId, planName: planNameFromBody, amount } = req.body;
-    const planName = planNameFromBody || planId;
-
-    if (!planName) {
+    const { planId, planName, billingCycle, paymentProvider, currency, couponCode } = req.body || {};
+    if (!planId && !planName) {
       return next(new AppError("Plan name or plan ID is required", 400));
     }
 
-    if (amount === undefined || amount === null) {
-      return next(new AppError("Plan amount is required", 400));
-    }
-
-    const user = await User.findById(req.user._id).populate("subscription");
-
-    if (!user) {
-      return next(new AppError("User not found", 404));
-    }
-
-    // Log for debugging
-    logger.info(`Change plan request for user ${user._id}`, {
-      hasSubscription: !!user.subscription,
-      subscriptionId: user.subscription?._id,
-      requestedPlan: planName,
-      requestedAmount: amount,
+    const subscriptionService = (await import("../services/subscription.service.js")).default;
+    const result = await subscriptionService.changePlan(req.user, {
+      planId,
+      planName,
+      billingCycle,
+      paymentProvider: paymentProvider || "flutterwave",
+      currency,
+      couponCode,
     });
 
-    if (!user.subscription) {
-      return next(
-        new AppError(
-          "No active subscription found. Please subscribe first.",
-          400
-        )
-      );
-    }
-
-    const subscription = await Subscription.findById(user.subscription._id);
-
-    // Check if trying to change to the same plan
-    if (subscription.planName === planName) {
-      return next(new AppError("You are already on this plan", 400));
-    }
-
-    // Store old plan details for history
-    const oldPlanName = subscription.planName;
-    const oldAmount = subscription.amount;
-
-    // Determine if this is an upgrade or downgrade
-    const changeType = amount > oldAmount ? "upgrade" : "downgrade";
-
-    // Calculate prorated amount if upgrading
-    let proratedAmount = 0;
-    if (changeType === "upgrade") {
-      const prorationDetails = subscription.calculateProration(amount);
-      proratedAmount = prorationDetails.amountDue;
-    }
-
-    // Update subscription plan
-    subscription.planName = planName;
-    subscription.amount = amount;
-
-    // Add to history
-    subscription.history.push({
-      planName: oldPlanName,
-      status: subscription.status,
-      startDate: subscription.startDate,
-      endDate: subscription.endDate,
-      amount: oldAmount,
-      changeType: changeType,
-      proratedAmount: proratedAmount,
-      reason: `Plan changed from ${oldPlanName} to ${planName}`,
-    });
-
-    // If downgrade, apply at end of current billing period
-    // If upgrade, apply immediately (would require payment in production)
-    if (changeType === "downgrade") {
-      subscription.pendingUpgrade = {
-        newPlanName: planName,
-        amount: amount,
-        proratedAmount: 0,
-      };
-    }
-
-    await subscription.save();
-
-    // Populate the subscription for response
-    await subscription.populate("user");
-
+    const messages = {
+      payment_required: "Complete the payment to switch plans",
+      scheduled: "Your plan will change when the current billing period ends",
+      changed: "Subscription plan changed successfully",
+    };
     res.status(200).json({
       status: "success",
-      message: `Subscription plan ${
-        changeType === "downgrade" ? "will be changed" : "changed"
-      } successfully${
-        changeType === "downgrade"
-          ? " at the end of your current billing period"
-          : ""
-      }`,
+      message: messages[result.action],
       data: {
-        subscription: subscription,
-        changeType: changeType,
-        proratedAmount: proratedAmount,
-        effectiveDate:
-          changeType === "downgrade" ? subscription.endDate : new Date(),
+        action: result.action,
+        subscription: result.subscription,
+        paymentUrl: result.paymentUrl,
+        reference: result.reference,
+        amountDue: result.amountDue,
+        currency: result.currency,
+        effectiveAt: result.effectiveAt,
       },
     });
   } catch (error) {

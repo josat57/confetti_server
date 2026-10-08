@@ -67,8 +67,11 @@ export const handleFlutterwaveWebhook = async (req, res, next) => {
           "flutterwave"
         );
 
-        // Update user status
-        if (user.status === "pending_payment") {
+        // Activation normally moves the user on and sends the verification email;
+        // re-read so we don't send a second one with a different token
+        const current = await User.findById(user._id);
+        if (current?.status === "pending_payment") {
+          const user = current;
           user.status = "pending_verification";
 
           // Generate verification token and OTP
@@ -173,8 +176,11 @@ export const handlePaystackWebhook = async (req, res, next) => {
           "paystack"
         );
 
-        // Update user status
-        if (user.status === "pending_payment") {
+        // Activation normally moves the user on and sends the verification email;
+        // re-read so we don't send a second one with a different token
+        const current = await User.findById(user._id);
+        if (current?.status === "pending_payment") {
+          const user = current;
           user.status = "pending_verification";
 
           // Generate verification token and OTP

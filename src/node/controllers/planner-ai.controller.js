@@ -1,10 +1,10 @@
 import Event from "../models/event.model.js";
 import Vendor from "../models/vendor.model.js";
 import AIPlannerUsage from "../models/ai-planner-usage.model.js";
-import Subscription from "../models/subscription.model.js";
 import { AppError } from "../utils/AppError.js";
 import { logger } from "../utils/logger.js";
 import { escapeRegExp } from "../utils/escape-regex.js";
+import { assertCanCreateEvent, getActivePlan } from "../services/plan-access.service.js";
 
 /**
  * Controller for Planner AI features
@@ -35,15 +35,9 @@ class PlannerAIController {
         );
       }
 
-      // Get planner's subscription
-      const subscription = await Subscription.findOne({
-        user: plannerId,
-        planType: "planner",
-      });
-
-      if (!subscription || !subscription.isActive()) {
-        throw new AppError("Active subscription required", 403);
-      }
+      // Planner's plan (free Solo when there's no paid subscription)
+      const { plan } = await getActivePlan(req.user);
+      const subscription = { planName: plan?.key || "Solo" };
 
       // Check tier limits
       const usageCheck = await AIPlannerUsage.canUseFeature(
@@ -54,7 +48,7 @@ class PlannerAIController {
 
       if (!usageCheck.allowed) {
         throw new AppError(
-          `AI plan generation limit reached for ${subscription.planName} tier. Upgrade to Professional or higher for unlimited access.`,
+          `AI plan generation limit reached for ${subscription.planName} tier. Upgrade to Studio or higher for unlimited access.`,
           403
         );
       }
@@ -139,15 +133,9 @@ class PlannerAIController {
         throw new AppError("Missing required fields: eventType, location", 400);
       }
 
-      // Get planner's subscription
-      const subscription = await Subscription.findOne({
-        user: plannerId,
-        planType: "planner",
-      });
-
-      if (!subscription || !subscription.isActive()) {
-        throw new AppError("Active subscription required", 403);
-      }
+      // Planner's plan (free Solo when there's no paid subscription)
+      const { plan } = await getActivePlan(req.user);
+      const subscription = { planName: plan?.key || "Solo" };
 
       // Check tier limits
       const usageCheck = await AIPlannerUsage.canUseFeature(
@@ -230,15 +218,9 @@ class PlannerAIController {
         );
       }
 
-      // Get planner's subscription
-      const subscription = await Subscription.findOne({
-        user: plannerId,
-        planType: "planner",
-      });
-
-      if (!subscription || !subscription.isActive()) {
-        throw new AppError("Active subscription required", 403);
-      }
+      // Planner's plan (free Solo when there's no paid subscription)
+      const { plan } = await getActivePlan(req.user);
+      const subscription = { planName: plan?.key || "Solo" };
 
       // Check tier limits
       const usageCheck = await AIPlannerUsage.canUseFeature(
@@ -311,6 +293,8 @@ class PlannerAIController {
 
       logger.info("Saving AI-generated plan as event", { plannerId });
 
+      await assertCanCreateEvent(req);
+
       // Create event from AI plan
       const event = await Event.create({
         title: title || `${eventPlan.eventDetails.eventType} Event`,
@@ -356,15 +340,9 @@ class PlannerAIController {
     try {
       const plannerId = req.user._id;
 
-      // Get subscription
-      const subscription = await Subscription.findOne({
-        user: plannerId,
-        planType: "planner",
-      });
-
-      if (!subscription) {
-        throw new AppError("Subscription not found", 404);
-      }
+      // Planner's plan (free Solo when there's no paid subscription)
+      const { plan } = await getActivePlan(req.user);
+      const subscription = { planName: plan?.key || "Solo" };
 
       // Get usage for all types
       const usageTypes = [

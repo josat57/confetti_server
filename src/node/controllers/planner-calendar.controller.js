@@ -244,22 +244,12 @@ class PlannerCalendarController {
         );
       }
 
-      // Check subscription tier (Professional+ required)
-      const User = (await import("../models/user.model.js")).default;
-      const Subscription = (await import("../models/subscription.model.js"))
-        .default;
-
-      const user = await User.findById(plannerId).populate("subscription");
-      if (!user || !user.subscription) {
-        throw new AppError("Active subscription required", 403);
-      }
-
-      const subscription = await Subscription.findById(user.subscription);
-      const allowedTiers = ["Professional", "Business", "Enterprise"];
-
-      if (!allowedTiers.includes(subscription.planName)) {
+      // Calendar sync is included from the Studio plan up
+      const { getActivePlan } = await import("../services/plan-access.service.js");
+      const { plan } = await getActivePlan(req.user);
+      if (!plan || plan.level < 2) {
         throw new AppError(
-          "Calendar sync is only available for Professional, Business, and Enterprise tiers",
+          "Calendar sync is available on the Studio plan and above",
           403
         );
       }

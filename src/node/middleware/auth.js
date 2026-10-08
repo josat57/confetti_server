@@ -21,6 +21,11 @@ export const protect = async (req, res, next) => {
       }
     }
 
+    // Server-to-server access with an API key (plans with API access)
+    if (!token && req.headers["x-api-key"]) {
+      return authenticateApiKey(req, next);
+    }
+
     if (!token) {
       return next(new AppError("Not authenticated. Please log in.", 401));
     }
@@ -66,6 +71,66 @@ export const protect = async (req, res, next) => {
     // Populate vendor and planner profiles if needed
     await populateUserProfiles(req);
 
+    next();
+  } catch (error) {
+    next(new AppError("Not authenticated. Please log in.", 401));
+  }
+};
+
+// Account, billing and key management can't be done with an API key
+const API_KEY_BLOCKED = [
+  "/api/v1/auth",
+  "/api/v1/settings",
+  "/api/v1/planner/settings",
+  "/api/v1/subscriptions",
+  "/api/v1/payments",
+  "/api/v1/vendors/api-keys",
+  "/api/v1/vendors/webhooks",
+  "/api/v1/planner/api-access",
+  "/api/v1/security",
+  "/api/v1/users",
+];
+
+/**
+ * x-api-key authentication: the key must be active, unexpired, allowed from this IP,
+ * and its owner's plan must still include API access.
+ */
+const authenticateApiKey = async (req, next) => {
+  try {
+    const url = req.originalUrl || "";
+    if (API_KEY_BLOCKED.some((prefix) => url.startsWith(prefix))) {
+      return next(new AppError("This endpoint can't be used with an API key", 403));
+    }
+
+    const raw = String(req.headers["x-api-key"]);
+    const prefix = raw.split("_").slice(0, 2).join("_");
+    const { default: ApiKey } = await import("../models/api-key.model.js");
+    const apiKey = await ApiKey.findOne({ prefix, key: ApiKey.hashKey(raw), isActive: true });
+    if (!apiKey || apiKey.isExpired) return next(new AppError("Invalid or expired API key", 401));
+    if (apiKey.ipWhitelist?.length && !apiKey.ipWhitelist.includes(req.ip)) {
+      return next(new AppError("API key not allowed from this address", 403));
+    }
+
+    let ownerId = apiKey.owner;
+    if (!ownerId && apiKey.vendor) {
+      const { default: Vendor } = await import("../models/vendor.model.js");
+      ownerId = (await Vendor.findById(apiKey.vendor).select("owner").lean())?.owner;
+    }
+    const user = ownerId ? await User.findById(ownerId) : null;
+    if (!user || !user.isActive || !user.isEmailVerified) {
+      return next(new AppError("Invalid or expired API key", 401));
+    }
+
+    const { getActivePlan } = await import("../services/plan-access.service.js");
+    const { plan } = await getActivePlan(user);
+    if (!plan?.features?.apiAccess) {
+      return next(new AppError("Your plan no longer includes API access", 403));
+    }
+
+    req.user = user;
+    req.apiKey = apiKey;
+    await populateUserProfiles(req);
+    apiKey.recordUsage().catch(() => {});
     next();
   } catch (error) {
     next(new AppError("Not authenticated. Please log in.", 401));
@@ -155,11 +220,11 @@ const populateUserProfiles = async (req) => {
 
     // Check if user is a planner
     if (req.user.role === "event-planner") {
+      // The profile's link to its user is `userId` (it has no subscription field;
+      // plans come from services/plan-access.service.js)
       const planner = await PlannerBusinessProfile.findOne({
-        owner: req.user._id,
-      })
-        .populate("subscription", "planName planType status")
-        .lean();
+        userId: req.user._id,
+      }).lean();
       if (planner) {
         req.planner = planner;
       }

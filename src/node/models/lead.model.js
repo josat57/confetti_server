@@ -29,6 +29,17 @@ const leadSchema = new mongoose.Schema(
         trim: true,
       },
     },
+    // Signed-in client who sent the enquiry (lets the vendor message them)
+    customerUser: {
+      type: mongoose.Schema.Types.ObjectId,
+      ref: "User",
+      index: true,
+    },
+    // Booking request created with this lead (client "Request quote")
+    booking: {
+      type: mongoose.Schema.Types.ObjectId,
+      ref: "VendorBooking",
+    },
     eventDetails: {
       type: {
         type: String,

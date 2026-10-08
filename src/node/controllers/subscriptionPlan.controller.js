@@ -1,6 +1,8 @@
 import SubscriptionPlan from "../models/subscriptionPlan.model.js";
 import { AppError } from "../utils/AppError.js";
 import { logger } from "../utils/logger.js";
+import { priceFor } from "../services/plan-catalogue.service.js";
+import { CORPORATE_PLAN, PLAN_CATALOGUE, YEARLY_MONTHS_CHARGED } from "../config/plans.js";
 
 /**
  * Get all subscription plans
@@ -24,8 +26,14 @@ export const getAllPlans = async (req, res, next) => {
       planName: 1,
     });
 
+    // Yearly prices (2 months free) are computed from the monthly ones
+    const withYearly = (plan) => ({
+      ...plan.toObject(),
+      yearlyPricing: plan.pricing.map((p) => priceFor(plan, p.currency, "yearly")),
+    });
+
     // Filter by currency if specified
-    let filteredPlans = plans;
+    let filteredPlans = plans.map(withYearly);
     if (currency) {
       filteredPlans = plans
         .map((plan) => {
@@ -33,8 +41,9 @@ export const getAllPlans = async (req, res, next) => {
           if (!pricing) return null;
 
           return {
-            ...plan.toObject(),
+            ...withYearly(plan),
             selectedPricing: pricing,
+            selectedYearlyPricing: priceFor(plan, currency, "yearly"),
           };
         })
         .filter((plan) => plan !== null);
@@ -45,6 +54,13 @@ export const getAllPlans = async (req, res, next) => {
       results: filteredPlans.length,
       data: {
         plans: filteredPlans,
+        yearlyMonthsCharged: YEARLY_MONTHS_CHARGED,
+        corporate: CORPORATE_PLAN,
+        // People planning their own event (no subscription; passes come later)
+        client: (() => {
+          const free = PLAN_CATALOGUE.client[0];
+          return { planName: free.key, displayName: free.displayName, description: free.description, features: free.featureList };
+        })(),
       },
     });
   } catch (error) {

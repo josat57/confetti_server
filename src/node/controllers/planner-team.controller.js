@@ -1,7 +1,7 @@
 import TeamMember from "../models/team-member.model.js";
 import TeamInvitation from "../models/team-invitation.model.js";
 import User from "../models/user.model.js";
-import Subscription from "../models/subscription.model.js";
+import { assertWithinLimit, getActivePlan } from "../services/plan-access.service.js";
 import { AppError } from "../utils/AppError.js";
 import { logger } from "../utils/logger.js";
 import { sendEmail } from "../utils/email.js";
@@ -35,13 +35,9 @@ class PlannerTeamController {
         .sort({ createdAt: -1 })
         .lean();
 
-      // Get subscription to show tier limits
-      const subscription = await Subscription.findOne({
-        user: plannerId,
-        planType: "planner",
-      });
-
-      const tierLimits = this._getTierLimits(subscription?.planName);
+      // Team size allowed by the plan (null = unlimited)
+      const { plan } = await getActivePlan(req.user);
+      const teamLimit = plan?.limits?.teamMembers ?? 0;
 
       res.status(200).json({
         success: true,
@@ -51,8 +47,8 @@ class PlannerTeamController {
             total: teamMembers.length,
             active: teamMembers.filter((m) => m.status === "active").length,
             inactive: teamMembers.filter((m) => m.status === "inactive").length,
-            limit: tierLimits.teamMembers,
-            remaining: Math.max(0, tierLimits.teamMembers - teamMembers.length),
+            limit: teamLimit,
+            remaining: teamLimit === null ? null : Math.max(0, teamLimit - teamMembers.length),
           },
         },
       });
@@ -81,28 +77,8 @@ class PlannerTeamController {
 
       logger.info("Inviting team member", { plannerId, email, role });
 
-      // Check tier limits
-      const subscription = await Subscription.findOne({
-        user: plannerId,
-        planType: "planner",
-      });
-
-      if (!subscription || !subscription.isActive()) {
-        throw new AppError("Active subscription required", 403);
-      }
-
-      const tierLimits = this._getTierLimits(subscription.planName);
-      const currentTeamCount = await TeamMember.countDocuments({
-        planner: plannerId,
-        status: "active",
-      });
-
-      if (currentTeamCount >= tierLimits.teamMembers) {
-        throw new AppError(
-          `Team member limit reached for ${subscription.planName} tier. Upgrade to add more members.`,
-          403
-        );
-      }
+      // Team size is set by the plan (members and open invitations)
+      await assertWithinLimit(req, "teamMembers");
 
       // Check if user is already a team member
       const existingMember = await TeamMember.findOne({
@@ -489,19 +465,6 @@ class PlannerTeamController {
     } catch (error) {
       next(error);
     }
-  }
-
-  // Helper methods
-
-  _getTierLimits(planName) {
-    const limits = {
-      Starter: { teamMembers: 1 },
-      Professional: { teamMembers: 3 },
-      Business: { teamMembers: 10 },
-      Enterprise: { teamMembers: Infinity },
-    };
-
-    return limits[planName] || limits.Starter;
   }
 }
 

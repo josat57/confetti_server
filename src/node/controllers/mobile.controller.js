@@ -1,5 +1,6 @@
 import { logger } from "../utils/logger.js";
 import { AppError } from "../utils/AppError.js";
+import { assertCanCreateEvent } from "../services/plan-access.service.js";
 import Event from "../models/event.model.js";
 import Client from "../models/client.model.js";
 import Task from "../models/task.model.js";
@@ -112,6 +113,7 @@ export const syncOfflineChanges = async (req, res, next) => {
 
         switch (type) {
           case "event":
+            if (action === "create") await assertCanCreateEvent(req);
             result = await syncEventChange(userId, action, data);
             break;
           case "client":
@@ -134,7 +136,12 @@ export const syncOfflineChanges = async (req, res, next) => {
         logger.error("Error syncing change:", error);
         results.failed.push({
           localId: change.localId,
-          error: process.env.NODE_ENV === "production" ? undefined : error.message,
+          // Plan limits are safe (and useful) to show; other errors only outside production
+          error:
+            (error.isOperational && typeof error.code === "string") || process.env.NODE_ENV !== "production"
+              ? error.message
+              : undefined,
+          ...(error.isOperational && typeof error.code === "string" ? { code: error.code } : {}),
         });
       }
     }

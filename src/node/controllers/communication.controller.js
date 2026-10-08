@@ -15,6 +15,7 @@ import {
   resolveParticipant,
   totalUnread,
 } from "../services/conversation.service.js";
+import { assertLeadReplyAllowed } from "../services/plan-access.service.js";
 
 /**
  * List messages for planner
@@ -298,7 +299,10 @@ export const createConversation = async (req, res, next) => {
       conversation.set(context);
       await conversation.save();
     }
-    if (text) await postMessage({ conversation, sender: req.user._id, content: text });
+    if (text) {
+      await assertLeadReplyAllowed(req, conversation._id);
+      await postMessage({ conversation, sender: req.user._id, content: text });
+    }
 
     const [formatted] = await formatConversations([conversation.toObject()], req.user._id);
     res.status(201).json({ status: "success", data: { conversation: formatted } });
@@ -365,6 +369,7 @@ export const sendConversationMessage = async (req, res, next) => {
       return next(new AppError("This conversation is closed", 400));
     }
     const text = cleanContent(req.body?.content);
+    await assertLeadReplyAllowed(req, conversation._id);
 
     const message = await postMessage({ conversation, sender: req.user._id, content: text });
     const [formatted] = await formatMessages([message.toObject()], conversation);

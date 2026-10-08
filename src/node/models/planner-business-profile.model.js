@@ -84,6 +84,12 @@ const plannerBusinessProfileSchema = new mongoose.Schema(
       select: false, // Exclude from queries by default for security
     },
     branding: {
+      // Uploaded logo (GridFS); `logo` holds an external URL when one is used instead
+      logo: String,
+      logoFileId: {
+        type: mongoose.Schema.Types.ObjectId,
+        ref: "uploads.files",
+      },
       primaryColor: {
         type: String,
         default: "#6366F1", // Indigo

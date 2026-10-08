@@ -1,30 +1,20 @@
 import AnalyticsService from "../services/analytics.service.js";
-import Subscription from "../models/subscription.model.js";
+import { getActivePlan } from "../services/plan-access.service.js";
 import { AppError } from "../utils/AppError.js";
 import { logger } from "../utils/logger.js";
 
 /**
- * Check if user has access to analytics (Professional+ tier)
+ * Check if user has access to analytics (Studio plan and above)
  */
 const checkAnalyticsAccess = async (plannerId) => {
-  const subscription = await Subscription.findOne({
-    user: plannerId,
-    planType: "planner",
-  });
-
-  if (!subscription || !subscription.isActive()) {
-    throw new AppError("Active subscription required", 403);
-  }
-
-  const allowedTiers = ["Professional", "Business", "Enterprise"];
-
-  if (!allowedTiers.includes(subscription.planName)) {
+  // Reports are included from the Studio plan up
+  const { plan, subscription } = await getActivePlan({ _id: plannerId, role: "event-planner" });
+  if (!plan || plan.level < 2) {
     throw new AppError(
-      "Analytics and reports are only available for Professional, Business, and Enterprise tiers. Please upgrade your subscription.",
+      "Analytics and reports are available on the Studio plan and above. Please upgrade your subscription.",
       403
     );
   }
-
   return subscription;
 };
 

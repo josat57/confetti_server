@@ -29,6 +29,13 @@ const paymentSchema = new mongoose.Schema(
       isUpgrade: Boolean,
       previousPlan: String,
       proratedAmount: Number,
+      // Upgrade from a free or lapsed plan: start a new billing period on payment
+      newPeriod: Boolean,
+      // Automatic renewal charge (saved card)
+      isRenewal: Boolean,
+      couponCode: String,
+      originalAmount: Number,
+      discountAmount: Number,
     },
     amount: {
       type: Number,

@@ -123,6 +123,29 @@ const subscriptionSchema = new mongoose.Schema(
       reason: String,
       feedback: String,
     },
+    // Downgrade or plan change that takes effect when the paid period ends
+    pendingChange: {
+      planName: String,
+      billingCycle: String,
+      effectiveAt: Date,
+      requestedAt: Date,
+    },
+    // Cancelled subscriptions keep their plan until endDate
+    cancelAtPeriodEnd: {
+      type: Boolean,
+      default: false,
+    },
+    couponCode: String,
+    // Automatic renewal (services/subscription-renewal.service.js)
+    renewalAttempts: { type: Number, default: 0 },
+    lastRenewalAttemptAt: Date,
+    lastRenewalError: String,
+    // Last expiry reminder sent, so restarts don't send it twice
+    lastReminder: {
+      endDate: Date,
+      days: Number,
+      sentAt: Date,
+    },
     pendingUpgrade: {
       newPlanName: String,
       amount: Number,
@@ -143,50 +166,16 @@ subscriptionSchema.index({ user: 1, status: 1 });
 
 // Methods
 subscriptionSchema.methods.isActive = function () {
-  return this.status === "active" || this.status === "trial";
+  if (this.status === "active" || this.status === "trial") return true;
+  // A cancelled subscription keeps its plan until the paid period ends
+  return this.status === "cancelled" && this.endDate > new Date();
 };
 
 subscriptionSchema.methods.isTrial = function () {
   return this.status === "trial";
 };
 
-subscriptionSchema.methods.canCreateEvent = function () {
-  if (!this.isActive()) return false;
-
-  const plan =
-    this.planType === "vendor"
-      ? vendorPlans.find((p) => p.name === this.planName)
-      : plannerPlans.find((p) => p.name === this.planName);
-
-  if (!plan) return false;
-
-  if (plan.name === "Basic" || plan.name === "Starter") {
-    return this.usage.eventsCreated < 5;
-  }
-
-  return true;
-};
-
-subscriptionSchema.methods.canUploadPhoto = function () {
-  if (!this.isActive()) return false;
-
-  const plan =
-    this.planType === "vendor"
-      ? vendorPlans.find((p) => p.name === this.planName)
-      : plannerPlans.find((p) => p.name === this.planName);
-
-  if (!plan) return false;
-
-  if (plan.name === "Basic" || plan.name === "Starter") {
-    return this.usage.photosUploaded < 10;
-  }
-
-  if (plan.name === "Professional") {
-    return this.usage.photosUploaded < 50;
-  }
-
-  return true;
-};
+// Plan limits (events, photos, team …) are enforced by services/plan-access.service.js
 
 subscriptionSchema.methods.resetUsage = function () {
   this.usage = {

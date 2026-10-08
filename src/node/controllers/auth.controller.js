@@ -27,11 +27,16 @@ export const register = async (req, res, next) => {
       password,
       userName,
       phone,
-      planType,
       planName,
       amount,
       currency,
+      billingCycle,
     } = req.body;
+    // The website sends "event_planner" for planner plans; "client" is someone planning their own event
+    const planType = req.body.planType === "event_planner" ? "planner" : req.body.planType;
+    const isClient = planType === "client";
+    const couponCode = typeof req.body.couponCode === "string" ? req.body.couponCode.trim() : "";
+    const cycle = billingCycle === "yearly" || billingCycle === "annual" ? "yearly" : "monthly";
 
     // Check if user exists
     const existingUser = await User.findOne({ email });
@@ -44,23 +49,39 @@ export const register = async (req, res, next) => {
 
     // Validate plan if provided
     let validatedPlan = null;
-    if (planType && planName) {
+    if (planType && planName && !isClient) {
       validatedPlan = await validatePlan(
         planType,
         planName,
         amount,
-        paymentCurrency
+        paymentCurrency,
+        cycle
       );
       if (!validatedPlan) {
         return next(new AppError("Invalid subscription plan", 400));
       }
     }
 
+    // A coupon on a paid plan: check it now, start on the free plan, then apply it
+    const subscriptionService = (
+      await import("../services/subscription.service.js")
+    ).default;
+    const applyCoupon = !!couponCode && !isClient && validatedPlan && validatedPlan.price > 0;
+    if (applyCoupon) {
+      await subscriptionService.previewCoupon({
+        code: couponCode,
+        planType,
+        planName: validatedPlan.name,
+        billingCycle: cycle,
+        currency: paymentCurrency,
+      });
+    }
+
     // Determine user role based on plan type
-    const role = planType === "vendor" ? "vendor" : "event-planner";
+    const role = isClient ? "user" : planType === "vendor" ? "vendor" : "event-planner";
 
     // Determine initial status
-    const isFree = !validatedPlan || validatedPlan.price === 0;
+    const isFree = isClient || !validatedPlan || validatedPlan.price === 0 || applyCoupon;
     const status = isFree ? "pending_verification" : "pending_payment";
 
     // Create user
@@ -75,21 +96,36 @@ export const register = async (req, res, next) => {
       isActive: isFree, // Free plans are active immediately, paid plans require payment
     });
 
-    // Create subscription with payment if needed
-    const subscriptionService = (
-      await import("../services/subscription.service.js")
-    ).default;
-    const result = await subscriptionService.createWithPayment(
-      user._id,
-      planType || "planner",
-      planName || "Starter",
-      validatedPlan ? validatedPlan.price : 0,
-      paymentCurrency
-    );
+    // Clients have no subscription (per-event passes come later). Others get their plan;
+    // with a coupon they start free and the coupon is applied below.
+    let result = { subscription: null };
+    if (!isClient) {
+      result = await subscriptionService.createWithPayment(
+        user._id,
+        planType === "vendor" ? "vendor" : "planner",
+        applyCoupon ? (planType === "vendor" ? "Listing" : "Solo") : validatedPlan?.name || (planType === "vendor" ? "Listing" : "Solo"),
+        applyCoupon ? 0 : validatedPlan ? validatedPlan.price : 0,
+        paymentCurrency,
+        cycle
+      );
+      user.subscription = result.subscription._id;
+      await user.save();
+    }
 
-    // Update user with subscription reference
-    user.subscription = result.subscription._id;
-    await user.save();
+    let couponResult = null;
+    if (applyCoupon) {
+      try {
+        couponResult = await subscriptionService.changePlan(user, {
+          planName: validatedPlan.name,
+          billingCycle: cycle,
+          currency: paymentCurrency,
+          couponCode,
+        });
+      } catch (error) {
+        // The account exists on the free plan; they can upgrade from settings
+        console.error("Coupon could not be applied at sign-up:", error.message);
+      }
+    }
 
     // Generate verification token and OTP
     const token = user.generateEmailVerificationToken();
@@ -116,7 +152,11 @@ export const register = async (req, res, next) => {
         data: {
           userId: user._id,
           email: user.email,
-          subscriptionId: result.subscription._id,
+          subscriptionId: couponResult?.subscription?._id || result.subscription?._id,
+          // A discount coupon still leaves something to pay
+          paymentUrl: couponResult?.paymentUrl,
+          reference: couponResult?.reference,
+          couponApplied: !!couponResult,
         },
       });
     } else {
@@ -736,14 +776,14 @@ export const verifyUser = async (req, res, next) => {
 };
 
 // Helper function to validate plan from database
-async function validatePlan(planType, planName, amount, currency = "NGN") {
+async function validatePlan(planType, planName, amount, currency = "NGN", billingCycle = "monthly") {
   try {
-    // Import SubscriptionPlan model
     const SubscriptionPlan = (
       await import("../models/subscriptionPlan.model.js")
     ).default;
+    const { priceFor } = await import("../services/plan-catalogue.service.js");
 
-    // Find plan from database
+    // Old plan names (Basic, Starter, Professional …) resolve to their replacement
     const plan = await SubscriptionPlan.findByTypeAndName(planType, planName);
 
     if (!plan) {
@@ -751,8 +791,7 @@ async function validatePlan(planType, planName, amount, currency = "NGN") {
       return null;
     }
 
-    // Get pricing for the specified currency
-    const pricing = plan.getPriceForCurrency(currency);
+    const pricing = priceFor(plan, currency, billingCycle);
 
     if (!pricing) {
       console.error(
@@ -761,20 +800,15 @@ async function validatePlan(planType, planName, amount, currency = "NGN") {
       return null;
     }
 
-    // Frontend can send amount in either format:
-    // 1. Major units (naira/dollars): 4900 → convert to 490000 kobo
-    // 2. Minor units (kobo/cents): 490000 → use as is
-    let amountInMinorUnits = amount;
-
-    // If amount is less than 100000, assume it's in major units and convert
-    if (amount > 0 && amount < 100000) {
-      amountInMinorUnits = Math.round(amount * 100);
-    }
-
-    // Verify amount matches plan price (prevent price manipulation)
-    if (pricing.amountInMinorUnits !== amountInMinorUnits) {
+    // The frontend may send the price in major units (₦7,500) or minor units
+    // (750000 kobo); accept either, but it must be this plan's price
+    const amountNumber = Number(amount) || 0;
+    const matches =
+      amountNumber === pricing.amountInMinorUnits ||
+      Math.round(amountNumber * 100) === pricing.amountInMinorUnits;
+    if (!matches) {
       console.error(
-        `Price mismatch for ${planName} (${currency}): expected ${pricing.amountInMinorUnits}, got ${amountInMinorUnits} (original: ${amount})`
+        `Price mismatch for ${planName} (${currency}, ${billingCycle}): expected ${pricing.amountInMinorUnits}, got ${amount}`
       );
       return null;
     }
@@ -782,6 +816,7 @@ async function validatePlan(planType, planName, amount, currency = "NGN") {
     return {
       name: plan.planName,
       price: pricing.amountInMinorUnits,
+      billingCycle,
       currency,
       displayName: plan.displayName,
       description: plan.description,

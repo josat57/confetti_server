@@ -13,11 +13,11 @@ import {
   cancelBooking,
   getVendorCategories,
 } from "../controllers/planner-vendor.controller.js";
-import { protect } from "../middleware/auth.js";
+import { protect, restrictTo } from "../middleware/auth.js";
 
 const router = express.Router();
 
-router.use(protect);
+router.use(protect, restrictTo("event-planner", "user"));
 
 router.get("/search", searchVendors);
 router.get("/categories", getVendorCategories);
@@ -30,7 +30,7 @@ router.post("/:id/book", createBooking);
 export default router;
 
 export const bookingRouter = express.Router();
-bookingRouter.use(protect);
+bookingRouter.use(protect, restrictTo("event-planner", "user"));
 
 bookingRouter.get("/", getBookings);
 bookingRouter.post("/", createBooking);

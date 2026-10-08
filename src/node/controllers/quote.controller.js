@@ -5,6 +5,7 @@ import { AppError } from "../utils/AppError.js";
 import { logger } from "../utils/logger.js";
 import { sendEmailDirect } from "../utils/email.js";
 import { escapeRegExp } from "../utils/escape-regex.js";
+import { assertWithinLimit } from "../services/plan-access.service.js";
 
 /**
  * Get all quotes
@@ -303,6 +304,9 @@ export const sendQuote = async (req, res, next) => {
     if (quote.status !== "draft") {
       return next(new AppError("Quote has already been sent", 400));
     }
+
+    // Sending a quote answers an enquiry: counts toward the plan's monthly lead replies
+    await assertWithinLimit(req, "leadRepliesPerMonth");
 
     await quote.send(req.user._id);
 

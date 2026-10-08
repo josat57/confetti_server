@@ -14,6 +14,7 @@ import {
   resetBranding,
 } from "../controllers/branding.controller.js";
 import { protect } from "../middleware/auth.js";
+import { assertFeature } from "../services/plan-access.service.js";
 
 const router = express.Router();
 
@@ -29,8 +30,20 @@ router.get("/theme", getTheme);
 // Get CSS variables
 router.get("/css", getCSSVariables);
 
+// Planners need a plan with branded exports (Agency) to change branding
+const plannerBrandingGate = async (req, res, next) => {
+  try {
+    if (req.user.role === "event-planner") {
+      await assertFeature(req, "brandedExports", { label: "Branded proposals and exports" });
+    }
+    next();
+  } catch (error) {
+    next(error);
+  }
+};
+
 // Update branding
-router.put("/", updateBranding);
+router.put("/", plannerBrandingGate, updateBranding);
 
 // Reset to default branding
 router.post("/reset", resetBranding);

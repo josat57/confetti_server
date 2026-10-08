@@ -83,7 +83,11 @@ export const handleError = (res, error) => {
   
   res.status(error.statusCode || 500).json({
     status: 'error',
-    message: error.message || 'Something went wrong'
+    message: error.message || 'Something went wrong',
+    // Machine-readable reason (e.g. PLAN_LIMIT_REACHED) for errors we raise ourselves
+    ...(error.isOperational && typeof error.code === 'string'
+      ? { code: error.code, ...(error.details ? { details: error.details } : {}) }
+      : {}),
   });
 };
 

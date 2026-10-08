@@ -46,6 +46,11 @@ class PaymentService {
       isUpgrade = false,
       previousPlan,
       proratedAmount,
+      billingCycle = "monthly",
+      newPeriod = false,
+      couponCode,
+      originalAmount,
+      discountAmount,
     } = data;
 
     // Generate unique reference
@@ -65,10 +70,14 @@ class PaymentService {
       subscriptionDetails: {
         planType,
         planName,
-        billingCycle: "monthly",
+        billingCycle,
         isUpgrade,
         previousPlan,
         proratedAmount,
+        newPeriod,
+        couponCode,
+        originalAmount,
+        discountAmount,
       },
     });
 
@@ -155,7 +164,7 @@ class PaymentService {
       const response = await axios.post(
         "https://api.paystack.co/transaction/initialize",
         {
-          amount: amount * 100, // Convert to kobo
+          amount, // already in kobo
           email,
           reference,
           callback_url: `${
@@ -227,51 +236,23 @@ class PaymentService {
       throw new AppError("Payment not found", 404);
     }
 
-    // Check idempotency (already processed)
-    if (payment.webhookReceived && payment.status === "completed") {
+    // Check idempotency (already processed, by this webhook or the redirect callback)
+    if (payment.status === "completed") {
       logger.info(`Webhook already processed for reference: ${reference}`);
       return { message: "Webhook already processed", payment };
     }
 
-    // Update payment with webhook data
     payment.webhookReceived = true;
     payment.webhookData = webhookData;
-    payment.transactionId =
-      webhookData.data?.id ||
-      webhookData.data?.transaction_id ||
-      webhookData.data?.flw_ref ||
-      reference;
 
-    // Check payment status
     const isSuccessful =
       provider === "flutterwave"
         ? webhookData.data?.status === "successful"
         : webhookData.data?.status === "success";
 
     if (isSuccessful) {
-      // Update payment status to completed
-      payment.status = "completed";
-      payment.paymentDetails = {
-        customerEmail: webhookData.data?.customer?.email,
-        customerName: webhookData.data?.customer?.name,
-        cardLast4:
-          webhookData.data?.card?.last4digits ||
-          webhookData.data?.authorization?.last4,
-        cardBrand:
-          webhookData.data?.card?.type ||
-          webhookData.data?.authorization?.brand,
-      };
       await payment.save();
-
-      // Call subscription service to activate or upgrade
-      const subscriptionService = (await import("./subscription.service.js"))
-        .default;
-
-      if (payment.subscriptionDetails?.isUpgrade) {
-        await subscriptionService.handleUpgradePaymentSuccess(payment._id);
-      } else {
-        await subscriptionService.handlePaymentSuccess(payment._id);
-      }
+      await this.completeSubscriptionPayment(payment._id, { provider, data: webhookData.data });
     } else {
       // Payment failed
       payment.status = "failed";
@@ -410,40 +391,74 @@ class PaymentService {
       providerResponse.data?.status === "successful" ||
       providerResponse.data?.status === "success";
 
-    // Update payment status if successful
+    await payment.save();
     if (isSuccessful && payment.status !== "completed") {
-      payment.status = "completed";
-      payment.transactionId =
-        providerResponse.data?.id ||
-        providerResponse.data?.transaction_id ||
-        providerResponse.data?.flw_ref ||
-        reference;
-      payment.paymentDetails = {
-        customerEmail: providerResponse.data?.customer?.email,
-        customerName: providerResponse.data?.customer?.name,
-        cardLast4:
-          providerResponse.data?.card?.last4digits ||
-          providerResponse.data?.authorization?.last4,
-        cardBrand:
-          providerResponse.data?.card?.type ||
-          providerResponse.data?.authorization?.brand,
-      };
-      await payment.save();
-
-      // Call subscription service to activate
-      const subscriptionService = (await import("./subscription.service.js"))
-        .default;
-
-      if (payment.subscriptionDetails?.isUpgrade) {
-        await subscriptionService.handleUpgradePaymentSuccess(payment._id);
-      } else {
-        await subscriptionService.handlePaymentSuccess(payment._id);
-      }
-    } else {
-      await payment.save();
+      await this.completeSubscriptionPayment(payment._id, {
+        provider: payment.paymentMethod,
+        data: providerResponse.data,
+      });
+      return Payment.findById(payment._id);
     }
 
     return payment;
+  }
+
+  /**
+   * Mark a subscription payment as paid and apply it, exactly once.
+   * Webhooks, the redirect callback and requeries can all arrive for the same
+   * payment; only the first to claim it activates the subscription.
+   * `data` is the provider's transaction (amount: Flutterwave in major units,
+   * Paystack in kobo). Underpaid or wrong-currency payments are rejected.
+   */
+  async completeSubscriptionPayment(paymentId, { provider, data = {} } = {}) {
+    const payment = await Payment.findById(paymentId);
+    if (!payment) throw new AppError("Payment not found", 404);
+    if (payment.status === "completed") return { payment, alreadyProcessed: true };
+
+    if (data.amount !== undefined && data.amount !== null) {
+      const paidMinor =
+        provider === "paystack" ? Math.round(Number(data.amount)) : Math.round(Number(data.amount) * 100);
+      const currencyOk = !data.currency || data.currency === payment.currency;
+      if (!currencyOk || !(paidMinor >= payment.amount)) {
+        logger.error("Payment amount or currency mismatch", {
+          reference: payment.reference,
+          expected: payment.amount,
+          paid: paidMinor,
+          expectedCurrency: payment.currency,
+          paidCurrency: data.currency,
+        });
+        await Payment.updateOne({ _id: payment._id, status: { $ne: "completed" } }, { $set: { status: "failed" } });
+        throw new AppError("The amount paid doesn't match this payment", 400);
+      }
+    }
+
+    const claimed = await Payment.findOneAndUpdate(
+      { _id: payment._id, status: { $ne: "completed" } },
+      {
+        $set: {
+          status: "completed",
+          transactionId: String(data.id || data.transaction_id || data.flw_ref || payment.transactionId || payment.reference),
+          paymentDetails: {
+            customerEmail: data.customer?.email,
+            customerName: data.customer?.name,
+            cardLast4: data.card?.last4digits || data.authorization?.last4,
+            cardBrand: data.card?.type || data.authorization?.brand,
+          },
+        },
+      },
+      { new: true }
+    );
+    if (!claimed) return { payment, alreadyProcessed: true };
+
+    if (claimed.paymentType === "subscription" && claimed.subscription) {
+      const subscriptionService = (await import("./subscription.service.js")).default;
+      if (claimed.subscriptionDetails?.isUpgrade) {
+        await subscriptionService.handleUpgradePaymentSuccess(claimed._id);
+      } else {
+        await subscriptionService.handlePaymentSuccess(claimed._id);
+      }
+    }
+    return { payment: claimed, alreadyProcessed: false };
   }
 
   async createPayment(paymentData) {

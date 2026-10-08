@@ -2,6 +2,13 @@ import Guest from "../models/guest.model.js";
 import Event from "../models/event.model.js";
 import { AppError } from "../utils/AppError.js";
 import { escapeRegExp } from "../utils/escape-regex.js";
+import { assertWithinLimit } from "../services/plan-access.service.js";
+
+// Events made with POST /events have createdBy/organizer but may have no planner
+const ownsEvent = (event, user) =>
+  [event.planner, event.createdBy, event.organizer].some(
+    (id) => id && id.toString() === user._id.toString()
+  );
 
 /**
  * List guests for an event
@@ -69,9 +76,11 @@ export const addGuest = async (req, res, next) => {
       return next(new AppError("Event not found", 404));
     }
 
-    if (event.planner.toString() !== req.user._id.toString()) {
+    if (!ownsEvent(event, req.user)) {
       return next(new AppError("Access denied", 403));
     }
+
+    await assertWithinLimit(req, "guestsPerEvent", { eventId: req.params.eventId });
 
     const guest = await Guest.create({
       ...req.body,
@@ -105,9 +114,14 @@ export const importGuests = async (req, res, next) => {
       return next(new AppError("Event not found", 404));
     }
 
-    if (event.planner.toString() !== req.user._id.toString()) {
+    if (!ownsEvent(event, req.user)) {
       return next(new AppError("Access denied", 403));
     }
+
+    await assertWithinLimit(req, "guestsPerEvent", {
+      eventId: req.params.eventId,
+      adding: guests.length,
+    });
 
     // Add event ID to each guest
     const guestsWithEvent = guests.map((g) => ({

@@ -9,6 +9,8 @@ import {
   fileExists,
 } from "../utils/gridfs.js";
 import { escapeRegExp } from "../utils/escape-regex.js";
+import { assertWithinLimit, getRequestPlan } from "../services/plan-access.service.js";
+import { cheapestPlanWhere } from "../config/plans.js";
 
 // Create a new vendor
 export const createVendor = async (req, res, next) => {
@@ -305,24 +307,36 @@ export const addOrUpdateService = async (req, res, next) => {
 // Add or update portfolio item
 export const addOrUpdatePortfolioItem = async (req, res, next) => {
   try {
-    const { portfolioId, ...portfolioData } = req.body;
-    const vendor = await Vendor.findById(req.params.id);
+    // Older endpoint: stores items in the Portfolio collection like /vendors/portfolio.
+    // `images` (URLs) is accepted as well as `photos` ({ url, caption }).
+    const { portfolioId, images, photos: bodyPhotos, ...fields } = req.body || {};
+    const vendor = await Vendor.findById(req.params.id).select("_id");
     if (!vendor) return next(new AppError("Vendor not found", 404));
+
+    const Portfolio = (await import("../models/portfolio.model.js")).default;
+    const photos = Array.isArray(bodyPhotos)
+      ? bodyPhotos
+      : Array.isArray(images)
+      ? images.map((url, order) => ({ url, order }))
+      : undefined;
+    const allowed = ["title", "description", "eventType", "eventDate", "location", "tags", "coverPhoto"];
+    const updates = Object.fromEntries(Object.entries(fields).filter(([key]) => allowed.includes(key)));
+
+    let item;
     if (portfolioId) {
-      const portfolioIndex = vendor.portfolio.findIndex(
-        (p) => p._id.toString() === portfolioId
-      );
-      if (portfolioIndex === -1)
-        return next(new AppError("Portfolio item not found", 404));
-      vendor.portfolio[portfolioIndex] = {
-        ...vendor.portfolio[portfolioIndex].toObject(),
-        ...portfolioData,
-      };
+      item = await Portfolio.findOne({ _id: portfolioId, vendor: vendor._id });
+      if (!item) return next(new AppError("Portfolio item not found", 404));
+      if (photos && photos.length > item.photos.length) {
+        await assertWithinLimit(req, "portfolioPhotos", { adding: photos.length - item.photos.length });
+      }
+      item.set(updates);
+      if (photos) item.photos = photos;
+      await item.save();
     } else {
-      vendor.portfolio.push(portfolioData);
+      if (photos?.length) await assertWithinLimit(req, "portfolioPhotos", { adding: photos.length });
+      item = await Portfolio.create({ ...updates, photos: photos || [], vendor: vendor._id });
     }
-    await vendor.save();
-    res.status(200).json({ status: "success", vendor });
+    res.status(200).json({ status: "success", data: { portfolioItem: item } });
   } catch (error) {
     next(error);
   }
@@ -560,6 +574,11 @@ export const uploadMedia = async (req, res, next) => {
     let mediaUrl = null;
     let mediaType = type;
 
+    // Photos count toward the plan's portfolio limit (checked before storing the file)
+    const isPhoto =
+      mediaType === "photo" || (!mediaType && req.file && !req.file.mimetype.startsWith("video"));
+    if (isPhoto) await assertWithinLimit(req, "portfolioPhotos");
+
     // If file was uploaded, store in GridFS
     if (req.file) {
       // Auto-detect type from mimetype if not provided
@@ -756,7 +775,6 @@ export const getDashboardSummary = async (req, res, next) => {
 
     // Import models needed for aggregation
     const Lead = (await import("../models/lead.model.js")).default;
-    const Payment = (await import("../models/payment.model.js")).default;
 
     // Try to update rating before calculating stats (non-critical)
     try {
@@ -848,34 +866,41 @@ export const getDashboardSummary = async (req, res, next) => {
       followUpDate: { $lte: new Date() },
     });
 
-    // 3. Revenue Statistics (for the filtered period)
-    const paymentQuery = {
-      vendor: vendor._id,
-      status: "completed",
-    };
+    // 3. Revenue Statistics (for the filtered period): payments recorded on the vendor's invoices
+    const Invoice = (await import("../models/invoice.model.js")).default;
+    const invoiceMatch = { vendor: vendor._id, status: { $ne: "cancelled" } };
+    const paidInPeriod =
+      Object.keys(dateFilter).length > 0 ? { "payments.paidAt": dateFilter } : {};
 
-    if (Object.keys(dateFilter).length > 0) {
-      paymentQuery.createdAt = dateFilter;
-    }
-
-    const [payments, revenueByMonth] = await Promise.all([
-      Payment.find(paymentQuery).lean(),
-      Payment.aggregate([
-        { $match: paymentQuery },
+    const [payments, revenueByMonthDesc] = await Promise.all([
+      // One row per invoice paid in the period
+      Invoice.aggregate([
+        { $match: invoiceMatch },
+        { $unwind: "$payments" },
+        { $match: paidInPeriod },
+        { $group: { _id: "$_id", amount: { $sum: "$payments.amount" } } },
+      ]),
+      Invoice.aggregate([
+        { $match: invoiceMatch },
+        { $unwind: "$payments" },
+        { $match: paidInPeriod },
         {
           $group: {
             _id: {
-              year: { $year: "$createdAt" },
-              month: { $month: "$createdAt" },
+              year: { $year: "$payments.paidAt" },
+              month: { $month: "$payments.paidAt" },
             },
-            revenue: { $sum: "$amount" },
-            count: { $sum: 1 },
+            revenue: { $sum: "$payments.amount" },
+            count: { $addToSet: "$_id" },
           },
         },
-        { $sort: { "_id.year": 1, "_id.month": 1 } },
+        { $sort: { "_id.year": -1, "_id.month": -1 } },
         { $limit: 12 }, // Last 12 months
       ]),
     ]);
+    const revenueByMonth = revenueByMonthDesc
+      .reverse()
+      .map((row) => ({ ...row, count: row.count.length }));
 
     const periodRevenue = payments.reduce((sum, p) => sum + p.amount, 0);
     const periodBookings = payments.length;
@@ -889,16 +914,22 @@ export const getDashboardSummary = async (req, res, next) => {
       bookings: item.count,
     }));
 
-    // 4. Recent Activity (combine recent leads and payments)
-    const recentPayments = await Payment.find({
-      vendor: vendor._id,
-      status: "completed",
-    })
-      .sort({ createdAt: -1 })
-      .limit(5)
-      .select("amount status createdAt")
-      .populate("booking", "eventType eventDate")
-      .lean();
+    // 4. Recent Activity (combine recent leads and invoice payments)
+    const recentPayments = await Invoice.aggregate([
+      { $match: invoiceMatch },
+      { $unwind: "$payments" },
+      { $sort: { "payments.paidAt": -1 } },
+      { $limit: 5 },
+      {
+        $project: {
+          amount: "$payments.amount",
+          createdAt: "$payments.paidAt",
+          status: "completed",
+          invoiceNumber: 1,
+          title: 1,
+        },
+      },
+    ]);
 
     const recentActivity = [
       ...recentLeads.map((lead) => ({
@@ -919,7 +950,7 @@ export const getDashboardSummary = async (req, res, next) => {
         id: payment._id,
         title: `Payment received`,
         description: `${payment.amount} for ${
-          payment.booking?.eventType || "booking"
+          payment.invoiceNumber ? `invoice ${payment.invoiceNumber}` : payment.title || "an invoice"
         }`,
         status: payment.status,
         date: payment.createdAt,
@@ -977,10 +1008,23 @@ export const getDashboardSummary = async (req, res, next) => {
       },
     };
 
+    // Revenue totals are basic analytics (Pro+); trends and performance are advanced (Business+)
+    const { plan } = await getRequestPlan(req);
+    const hasBasic = !!plan?.features?.basicAnalytics;
+    const hasAdvanced = !!plan?.features?.advancedAnalytics;
+    const upgradeFor = (feature) =>
+      cheapestPlanWhere("vendor", (p) => p.features[feature])?.key || null;
+
     // Construct response
     res.status(200).json({
       status: "success",
       data: {
+        analyticsAccess: {
+          plan: plan?.key || null,
+          basic: hasBasic,
+          advanced: hasAdvanced,
+          upgradeTo: hasAdvanced ? null : upgradeFor(hasBasic ? "advancedAnalytics" : "basicAnalytics"),
+        },
         summary: {
           profileViews: profileStats.profileViews,
           totalInquiries: totalLeads,
@@ -994,19 +1038,21 @@ export const getDashboardSummary = async (req, res, next) => {
           ...leadsBreakdown,
           needingFollowUp,
         },
-        revenue: {
-          period: {
-            start: dateFilter.$gte?.toISOString() || "all time",
-            end: dateFilter.$lte?.toISOString() || "present",
-          },
-          total: periodRevenue,
-          bookings: periodBookings,
-          averageValue: Math.round(averageBookingValue * 100) / 100,
-          trends: revenueTrends,
-        },
+        revenue: hasBasic
+          ? {
+              period: {
+                start: dateFilter.$gte?.toISOString() || "all time",
+                end: dateFilter.$lte?.toISOString() || "present",
+              },
+              total: periodRevenue,
+              bookings: periodBookings,
+              averageValue: Math.round(averageBookingValue * 100) / 100,
+              trends: hasAdvanced ? revenueTrends : [],
+            }
+          : null,
         recentActivity,
         alerts,
-        performance: performanceMetrics,
+        performance: hasAdvanced ? performanceMetrics : null,
       },
     });
   } catch (error) {

@@ -3,6 +3,7 @@ import UniversalAIController from "../controllers/universal-ai-planner.controlle
 import * as PlanActionsController from "../controllers/ai-plan-actions.controller.js";
 import { rateLimiter } from "../middleware/rateLimiter.js";
 import { protect as authenticate, optionalAuth } from "../middleware/auth.js";
+import { requirePlanFeature } from "../services/plan-access.service.js";
 import {
   requireBusinessPlan,
   requireProfessionalPlan,
@@ -413,6 +414,7 @@ router.get(
 router.post(
   "/generate-proposal",
   authenticate,
+  requirePlanFeature("aiProposal", { label: "The AI proposal writer" }),
   rateLimiter("ai-planner-proposal", 10, 60 * 60), // 10 requests per hour
   UniversalAIController.generateProposal
 );

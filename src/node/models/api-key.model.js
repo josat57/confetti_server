@@ -3,10 +3,15 @@ import crypto from "crypto";
 
 const apiKeySchema = new mongoose.Schema(
   {
+    // The account the key acts as (vendors and planners). Older keys only have `vendor`.
+    owner: {
+      type: mongoose.Schema.Types.ObjectId,
+      ref: "User",
+      index: true,
+    },
     vendor: {
       type: mongoose.Schema.Types.ObjectId,
       ref: "Vendor",
-      required: [true, "Vendor is required"],
       index: true,
     },
     name: {

@@ -226,11 +226,18 @@ app.use((err, req, res, next) => {
   // Log error for debugging
   logger.error(`${err.statusCode} - ${err.message}`, { stack: err.stack });
 
+  // Machine-readable reason (e.g. PLAN_LIMIT_REACHED) for errors we raise ourselves
+  const extra =
+    err.isOperational && typeof err.code === "string"
+      ? { code: err.code, ...(err.details ? { details: err.details } : {}) }
+      : {};
+
   if (process.env.NODE_ENV === "development") {
     res.status(err.statusCode).json({
       status: err.status,
       error: err,
       message: err.message,
+      ...extra,
       stack: err.stack,
     });
   } else {
@@ -238,6 +245,7 @@ app.use((err, req, res, next) => {
       res.status(err.statusCode).json({
         status: err.status,
         message: err.message,
+        ...extra,
       });
     } else {
       logger.error("Unhandled error", err);
