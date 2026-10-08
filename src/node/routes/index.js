@@ -56,6 +56,8 @@ import invitationRoutes from "./invitation.routes.js";
 import rsvpRoutes from "./rsvp.routes.js";
 import escrowRoutes, { vendorPayoutRoutes, adminEscrowRoutes } from "./escrow.routes.js";
 import vendorBoostRoutes, { featuredCallbackRoutes } from "./featured.routes.js";
+import supportRoutes from "./support.routes.js";
+import portalRoutes, { plannerPortalRoutes } from "./client-portal.routes.js";
 import taskRoutes, { eventTaskRoutes } from "./task.routes.js";
 import guestRoutes, {
   eventGuestRoutes,
@@ -114,6 +116,10 @@ router.use("/webhooks/payment", paymentWebhookRoutes);
 router.use("/event-passes", eventPassRoutes);
 router.use("/escrow", escrowRoutes);
 router.use("/featured", featuredCallbackRoutes);
+router.use("/support", supportRoutes);
+router.use("/planner/portal/events/:eventId", plannerPortalRoutes);
+// Client portal links (no login)
+router.use("/portal", portalRoutes);
 router.use("/data", dataExchangeRoutes);
 router.use("/events/:eventId/guests/stats", eventGuestStatsRouter);
 router.use("/tasks", taskRoutes);

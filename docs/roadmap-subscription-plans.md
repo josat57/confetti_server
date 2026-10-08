@@ -201,13 +201,19 @@ Screens are under `/user/dashboard/events/[id]/…` with tabs: Overview, Guests,
   - The cards' fields (`location.city`, `pricing`, `portfolio`, `contactInfo`, `description`) were missing.
 - [x] **Tests:** `npm run test:featured`.
 
-## Phase 7: Support and planner client portal
+## Phase 7: Support and planner client portal ✅ done
 
-- [ ] **API:** User-facing support tickets: create, list mine, reply. `SupportTicket` and the admin routes already exist; no user route creates a ticket today.
-- [ ] **API:** Priority flag set automatically for Celebration Plus, Agency and Corporate, and admin queue sorting by priority.
-- [ ] **FE:** "Contact support" form and ticket history for clients, vendors and planners.
-- [ ] **API:** Client portal: a planner invites a client (a magic link or a client account), and the client sees their event's timeline, budget, documents and approvals as read-only, with comments.
-- [ ] **FE:** Client portal pages, and an "Invite client" action in the planner dashboard.
+- [x] **API:** User support tickets (`/support/tickets`): create, list mine, view (admin internal notes never shown), reply (reopens a resolved ticket), close, rate. Up to 20 open tickets per user.
+- [x] **API:** Priority set automatically from the plan (Agency) or an event pass (Celebration Plus, Diaspora): high priority, a 4-hour first-response target (24 hours otherwise), and a "Priority support" badge for admins. The admin queue sorts by priority by default (a numeric `priorityRank`, kept in sync on save). Corporate is added when Phase 11 gives it the feature.
+- [x] **FE:** "Help & support" in the client, planner and vendor dashboards: new request, history, conversation, reply, close, rating, and `?ticket=` links (used by the email notifications).
+- [x] **API:** Client portal (Studio plan and above):
+  - The planner invites the client by email and gets a private link per person (up to 10). Links can be copied or revoked, with "last viewed".
+  - The client sees the schedule, checklist progress, budget and expenses, and the documents the planner chooses to share (signed links that expire after 7 days).
+  - The client can approve or ask for changes on approval requests, and comment.
+  - The planner is notified; the client is emailed about new approvals and planner comments.
+- [x] **FE:** Planner portal page (`/planner/dashboard/events/[id]/portal`, from "Client portal" on the event): invite, approvals, documents to share, comments. Public client page `/portal/[token]` (mobile-first, no account, no sign-in redirect).
+- [x] **Fixed along the way:** admin ticket emails linked to pages that don't exist and inserted the reply unescaped; tickets had no number (the emails referenced one).
+- [x] **Tests:** `npm run test:support-portal`.
 
 ## Phase 8: Celebration Plus features
 

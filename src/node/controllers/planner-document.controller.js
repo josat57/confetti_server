@@ -23,7 +23,7 @@ const escapeHtml = (s) =>
 const shareSecret = () => process.env.DOCUMENT_SHARE_SECRET || process.env.JWT_ACCESS_SECRET;
 
 /** HMAC-signed "<docId>.<expiryMs>.<signature>" token. */
-const createShareToken = (documentId, days) => {
+export const createShareToken = (documentId, days) => {
   const payload = `${documentId}.${Date.now() + days * 24 * 60 * 60 * 1000}`;
   const sig = crypto.createHmac("sha256", shareSecret()).update(payload).digest("base64url");
   return `${payload}.${sig}`;

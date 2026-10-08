@@ -40,6 +40,11 @@ const documentSchema = new mongoose.Schema({
     type: mongoose.Schema.Types.ObjectId,
     ref: 'Event'
   },
+  // Shown to the client in the planner's client portal
+  sharedWithClient: {
+    type: Boolean,
+    default: false
+  },
   vendor: {
     type: mongoose.Schema.Types.ObjectId,
     ref: 'Vendor'

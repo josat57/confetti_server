@@ -34,6 +34,12 @@ const supportTicketSchema = new mongoose.Schema(
       enum: ["low", "medium", "high", "urgent"],
       default: "medium",
     },
+    // For sorting the admin queue (urgent 4 … low 1); kept in step with priority on save
+    priorityRank: { type: Number, default: 2, index: true },
+    // Priority support from the user's plan or event pass (Celebration Plus, Agency, Corporate)
+    isPriority: { type: Boolean, default: false },
+    prioritySource: String,
+    ticketNumber: { type: String, unique: true, sparse: true },
     status: {
       type: String,
       enum: ["open", "in_progress", "resolved", "closed"],
@@ -158,6 +164,15 @@ supportTicketSchema.index({ status: 1, priority: 1 });
 supportTicketSchema.index({ assignedTo: 1, status: 1 });
 supportTicketSchema.index({ category: 1, status: 1 });
 supportTicketSchema.index({ escalated: 1, status: 1 });
+
+const PRIORITY_RANK = { low: 1, medium: 2, high: 3, urgent: 4 };
+supportTicketSchema.pre("save", function (next) {
+  this.priorityRank = PRIORITY_RANK[this.priority] || 2;
+  if (!this.ticketNumber) {
+    this.ticketNumber = `T-${Date.now().toString(36).toUpperCase()}${Math.random().toString(36).slice(2, 5).toUpperCase()}`;
+  }
+  next();
+});
 
 // Methods
 supportTicketSchema.methods.assignTo = async function (adminId) {

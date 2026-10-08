@@ -15,6 +15,7 @@
     "test:event-screens": "node --test --test-force-exit __tests__/integration/event-screens.test.mjs",
     "test:escrow": "node --test --test-force-exit __tests__/integration/escrow.test.mjs",
     "test:featured": "node --test --test-force-exit __tests__/integration/featured.test.mjs",
+    "test:support-portal": "node --test --test-force-exit __tests__/integration/support-portal.test.mjs",
     "test:performance": "jest --testMatch='**/__tests__/performance/**/*.test.js' --runInBand",
     "test:performance:properties": "jest --testMatch='**/__tests__/performance/properties/**/*.test.js' --runInBand",
     "seed": "node scripts/seed-all.js",

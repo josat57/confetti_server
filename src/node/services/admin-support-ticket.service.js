@@ -14,6 +14,10 @@ import { createError } from "../utils/error.js";
  * Admin Support Ticket Service
  * Handles support ticket management for admin dashboard
  */
+/** The user's support page on the website */
+const supportPage = (user) =>
+  `${process.env.FRONTEND_URL}/${{ vendor: "vendor", "event-planner": "planner" }[user?.role] || "user"}/dashboard/support`;
+
 class AdminSupportTicketService {
   /**
    * Get support tickets with pagination and filters
@@ -62,7 +66,11 @@ class AdminSupportTicketService {
     }
 
     const skip = (page - 1) * limit;
-    const sort = { [sortBy]: sortOrder === "desc" ? -1 : 1 };
+    // Default queue order: most urgent first (priority support tickets are "high"), then newest
+    const sort =
+      !options.sortBy || sortBy === "priority"
+        ? { priorityRank: sortOrder === "asc" ? 1 : -1, createdAt: -1 }
+        : { [sortBy]: sortOrder === "desc" ? -1 : 1 };
 
     let tickets;
     let total;
@@ -258,7 +266,7 @@ class AdminSupportTicketService {
 
     // Email the ticket submitter with the admin response
     try {
-      const ticketUser = await User.findById(ticket.user).select("email firstName name");
+      const ticketUser = await User.findById(ticket.user).select("email firstName name role");
       if (ticketUser?.email) {
         const { sendEmailDirect } = await import("../utils/email.js");
         await sendEmailDirect({
@@ -268,10 +276,10 @@ class AdminSupportTicketService {
             <h2>Support Ticket Update</h2>
             <p>Hi ${ticketUser.firstName || ticketUser.name || "there"},</p>
             <p>Your support ticket has received a response:</p>
-            <blockquote style="border-left:4px solid #6366f1;padding:12px;margin:12px 0;background:#f5f3ff;">
-              ${content}
+            <blockquote style="border-left:4px solid #6366f1;padding:12px;margin:12px 0;background:#f5f3ff;white-space:pre-line;">
+              ${String(content).replace(/[&<>"']/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" })[c])}
             </blockquote>
-            <p><a href="${process.env.FRONTEND_URL}/support/tickets/${ticketId}" style="display:inline-block;padding:12px 24px;background:#6366f1;color:#fff;text-decoration:none;border-radius:6px;">View Ticket</a></p>
+            <p><a href="${supportPage(ticketUser)}?ticket=${ticketId}" style="display:inline-block;padding:12px 24px;background:#6366f1;color:#fff;text-decoration:none;border-radius:6px;">View Ticket</a></p>
           `,
         });
       }
@@ -320,7 +328,7 @@ class AdminSupportTicketService {
 
     // Notify the user that their ticket has been closed
     try {
-      const ticketUser = await User.findById(ticket.user).select("email firstName name");
+      const ticketUser = await User.findById(ticket.user).select("email firstName name role");
       if (ticketUser?.email) {
         const { sendEmailDirect } = await import("../utils/email.js");
         await sendEmailDirect({
@@ -332,7 +340,7 @@ class AdminSupportTicketService {
             <p>Your support ticket has been resolved and closed.</p>
             ${resolution ? `<p><strong>Resolution:</strong> ${resolution}</p>` : ""}
             <p>If you need further assistance, please open a new ticket.</p>
-            <p><a href="${process.env.FRONTEND_URL}/support" style="display:inline-block;padding:12px 24px;background:#6366f1;color:#fff;text-decoration:none;border-radius:6px;">Go to Support</a></p>
+            <p><a href="${supportPage(ticketUser)}" style="display:inline-block;padding:12px 24px;background:#6366f1;color:#fff;text-decoration:none;border-radius:6px;">Go to Support</a></p>
           `,
         });
       }
