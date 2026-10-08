@@ -14,6 +14,11 @@ const messageSchema = new mongoose.Schema(
       required: true,
       index: true,
     },
+    // Thread this message belongs to (older messages may not have one until backfilled)
+    conversation: {
+      type: mongoose.Schema.Types.ObjectId,
+      ref: "Conversation",
+    },
     event: {
       type: mongoose.Schema.Types.ObjectId,
       ref: "Event",
@@ -58,6 +63,8 @@ const messageSchema = new mongoose.Schema(
 
 // Indexes
 messageSchema.index({ sender: 1, recipient: 1 });
+messageSchema.index({ conversation: 1, createdAt: -1 });
+messageSchema.index({ recipient: 1, status: 1, conversation: 1 });
 messageSchema.index({ event: 1 });
 messageSchema.index({ status: 1 });
 messageSchema.index({ createdAt: -1 });

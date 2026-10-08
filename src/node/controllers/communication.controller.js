@@ -1,5 +1,20 @@
+import mongoose from "mongoose";
 import Message from "../models/message.model.js";
+import Conversation from "../models/conversation.model.js";
 import { AppError } from "../utils/AppError.js";
+import {
+  backfillConversations,
+  cleanContent,
+  findOrCreateConversation,
+  formatConversations,
+  formatMessages,
+  getParticipantConversation,
+  markConversationRead,
+  postMessage,
+  refreshLastMessage,
+  resolveParticipant,
+  totalUnread,
+} from "../services/conversation.service.js";
 
 /**
  * List messages for planner
@@ -63,13 +78,23 @@ export const sendMessage = async (req, res, next) => {
       return next(new AppError("Recipient and content are required", 400));
     }
 
-    const message = await Message.create({
+    const text = cleanContent(content);
+    const other = await resolveParticipant(recipient);
+    if (other._id.toString() === req.user._id.toString()) {
+      return next(new AppError("You can't message yourself", 400));
+    }
+
+    // Planner messages go into the same thread as the inbox, so both views stay in sync
+    const conversation = await findOrCreateConversation(req.user._id, other._id, {
+      subject: typeof subject === "string" ? subject.slice(0, 200) : undefined,
+    });
+    const message = await postMessage({
+      conversation,
       sender: req.user._id,
-      recipient,
+      content: text,
       subject,
-      content,
       type: type || "direct",
-      event,
+      event: mongoose.isValidObjectId(event) ? event : undefined,
     });
 
     await message.populate([
@@ -103,17 +128,17 @@ export const getMessage = async (req, res, next) => {
       return next(new AppError("Message not found", 404));
     }
 
-    // Check access
-    if (
-      message.sender.toString() !== req.user._id.toString() &&
-      message.recipient.toString() !== req.user._id.toString()
-    ) {
+    // Check access (sender/recipient are populated here, so compare their ids)
+    const me = req.user._id.toString();
+    const senderId = (message.sender?._id || message.sender)?.toString();
+    const recipientId = (message.recipient?._id || message.recipient)?.toString();
+    if (senderId !== me && recipientId !== me) {
       return next(new AppError("Access denied", 403));
     }
 
     // Mark as read if recipient is viewing
     if (
-      message.recipient.toString() === req.user._id.toString() &&
+      recipientId === me &&
       message.status !== "read"
     ) {
       await message.markAsRead();
@@ -204,10 +229,174 @@ export const deleteMessage = async (req, res, next) => {
 
     await message.deleteOne();
 
+    if (message.conversation) {
+      const conversation = await Conversation.findById(message.conversation);
+      if (conversation) await refreshLastMessage(conversation);
+    }
+
     res.status(200).json({
       status: "success",
       message: "Message deleted successfully",
     });
+  } catch (error) {
+    next(error);
+  }
+};
+
+// ---------------------------------------------------------------------------
+// Conversations (inbox for clients, planners and vendors)
+// ---------------------------------------------------------------------------
+
+/**
+ * List my conversations, newest first
+ * GET /api/v1/messages/conversations
+ */
+export const listConversations = async (req, res, next) => {
+  try {
+    const userId = req.user._id;
+    await backfillConversations(userId);
+
+    const limit = Math.min(Math.max(parseInt(req.query.limit) || 100, 1), 200);
+    const query = { participants: userId };
+    if (["active", "archived", "closed"].includes(req.query.status)) query.status = req.query.status;
+
+    const conversations = await Conversation.find(query).sort({ lastMessageAt: -1 }).limit(limit).lean();
+
+    res.status(200).json({
+      status: "success",
+      data: { conversations: await formatConversations(conversations, userId) },
+    });
+  } catch (error) {
+    next(error);
+  }
+};
+
+/**
+ * Start (or reopen) a conversation with a user or a vendor
+ * POST /api/v1/messages/conversations
+ * body: { participantId (User or Vendor id), subject?, initialMessage?, relatedBooking?, relatedEvent? }
+ */
+export const createConversation = async (req, res, next) => {
+  try {
+    const { participantId, subject, initialMessage, relatedBooking, relatedEvent } = req.body;
+    if (!participantId) return next(new AppError("participantId is required", 400));
+
+    const text = initialMessage ? cleanContent(initialMessage) : null;
+    const other = await resolveParticipant(participantId);
+    if (other._id.toString() === req.user._id.toString()) {
+      return next(new AppError("You can't message yourself", 400));
+    }
+
+    const context = {};
+    if (typeof subject === "string" && subject.trim()) context.subject = subject.trim().slice(0, 200);
+    if (mongoose.isValidObjectId(relatedBooking)) context.relatedBooking = relatedBooking;
+    if (mongoose.isValidObjectId(relatedEvent)) context.relatedEvent = relatedEvent;
+
+    const conversation = await findOrCreateConversation(req.user._id, other._id, context);
+    // An existing thread takes the latest context (e.g. a newer booking)
+    if (Object.keys(context).length && !conversation.isNew) {
+      conversation.set(context);
+      await conversation.save();
+    }
+    if (text) await postMessage({ conversation, sender: req.user._id, content: text });
+
+    const [formatted] = await formatConversations([conversation.toObject()], req.user._id);
+    res.status(201).json({ status: "success", data: { conversation: formatted } });
+  } catch (error) {
+    next(error);
+  }
+};
+
+/**
+ * Get one conversation
+ * GET /api/v1/messages/conversations/:id
+ */
+export const getConversationById = async (req, res, next) => {
+  try {
+    const conversation = await getParticipantConversation(req.params.id, req.user._id);
+    const [formatted] = await formatConversations([conversation.toObject()], req.user._id);
+    res.status(200).json({ status: "success", data: { conversation: formatted } });
+  } catch (error) {
+    next(error);
+  }
+};
+
+/**
+ * Messages in a conversation, oldest first. Page 1 is the newest `limit` messages.
+ * GET /api/v1/messages/conversations/:id/messages?page=&limit=
+ */
+export const getConversationMessages = async (req, res, next) => {
+  try {
+    const conversation = await getParticipantConversation(req.params.id, req.user._id);
+    const limit = Math.min(Math.max(parseInt(req.query.limit) || 50, 1), 200);
+    const page = Math.max(parseInt(req.query.page) || 1, 1);
+
+    const [messages, total] = await Promise.all([
+      Message.find({ conversation: conversation._id })
+        .sort({ createdAt: -1 })
+        .skip((page - 1) * limit)
+        .limit(limit)
+        .lean(),
+      Message.countDocuments({ conversation: conversation._id }),
+    ]);
+
+    res.status(200).json({
+      status: "success",
+      data: {
+        messages: await formatMessages(messages.reverse(), conversation),
+        total,
+        page,
+        totalPages: Math.max(Math.ceil(total / limit), 1),
+      },
+    });
+  } catch (error) {
+    next(error);
+  }
+};
+
+/**
+ * Send a message in a conversation
+ * POST /api/v1/messages/conversations/:id/messages  body: { content }
+ */
+export const sendConversationMessage = async (req, res, next) => {
+  try {
+    const conversation = await getParticipantConversation(req.params.id, req.user._id);
+    if (conversation.status === "closed") {
+      return next(new AppError("This conversation is closed", 400));
+    }
+    const text = cleanContent(req.body?.content);
+
+    const message = await postMessage({ conversation, sender: req.user._id, content: text });
+    const [formatted] = await formatMessages([message.toObject()], conversation);
+    res.status(201).json({ status: "success", data: { message: formatted } });
+  } catch (error) {
+    next(error);
+  }
+};
+
+/**
+ * Mark every message I received in a conversation as read
+ * PATCH /api/v1/messages/conversations/:id/read
+ */
+export const markConversationAsRead = async (req, res, next) => {
+  try {
+    const conversation = await getParticipantConversation(req.params.id, req.user._id);
+    const result = await markConversationRead(conversation._id, req.user._id);
+    res.status(200).json({ status: "success", data: { updated: result.modifiedCount || 0 } });
+  } catch (error) {
+    next(error);
+  }
+};
+
+/**
+ * Total unread messages across my conversations
+ * GET /api/v1/messages/unread-count
+ */
+export const getUnreadMessageCount = async (req, res, next) => {
+  try {
+    await backfillConversations(req.user._id);
+    const count = await totalUnread(req.user._id);
+    res.status(200).json({ status: "success", data: { count } });
   } catch (error) {
     next(error);
   }
