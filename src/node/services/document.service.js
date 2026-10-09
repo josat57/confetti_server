@@ -1,7 +1,6 @@
 import Document from "../models/document.model.js";
 import { AppError } from "../utils/error.js";
 import { logger } from "../utils/logger.js";
-import { v4 as uuidv4 } from "uuid";
 import path from "path";
 import fs from "fs/promises";
 import { createClient } from "redis";

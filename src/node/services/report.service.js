@@ -7,7 +7,8 @@ import PDFDocument from 'pdfkit';
 import { Parser } from 'json2csv';
 import fs from 'fs/promises';
 import path from 'path';
-import { v4 as uuidv4 } from 'uuid';
+// v4 UUIDs from Node itself (no dependency on the uuid package's module format)
+import { randomUUID as uuidv4 } from 'crypto';
 
 class ReportService {
   constructor() {
@@ -80,7 +81,7 @@ class ReportService {
         throw new AppError('Not authorized to schedule this report', 403);
       }
 
-      await report.schedule(scheduleData);
+      await report.scheduleReport(scheduleData);
       return report;
     } catch (error) {
       logger.error('Error scheduling report:', error);

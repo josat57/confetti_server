@@ -3,7 +3,8 @@ import Redis from 'ioredis';
 import logger from '../logging/advanced.service.js';
 import Message from '../../models/message.model.js';
 import User from '../../models/user.model.js';
-import { v4 as uuidv4 } from 'uuid';
+// v4 UUIDs from Node itself (no dependency on the uuid package's module format)
+import { randomUUID as uuidv4 } from 'crypto';
 import { sendMessageNotification } from '../../utils/email.js';
 import { AppError } from '../../utils/AppError.js';
 

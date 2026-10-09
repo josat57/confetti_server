@@ -128,7 +128,7 @@ reportSchema.methods.markAsFailed = async function(error) {
   return this.save();
 };
 
-reportSchema.methods.schedule = async function(scheduleData) {
+reportSchema.methods.scheduleReport = async function(scheduleData) {
   this.schedule = {
     ...this.schedule,
     ...scheduleData,
