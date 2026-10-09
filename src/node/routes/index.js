@@ -52,6 +52,17 @@ import dataExchangeRoutes from "./data-exchange.routes.js";
 import paymentWebhookRoutes from "./payment-webhook.routes.js";
 import eventPassRoutes from "./event-pass.routes.js";
 import checklistRoutes from "./checklist.routes.js";
+import venueRoutes from "./venue.routes.js";
+import meetingRoutes from "./meeting.routes.js";
+import organizationRoutes, { adminCorporateRoutes } from "./organization.routes.js";
+import {
+  runSheetRoutes,
+  sharedRunSheetRoutes,
+  giftRoutes,
+  asoEbiRoutes,
+  shortlistRoutes,
+  adminCurationRoutes,
+} from "./celebration-plus.routes.js";
 import invitationRoutes from "./invitation.routes.js";
 import rsvpRoutes from "./rsvp.routes.js";
 import escrowRoutes, { vendorPayoutRoutes, adminEscrowRoutes } from "./escrow.routes.js";
@@ -117,6 +128,8 @@ router.use("/event-passes", eventPassRoutes);
 router.use("/escrow", escrowRoutes);
 router.use("/featured", featuredCallbackRoutes);
 router.use("/support", supportRoutes);
+router.use("/meetings", meetingRoutes);
+router.use("/organizations", organizationRoutes);
 router.use("/planner/portal/events/:eventId", plannerPortalRoutes);
 // Client portal links (no login)
 router.use("/portal", portalRoutes);
@@ -131,6 +144,13 @@ router.use("/events/:eventId/guests", eventGuestRoutes);
 router.use("/events/:eventId/seating", eventSeatingRoutes);
 router.use("/events/:eventId/checklist", checklistRoutes);
 router.use("/events/:eventId/invitation", invitationRoutes);
+// Celebration Plus (Phase 8)
+router.use("/events/:eventId/run-sheet", runSheetRoutes);
+router.use("/events/:eventId/gifts", giftRoutes);
+router.use("/events/:eventId/aso-ebi", asoEbiRoutes);
+router.use("/events/:eventId/shortlist", shortlistRoutes);
+// Vendor run sheet links (no login)
+router.use("/run-sheets/shared", sharedRunSheetRoutes);
 // Public RSVP links (no login)
 router.use("/rsvp", rsvpRoutes);
 router.use("/events/:eventId/documents", eventDocumentRoutes);
@@ -148,6 +168,7 @@ router.use("/vendors/security", securityRoutes);
 router.use("/vendors/bookings", vendorBookingRoutes);
 router.use("/vendors/payouts", vendorPayoutRoutes);
 router.use("/vendors/boost", vendorBoostRoutes);
+router.use("/vendors/venue", venueRoutes);
 // Vendor AI routes are now part of universal AI planner at /ai-planner
 // router.use("/vendors/ai-planner", vendorAIRoutes);
 // General vendor routes (with /:id) must come AFTER specific routes
@@ -163,6 +184,8 @@ router.use("/admin/backups", adminBackupRoutes);
 router.use("/admin/business-profiles", businessVerificationRoutes);
 // General admin router (wildcard /:id catch-all must come after specific prefixes)
 router.use("/admin/escrow", adminEscrowRoutes);
+router.use("/admin/curation", adminCurationRoutes);
+router.use("/admin/corporate", adminCorporateRoutes);
 router.use("/admin", adminRoutes);
 router.use("/admin", featureFlagRoutes);
 router.use("/admin", couponRoutes);

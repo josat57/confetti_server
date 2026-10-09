@@ -75,11 +75,12 @@ const pay = async (reference, data) => {
   return s.payments.completeSubscriptionPayment(payment._id, { provider: "flutterwave", data });
 };
 
-test("catalogue: Celebration ₦15,000 and Plus ₦45,000 on sale; Diaspora later", () => {
+test("catalogue: Celebration ₦15,000, Plus ₦45,000, Diaspora $39 / £30 (Phase 10)", () => {
   const byKey = Object.fromEntries(s.passes.catalogue().map((p) => [p.key, p]));
   assert.equal(byKey.celebration.prices.NGN, 15000);
   assert.equal(byKey.plus.prices.NGN, 45000);
-  assert.equal(byKey.diaspora.available, false);
+  assert.equal(byKey.diaspora.available, true);
+  assert.deepEqual(byKey.diaspora.prices, { USD: 39, GBP: 30 });
 });
 
 test("checkout: only clients, only their own events, correct amount, paid once", async () => {
@@ -90,7 +91,7 @@ test("checkout: only clients, only their own events, correct amount, paid once",
   await assert.rejects(s.passes.checkout(planner, { eventId: event._id, tier: "celebration" }), /planning their own event/);
   const stranger = await mkUser("user");
   await assert.rejects(s.passes.checkout(stranger, { eventId: event._id, tier: "celebration" }), /not found/);
-  await assert.rejects(s.passes.checkout(client, { eventId: event._id, tier: "diaspora", currency: "USD" }), /isn't available/);
+  await assert.rejects(s.passes.checkout(client, { eventId: event._id, tier: "diaspora" }), /isn't sold in NGN/);
 
   const result = await s.passes.checkout(client, { eventId: event._id, tier: "celebration" });
   assert.equal(result.amount, 1500000);

@@ -21,6 +21,10 @@ export const prioritySupportFor = async (user) => {
   const tiers = EVENT_PASSES.filter((p) => p.features.prioritySupport).map((p) => p.key);
   const pass = await EventPass.findOne({ user: user._id, status: "active", tier: { $in: tiers } }).select("tier").lean();
   if (pass) return `${EVENT_PASSES.find((p) => p.key === pass.tier)?.displayName}`;
+  // Members of a company on an active Corporate contract
+  const { Organization } = await import("../models/organization.model.js");
+  const org = await Organization.findOne({ "members.user": user._id, "contract.status": "active", "contract.endsAt": { $gt: new Date() } }).select("_id").lean();
+  if (org) return "Corporate";
   return null;
 };
 

@@ -103,6 +103,7 @@ const corsOptions = {
     "Accept",
     "Origin",
     "X-Guest-Session", // Add guest session header
+    "X-Organization-Id", // Corporate: the company being worked in
     "Access-Control-Allow-Origin",
     "Access-Control-Allow-Headers",
     "Access-Control-Allow-Methods",

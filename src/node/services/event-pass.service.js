@@ -46,13 +46,17 @@ class EventPassService {
   /** Features of the event's active pass ({} when none) */
   async featuresFor(eventId) {
     const pass = await this.activePassFor(eventId);
-    return pass ? findPass(pass.tier)?.features || {} : {};
+    if (pass) return findPass(pass.tier)?.features || {};
+    // Company events on an active Corporate contract get the Celebration Plus features
+    const { activeOrgForEvent } = await import("./organization.service.js");
+    if (await activeOrgForEvent(eventId)) return findPass("plus")?.features || {};
+    return {};
   }
 
   /** Passes for the user's events, keyed by event id */
   async passesForUser(userId) {
     const passes = await EventPass.find({ user: userId, status: "active" }).lean();
-    return Object.fromEntries(passes.map((p) => [p.event.toString(), { tier: p.tier, activatedAt: p.activatedAt }]));
+    return Object.fromEntries(passes.map((p) => [p.event.toString(), { tier: p.tier, activatedAt: p.activatedAt, currency: p.currency }]));
   }
 
   /**

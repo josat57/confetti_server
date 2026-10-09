@@ -215,36 +215,66 @@ Screens are under `/user/dashboard/events/[id]/…` with tabs: Overview, Guests,
 - [x] **Fixed along the way:** admin ticket emails linked to pages that don't exist and inserted the reply unescaped; tickets had no number (the emails referenced one).
 - [x] **Tests:** `npm run test:support-portal`.
 
-## Phase 8: Celebration Plus features
+## Phase 8: Celebration Plus features ✅ done
 
-- [ ] **API and FE:** Day-of schedule and vendor run sheet: time slots per vendor, contacts, a shareable read-only link per vendor, and PDF export.
-- [ ] **API and FE:** Gift tracking: gift registry and received gifts, with thank-you status.
-- [ ] **API and FE:** Aso-ebi tracking: fabric orders per guest, sizes, payment status and collection status.
-- [ ] **API and FE:** Curated vendor shortlist: admin- or expert-picked vendors added to a Plus event, beyond the AI suggestions.
+All four need a Celebration Plus pass on the event (clients get `PASS_REQUIRED` otherwise; planners use them on their own events). Screens are new tabs on the client event page, marked "Plus", with an upgrade card when the event doesn't have the pass.
 
-## Phase 9: Venue plan
+- [x] **API and FE:** Day-of schedule and vendor run sheet (`/events/:eventId/run-sheet`).
+  - Vendors on the day (role, contact, arrival time), with "Add my booked vendors" from confirmed bookings.
+  - Timeline entries by time (and day, for multi-day events), each for one vendor or shown to every vendor.
+  - Who vendors call on the day, and general notes.
+  - A private read-only link per vendor (`/run-sheet/[token]`, no account): their own slots, the moments for everyone, the day-of contact, and the other vendors' names (not their phone numbers). Links can be emailed to the vendor and turned off.
+  - PDF export of the whole sheet, and of each vendor's part from their link.
+- [x] **API and FE:** Gift tracking (`/events/:eventId/gifts`).
+  - Registry items (price, link, quantity wanted and received) and gifts received (from a guest or anyone, cash or item, against a registry item).
+  - Thank-you status per gift, marked one at a time or in bulk, with a method; a filter for thank-yous still to send. Totals for cash received and registry fulfilled.
+- [x] **API and FE:** Aso-ebi tracking (`/events/:eventId/aso-ebi`).
+  - Fabrics with a price per unit and optional stock (orders can't go over it).
+  - Orders per person or guest: quantity, size or measurements, amount due (from the fabric price), part payments recorded by method (and removable), payment status, and collection status (not ready, ready, collected; also in bulk).
+  - Filters, totals, and a CSV export for the tailor (spreadsheet formulas neutralised).
+- [x] **API and FE:** Curated vendor shortlist (`/events/:eventId/shortlist` for clients, `/admin/curation` for admins with `vendor_management`).
+  - The client sends a brief (vendor types, budget, notes). Admins work through a queue of Plus events (waiting first), search approved vendors, add them with a note on why, and send the list; the client gets a notification and an email.
+  - The client likes or hides picks, messages vendors and asks for quotes from the list. Vendors no longer approved drop off the client's list.
+- [x] **Tests:** `npm run test:celebration-plus`.
 
-- [ ] **API:** Venue calendar: spaces or halls per venue, availability per space, and prevention of double booking.
-- [ ] **API:** Timed holds: a tentative hold with an expiry date, auto-release of the hold, and conversion to a booking.
-- [ ] **API:** Deposit tracking: deposit due, paid and balance schedule. This extends the existing `depositAmount` on `VendorBooking` and on quotes. Payment reminders through notifications.
-- [ ] **FE:** Venue calendar view, hold management and deposit status.
+## Phase 9: Venue plan ✅ done
 
-## Phase 10: Diaspora Pass
+- [x] **API:** Venue calendar (`/vendors/venue`, Venue plan only).
+  - Spaces (halls) per venue with capacity and a day price; a space with history is switched off rather than deleted.
+  - Reservations per space by day and session (full day, morning, evening), up to 14 days at a time.
+  - Double booking is impossible: each space, day and half-day is a lock document with a unique index, so racing requests can't both win. Conflicts come back as `VENUE_DATE_TAKEN` with who holds the dates.
+  - Moving a reservation re-checks the new slots first and keeps the old ones if the move fails.
+- [x] **API:** Timed holds. Default 3 days (`VENUE_HOLD_DAYS`), up to 60. A job every 15 minutes expires them and frees the dates, and warns the vendor once a day before. Holds can be extended, released or converted to a booking.
+  - Booking (directly or from a hold) creates or links a `VendorBooking`, so it shows on the bookings page. Cancelling that booking frees the space.
+- [x] **API:** Deposit tracking. `VendorBooking.paymentSchedule` (instalments with due dates; must add up to the total) and `depositDueDate`. Payments are applied in due-date order, so each instalment shows paid, part paid, due soon or overdue.
+  - Without a schedule: deposit + balance (due on the event date).
+  - Reminders to the vendor and the client (in-app and email) 3 days before and when overdue, once per stage. Instalments overdue for more than 14 days aren't chased.
+- [x] **FE:** Vendor "Venue" page: month calendar per space, holds and bookings list (book it, +3 days, release), spaces. Payment schedule editor on the vendor booking page; schedule shown to clients and planners on their bookings.
+- [x] **Tests:** `npm run test:venue`.
 
-- [ ] **API:** Charge in USD/GBP ($39 / £30). Remove the hardcoded `"NGN"` in the Flutterwave charge in `services/subscription.service.js` and use `plan.getPriceForCurrency()`. Use pass prices in each currency.
-- [ ] **API:** Diaspora pass tier: Plus features, with escrow required for vendor payments (depends on Phase 5).
-- [ ] **API and FE:** Video calls with vendors: generate a meeting link (Jitsi, Daily or Zoom API) from messages or bookings, and send calendar invites.
-- [ ] **FE:** Currency selector at checkout (the frontend `CurrencyContext` already exists).
+## Phase 10: Diaspora Pass ✅ done
 
-## Phase 11: Corporate
+- [x] **API:** The Diaspora Pass is on sale in USD ($39) and GBP (£30). Subscriptions and passes already charged `plan.getPriceForCurrency()` (no hardcoded NGN left); Paystack is refused for currencies it can't take (GBP, EUR) with a clear message.
+- [x] **API:** Diaspora tier: all Plus features, plus:
+  - Paying vendors from abroad: escrow checkout in USD/GBP via Flutterwave at the configured rate (`FX_NGN_PER_USD`, `FX_NGN_PER_GBP`, `FX_BUFFER`). The vendor is held and paid in naira; refunds go back in the charged currency, in proportion.
+  - Escrow required: on a Diaspora event's bookings the vendor can't record payments made outside Confetti (`ESCROW_REQUIRED`).
+- [x] **API and FE:** Video calls (`/meetings`) from a conversation or a booking: a message in the conversation, notifications, and email invites with an `.ics` calendar file. Reschedule and cancel send updated invites. Clients need a pass with video calls; vendors and planners can start calls.
+  - With `DAILY_API_KEY`: a private Daily.co room per call with a personal join link for each person (no sign-in), open from 30 minutes before to an hour after; moved with the call and deleted when it's cancelled.
+  - Without it (or if Daily can't be reached): a Jitsi Meet room (`JITSI_BASE_URL`).
+- [x] **FE:** Currency choice when buying a pass and in the plan picker (`CurrencyContext` now includes GBP); "Pay in USD/GBP" with the converted amount on the booking payment panel; "Video call" button in messages and on booking pages.
+- [x] **Tests:** `npm run test:diaspora`.
 
-- [ ] **API:** `Organization` model: company name, billing details, RC number and VAT number, plus members with roles (requester, approver, admin).
-- [ ] **API:** Several events and budgets under the organization.
-- [ ] **API:** Buying from vendors with approvals: a quote needs an approver's sign-off before booking or payment, and every step is logged.
-- [ ] **API:** Invoices and receipts issued in the company's name.
-- [ ] **API:** Corporate reports: spending by event, department and vendor, exportable to CSV/PDF.
-- [ ] **API:** Annual contract billing (from ₦500,000/year), paid by invoice or bank transfer.
-- [ ] **FE:** Company dashboard, approvals inbox and reports.
+## Phase 11: Corporate ✅ done
+
+- [x] **API:** `Organization` model: company name, registered name, RC and VAT numbers, billing email and address; members with roles (admin, approver, requester) and departments; email invitations accepted with the invited address.
+  - A person can belong to up to 10 companies (planners often serve several), with a role in each; the app sends the chosen one as `X-Organization-Id`. Vendors can't create or join a company.
+- [x] **API:** Company events (created under the company or moved there) with event budgets, and yearly department budgets. Company events on an active contract get the Celebration Plus features; members get priority support.
+- [x] **API:** Buying from vendors with approvals: purchase requests (`PR-2026-0001`) for bookings on company events. A vendor can't confirm, nobody can pay, and the vendor's quote can't be accepted from its public link, until it's approved and the amount fits within the approval (`APPROVAL_REQUIRED`). Nobody approves their own request; purchases under the company's limit are approved automatically; every step is logged.
+- [x] **API:** Invoices in the company's name (`CFT-2026-0001`) with VAT (`CORPORATE_VAT_RATE`), as PDF; paid invoices download as receipts. Receipts in the company's name for every vendor payment made through Confetti.
+- [x] **API:** Reports: spending by event, department (against budget) and vendor for any period, plus approved-but-unpaid and waiting-for-approval totals; CSV and PDF export.
+- [x] **API:** Annual contract billing from ₦500,000 + VAT: the company requests it, a Confetti admin (`/admin/corporate`, financial oversight) issues the invoice, the company pays by card or bank transfer (admin marks it received). Renewal invoices go out 30 days before the end; lapsed contracts expire.
+- [x] **FE:** Company area at `/company` (overview, events, approvals, reports, billing, people and settings, join link), linked from client and planner sidebars; admin "Corporate accounts" page.
+- [x] **Tests:** `npm run test:corporate`.
 
 ## Issues found during Phases 1–2 ✅ all fixed
 

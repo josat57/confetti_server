@@ -7,6 +7,7 @@ import User from "../models/user.model.js";
 import Notification from "../models/notification.model.js";
 import { AppError } from "../utils/AppError.js";
 import { logger } from "../utils/logger.js";
+import { scheduleView } from "../utils/payment-schedule.js";
 
 /**
  * The client's side of bookings and their dashboard (/api/v1/users/…), for people
@@ -53,6 +54,8 @@ export const formatForClient = (b) => {
     currency: b.budget?.currency || b.currency || "NGN",
     specialRequirements: b.specialRequirements,
     quotedPrice: b.quote?.amount ?? b.totalAmount,
+    // What's due when (deposit and balance), once the vendor has set a total
+    paymentSchedule: (b.totalAmount ?? b.payment?.totalAmount) ? scheduleView(b) : null,
     notes: [],
     createdAt: b.createdAt,
     updatedAt: b.updatedAt,

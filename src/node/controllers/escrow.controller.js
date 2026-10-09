@@ -19,8 +19,8 @@ const wrap = (fn) => async (req, res, next) => {
 export const getBanks = wrap(async (req, res) => ok(res, { banks: await listBanks() }));
 
 export const startEscrowCheckout = wrap(async (req, res) => {
-  const { bookingId, amount, paymentProvider } = req.body || {};
-  ok(res, await escrowService.checkout(req.user, { bookingId, amount, paymentProvider }));
+  const { bookingId, amount, paymentProvider, currency } = req.body || {};
+  ok(res, await escrowService.checkout(req.user, { bookingId, amount, paymentProvider, currency }));
 });
 
 export const getBookingPayments = wrap(async (req, res) => ok(res, await escrowService.listForBooking(req.user, req.params.bookingId)));

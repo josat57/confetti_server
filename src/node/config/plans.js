@@ -324,8 +324,7 @@ export const EVENT_PASSES = [
       "Escrow-protected payments to Nigerian vendors",
       "Video calls with vendors",
     ],
-    // Needs escrow and video calls (roadmap Phase 10)
-    available: false,
+    available: true,
   },
 ];
 

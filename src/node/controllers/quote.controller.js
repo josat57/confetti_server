@@ -445,6 +445,10 @@ export const acceptQuote = async (req, res, next) => {
       return next(new AppError("Quote has expired", 400));
     }
 
+    // A company's purchase must be approved before its quote is accepted (Corporate)
+    const { assertQuoteApproved } = await import("../services/purchase.service.js");
+    await assertQuoteApproved(quote);
+
     await quote.accept();
 
     // Update lead status if linked

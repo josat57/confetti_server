@@ -82,6 +82,22 @@ const startServer = async () => {
       logger.error("Escrow jobs failed to start:", error.message);
     }
 
+    // Venue holds (expiry, reminders) and booking payment reminders, every 15 minutes
+    try {
+      const { startVenueJobs } = await import("./services/venue.service.js");
+      startVenueJobs();
+    } catch (error) {
+      logger.error("Venue jobs failed to start:", error.message);
+    }
+
+    // Corporate contracts: renewal invoices and expiry
+    try {
+      const { startCorporateJobs } = await import("./services/corporate-billing.service.js");
+      startCorporateJobs();
+    } catch (error) {
+      logger.error("Corporate jobs failed to start:", error.message);
+    }
+
     // Subscription renewals (saved cards) and expiry reminders, hourly
     try {
       const { startSubscriptionJobs } = await import("./services/subscription-renewal.service.js");

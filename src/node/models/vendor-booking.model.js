@@ -195,6 +195,20 @@ const vendorBookingSchema = new mongoose.Schema(
       },
     ],
     depositPaidAt: Date,
+    // Deposit and balance schedule (Venue plan). Payments are applied to the
+    // instalments in due-date order; see utils/payment-schedule.js.
+    depositDueDate: Date,
+    paymentSchedule: [
+      {
+        label: { type: String, trim: true, maxlength: 80 },
+        amount: { type: Number, required: true, min: 0 },
+        dueDate: { type: Date, required: true },
+        // Reminder stages already sent ("due_soon", "overdue")
+        reminders: [String],
+      },
+    ],
+    // Reminder stages sent for the derived deposit/balance schedule ("deposit:due_soon")
+    scheduleReminders: [String],
     confirmedAt: Date,
     completedAt: Date,
     cancelledAt: Date,

@@ -7,6 +7,7 @@ import { AppError } from "../utils/AppError.js";
 import { logger } from "../utils/logger.js";
 import { sendEmailDirect } from "../utils/email.js";
 import { escapeRegExp } from "../utils/escape-regex.js";
+import { scheduleView } from "../utils/payment-schedule.js";
 
 /**
  * Vendor side of bookings (/api/v1/vendors/bookings). Works on the same
@@ -116,6 +117,9 @@ export const formatForVendor = (b) => {
     completedAt: b.completedAt,
     cancelledAt: b.cancelledAt,
     cancellationReason: b.cancellationReason,
+    // Deposit and balance schedule (instalments with what's paid against each)
+    schedule: scheduleView(b),
+    depositDueDate: b.depositDueDate,
   };
 };
 
@@ -323,6 +327,11 @@ const setStatus = async (req, res, next, status, { reason } = {}) => {
     if (status === "completed" && OPEN.includes(booking.status)) {
       throw new AppError("Confirm the booking before completing it", 400);
     }
+    // A company's booking needs its purchase approved before the vendor confirms it
+    if (status === "confirmed") {
+      const { assertPurchaseApproved } = await import("../services/purchase.service.js");
+      await assertPurchaseApproved(booking, { action: "confirm" });
+    }
     booking.statusHistory.push({ status, changedBy: req.user._id, note: reason });
     booking.status = status;
     if (status === "confirmed") booking.confirmedAt = new Date();
@@ -333,6 +342,11 @@ const setStatus = async (req, res, next, status, { reason } = {}) => {
       booking.cancelledBy = "vendor";
     }
     await booking.save();
+    // Free the venue space held for this booking (Venue plan)
+    if (status === "cancelled") {
+      const venueService = (await import("../services/venue.service.js")).default;
+      await venueService.releaseForBooking(booking._id).catch((error) => logger.warn("Venue release failed", { error: error.message }));
+    }
 
     const name = vendor.businessName || vendor.name;
     const messages = {
@@ -389,6 +403,13 @@ export const recordVendorBookingPayment = async (req, res, next) => {
   try {
     const vendor = await myVendor(req);
     const booking = await findBooking(req, vendor);
+    // Diaspora Pass bookings are paid through Confetti only
+    const { escrowRequiredFor } = await import("../services/escrow.service.js");
+    if (await escrowRequiredFor(booking)) {
+      const error = new AppError("This client pays through Confetti (Diaspora Pass). Payments show here automatically once made.", 400);
+      error.code = "ESCROW_REQUIRED";
+      throw error;
+    }
     const amount = Number(req.body?.amount);
     if (!(amount > 0)) throw new AppError("Please enter a valid amount", 400);
     booking.payments.push({ amount, method: req.body?.paymentMethod, notes: req.body?.notes });
@@ -408,6 +429,14 @@ export const markVendorDepositPaid = async (req, res, next) => {
     const vendor = await myVendor(req);
     const booking = await findBooking(req, vendor);
     if (booking.depositPaidAt) throw new AppError("The deposit is already marked as paid", 400);
+    // Diaspora Pass bookings are paid through Confetti only
+    const { escrowRequiredFor } = await import("../services/escrow.service.js");
+    if (await escrowRequiredFor(booking)) {
+      const error = new AppError("This client pays through Confetti (Diaspora Pass). Payments show here automatically once made.", 400);
+      error.code = "ESCROW_REQUIRED";
+      throw error;
+    }
+
     const { deposit, paid } = totals(booking);
     if (deposit > paid) {
       booking.payments.push({ amount: deposit - paid, method: req.body?.paymentMethod || "manual", notes: "Deposit" });
@@ -528,6 +557,18 @@ export const deleteVendorBooking = async (req, res, next) => {
     if (booking.planner) throw new AppError("Bookings made by clients can be cancelled, not deleted", 400);
     await booking.deleteOne();
     res.status(200).json({ status: "success", message: "Booking deleted" });
+  } catch (error) {
+    next(error);
+  }
+};
+
+/** PUT /:id/schedule { items: [{ label, amount, dueDate }], totalAmount? } (Venue plan) */
+export const setVendorPaymentSchedule = async (req, res, next) => {
+  try {
+    const { setPaymentSchedule } = await import("../services/payment-schedule.service.js");
+    const booking = await setPaymentSchedule(req.user, req.params.id, req.body || {});
+    await booking.populate("planner", CLIENT_FIELDS);
+    send(res, booking);
   } catch (error) {
     next(error);
   }

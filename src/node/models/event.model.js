@@ -70,6 +70,9 @@ const eventSchema = new mongoose.Schema(
       ref: "User",
       required: true,
     },
+    // Corporate events (roadmap Phase 11)
+    organization: { type: mongoose.Schema.Types.ObjectId, ref: "Organization", index: true },
+    department: { type: String, trim: true, maxlength: 80 },
     organizer: {
       type: mongoose.Schema.Types.ObjectId,
       ref: "User",

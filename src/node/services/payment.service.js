@@ -462,6 +462,12 @@ class PaymentService {
       return { payment: claimed, alreadyProcessed: false };
     }
 
+    if (claimed.corporateInvoice) {
+      const corporateBillingService = (await import("./corporate-billing.service.js")).default;
+      await corporateBillingService.markPaidFromPayment(claimed._id);
+      return { payment: claimed, alreadyProcessed: false };
+    }
+
     if (claimed.eventPass) {
       const eventPassService = (await import("./event-pass.service.js")).default;
       await eventPassService.activateFromPayment(claimed._id);
@@ -509,6 +515,10 @@ class PaymentService {
     }
     if (provider === "paystack") {
       if (!process.env.PAYSTACK_SECRET_KEY) throw new AppError("Paystack not configured", 500);
+      // Paystack doesn't take pounds or euros; Flutterwave does
+      if (!["NGN", "USD", "GHS", "ZAR", "KES"].includes(currency)) {
+        throw new AppError(`Paystack can't take payments in ${currency}. Choose Flutterwave.`, 400);
+      }
       try {
         const response = await axios.post(
           "https://api.paystack.co/transaction/initialize",

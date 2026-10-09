@@ -1,5 +1,6 @@
 import express from "express";
 import { protect, restrictTo } from "../middleware/auth.js";
+import { requirePlanFeature } from "../services/plan-access.service.js";
 import {
   listVendorBookings,
   getVendorBookingStats,
@@ -20,6 +21,7 @@ import {
   generateVendorContract,
   downloadVendorContract,
   markVendorContractSigned,
+  setVendorPaymentSchedule,
 } from "../controllers/vendor-booking.controller.js";
 
 // Vendor bookings: /api/v1/vendors/bookings
@@ -41,6 +43,7 @@ router.post("/:id/complete", completeVendorBooking);
 router.post("/:id/notes", addVendorBookingNote);
 router.post("/:id/payments", recordVendorBookingPayment);
 router.post("/:id/deposit", markVendorDepositPaid);
+router.put("/:id/schedule", requirePlanFeature("venueTools", { label: "Deposit schedules" }), setVendorPaymentSchedule);
 router.post("/:id/send-confirmation", sendVendorBookingConfirmation);
 router.post("/:id/contract", generateVendorContract);
 router.get("/:id/contract.pdf", downloadVendorContract);

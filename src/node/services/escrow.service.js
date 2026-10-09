@@ -9,6 +9,9 @@ import { AppError } from "../utils/AppError.js";
 import { logger } from "../utils/logger.js";
 import { getActivePlan } from "./plan-access.service.js";
 import { automaticPayouts, refundPayment, transfer } from "./payout-provider.service.js";
+import EventPass from "../models/event-pass.model.js";
+import { findPass } from "../config/plans.js";
+import { FOREIGN_CURRENCIES, convertFromNgnMinor, ngnPer, publicRates } from "../config/fx.js";
 
 /**
  * Escrow for booking payments.
@@ -67,12 +70,29 @@ const syncBookingPayment = async (escrow) => {
   await booking.save();
 };
 
+/**
+ * Bookings for an event on the Diaspora Pass (a pass with the `escrow` feature) are
+ * paid through Confetti only: the vendor can't record payments made outside it.
+ */
+export const escrowRequiredFor = async (booking) => {
+  if (!booking?.event) return false;
+  const pass = await EventPass.findOne({ event: booking.event._id || booking.event, status: "active" }).select("tier").lean();
+  return !!(pass && findPass(pass.tier)?.features?.escrow);
+};
+
+/** The currency the event's pass was bought in (a hint for the payment form) */
+const passCurrencyFor = async (booking) => {
+  if (!booking?.event) return null;
+  const pass = await EventPass.findOne({ event: booking.event._id || booking.event, status: "active" }).select("currency").lean();
+  return pass?.currency || null;
+};
+
 class EscrowService {
   /**
    * Start paying a vendor-confirmed booking through Confetti.
    * `amount` (naira) defaults to the outstanding balance.
    */
-  async checkout(user, { bookingId, amount, paymentProvider = "flutterwave" }) {
+  async checkout(user, { bookingId, amount, paymentProvider = "flutterwave", currency: payCurrency }) {
     if (!["flutterwave", "paystack"].includes(paymentProvider)) throw new AppError("Invalid payment provider", 400);
     if (!mongoose.isValidObjectId(bookingId)) throw new AppError("Booking not found", 404);
     const booking = await VendorBooking.findOne({ _id: bookingId, planner: user._id });
@@ -90,6 +110,9 @@ class EscrowService {
     }
     const amountMinor = toMinor(payNaira);
     if (amountMinor < MIN_PAYMENT_MINOR) throw new AppError("The minimum payment is ₦100", 400);
+    // Company events: the purchase must be approved first (Corporate)
+    const { assertPurchaseApproved } = await import("./purchase.service.js");
+    await assertPurchaseApproved(booking, { alsoPaying: payNaira, action: "pay for" });
 
     const vendor = await Vendor.findById(booking.vendor).select("owner businessName name");
     if (!vendor) throw new AppError("Vendor not found", 404);
@@ -100,6 +123,16 @@ class EscrowService {
     const kind = payNaira >= total ? "full" : paid === 0 && deposit > 0 && payNaira <= deposit ? "deposit" : "balance";
     const currency = booking.currency || booking.payment?.currency || "NGN";
     const reference = `ESC-${Date.now()}-${booking._id}`;
+
+    // Paying from abroad: charge the naira amount in USD/GBP (Flutterwave), the vendor still gets naira
+    let charged = null;
+    if (payCurrency && payCurrency !== currency) {
+      if (currency !== "NGN" || !FOREIGN_CURRENCIES.includes(payCurrency)) {
+        throw new AppError(`You can pay this booking in ${currency}${currency === "NGN" ? ", USD or GBP" : ""}`, 400);
+      }
+      if (paymentProvider !== "flutterwave") throw new AppError("Pay in dollars or pounds with Flutterwave", 400);
+      charged = { amount: convertFromNgnMinor(amountMinor, payCurrency), currency: payCurrency, rate: ngnPer(payCurrency) };
+    }
 
     const escrow = await EscrowPayment.create({
       booking: booking._id,
@@ -114,14 +147,20 @@ class EscrowService {
       status: "pending_payment",
       paymentProvider,
       reference,
-      history: [{ status: "pending_payment", note: `Checkout for ₦${payNaira.toLocaleString()}` }],
+      ...(charged ? { charged } : {}),
+      history: [
+        {
+          status: "pending_payment",
+          note: `Checkout for ₦${payNaira.toLocaleString()}${charged ? ` (${charged.currency} ${(charged.amount / 100).toFixed(2)} at ₦${charged.rate})` : ""}`,
+        },
+      ],
     });
     const payment = await Payment.create({
       user: user._id,
       escrowPayment: escrow._id,
       paymentType: "escrow",
-      amount: amountMinor,
-      currency,
+      amount: charged ? charged.amount : amountMinor,
+      currency: charged ? charged.currency : currency,
       status: "pending",
       paymentMethod: paymentProvider,
       reference,
@@ -133,8 +172,8 @@ class EscrowService {
     const paymentService = (await import("./payment.service.js")).default;
     const paymentUrl = await paymentService.startProviderCheckout({
       provider: paymentProvider,
-      amountMinor,
-      currency,
+      amountMinor: charged ? charged.amount : amountMinor,
+      currency: charged ? charged.currency : currency,
       reference,
       email: user.email,
       name: [user.firstName, user.lastName].filter(Boolean).join(" ") || user.username,
@@ -144,7 +183,15 @@ class EscrowService {
       meta: { kind: "escrow", paymentId: payment._id.toString(), escrowId: escrow._id.toString(), bookingId: booking._id.toString() },
     });
 
-    return { paymentUrl, reference, amount: amountMinor, currency, escrowId: escrow._id.toString(), bookingId: booking._id.toString() };
+    return {
+      paymentUrl,
+      reference,
+      amount: amountMinor,
+      currency,
+      charged: charged ? { amount: charged.amount, currency: charged.currency } : null,
+      escrowId: escrow._id.toString(),
+      bookingId: booking._id.toString(),
+    };
   }
 
   /** The client's payment arrived: hold it (called once per payment) */
@@ -274,11 +321,15 @@ class EscrowService {
     let status = "done";
     let providerReference;
     try {
+      // Paid in USD/GBP: refund the same share of what was charged
+      const providerAmount = escrow.charged?.amount
+        ? Math.floor((amountMinor / escrow.amount) * escrow.charged.amount)
+        : amountMinor;
       const result = await refundPayment({
         provider: escrow.paymentProvider,
         reference: escrow.reference,
         transactionId: payment?.transactionId,
-        amountMinor,
+        amountMinor: providerAmount,
       });
       providerReference = result.reference;
       status = ["processed", "completed", "success"].includes(result.status) ? "done" : "processing";
@@ -428,7 +479,7 @@ class EscrowService {
   /** Payments for a booking, for the client or the vendor */
   async listForBooking(user, bookingId) {
     if (!mongoose.isValidObjectId(bookingId)) throw new AppError("Booking not found", 404);
-    const booking = await VendorBooking.findById(bookingId).select("planner vendor totalAmount depositAmount payments payment quote currency status");
+    const booking = await VendorBooking.findById(bookingId).select("planner vendor event totalAmount depositAmount payments payment quote currency status");
     if (!booking) throw new AppError("Booking not found", 404);
     const vendor = await Vendor.findById(booking.vendor).select("owner");
     const isClient = idOf(booking.planner) === idOf(user._id);
@@ -442,6 +493,10 @@ class EscrowService {
       canPay: isClient && payable(booking) && totals.total > 0 && totals.outstanding > 0,
       bookingStatus: booking.status,
       autoReleaseDays: AUTO_RELEASE_DAYS,
+      // Paying from abroad (Diaspora Pass): naira per USD/GBP, and whether payments must go through Confetti
+      fxRates: (booking.currency || "NGN") === "NGN" ? publicRates() : {},
+      escrowRequired: await escrowRequiredFor(booking),
+      passCurrency: await passCurrencyFor(booking),
     };
   }
 
@@ -461,6 +516,7 @@ class EscrowService {
       commission: fromMinor(e.commissionAmount || Math.round((e.amount - (e.refund?.amount || 0)) * e.commissionRate)),
       vendorAmount: fromMinor(e.vendorAmount || 0),
       refunded: fromMinor(e.refund?.amount || 0),
+      charged: e.charged?.currency ? { amount: fromMinor(e.charged.amount), currency: e.charged.currency } : null,
       refundStatus: e.refund?.status || "none",
       payoutStatus: e.payout?.status || "not_started",
       dispute: e.dispute?.openedAt ? { reason: e.dispute.reason, openedByRole: e.dispute.openedByRole, resolution: e.dispute.resolution, resolvedAt: e.dispute.resolvedAt } : null,

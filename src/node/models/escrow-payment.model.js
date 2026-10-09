@@ -23,6 +23,12 @@ const escrowPaymentSchema = new mongoose.Schema(
       index: true,
     },
     payment: { type: mongoose.Schema.Types.ObjectId, ref: "Payment" },
+    // Paid from abroad: what the client was charged (minor units) and the naira rate used
+    charged: {
+      amount: Number,
+      currency: String,
+      rate: Number,
+    },
     paymentProvider: { type: String, enum: ["flutterwave", "paystack"] },
     reference: { type: String, index: true },
     paidAt: Date,

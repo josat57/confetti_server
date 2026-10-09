@@ -144,6 +144,38 @@ services:
       # Featured listing spots per category at any one time
       - key: FEATURED_SLOTS_PER_CATEGORY
         value: "6"
+      # Venue plan: default hold length (days)
+      - key: VENUE_HOLD_DAYS
+        value: "3"
+      # Diaspora payments: naira per USD/GBP (keep these current) and a margin for conversion costs
+      - key: FX_NGN_PER_USD
+        value: "1600"
+      - key: FX_NGN_PER_GBP
+        value: "2050"
+      - key: FX_BUFFER
+        value: "0.02"
+      # Video calls: private Daily.co rooms with a personal link per person (recommended;
+      # free tier at daily.co). Without a key, calls fall back to Jitsi Meet, where the
+      # first person in the call has to sign in.
+      - key: DAILY_API_KEY
+        sync: false
+      - key: JITSI_BASE_URL
+        value: https://meet.jit.si
+      # Corporate invoices: VAT, Confetti's details and the account for bank transfers
+      - key: CORPORATE_VAT_RATE
+        value: "0.075"
+      - key: CONFETTI_LEGAL_NAME
+        sync: false
+      - key: CONFETTI_RC_NUMBER
+        sync: false
+      - key: CONFETTI_VAT_NUMBER
+        sync: false
+      - key: CORPORATE_BANK_NAME
+        sync: false
+      - key: CORPORATE_ACCOUNT_NAME
+        sync: false
+      - key: CORPORATE_ACCOUNT_NUMBER
+        sync: false
 
       # Nothing persists on free-tier disks; enable with a Persistent Disk
       - key: BACKUP_ENABLED

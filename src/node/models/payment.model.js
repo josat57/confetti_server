@@ -31,13 +31,18 @@ const paymentSchema = new mongoose.Schema(
       type: mongoose.Schema.Types.ObjectId,
       ref: "EventPass",
     },
+    // Corporate contract invoice (paymentType "corporate")
+    corporateInvoice: {
+      type: mongoose.Schema.Types.ObjectId,
+      ref: "CorporateInvoice",
+    },
     passDetails: {
       tier: String,
       previousTier: String,
     },
     paymentType: {
       type: String,
-      enum: ["subscription", "event", "refund", "escrow", "boost"],
+      enum: ["subscription", "event", "refund", "escrow", "boost", "corporate"],
       required: true,
       default: "event",
     },

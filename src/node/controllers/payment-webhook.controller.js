@@ -39,11 +39,11 @@ const handleTransferWebhook = async (provider, payload, res) => {
  */
 const handlePassWebhook = async (provider, payload, succeeded, res) => {
   const reference = provider === "flutterwave" ? payload.data?.tx_ref : payload.data?.reference;
-  if (!reference || !/^(PASS|ESC|BOOST)-/.test(String(reference))) return false;
+  if (!reference || !/^(PASS|ESC|BOOST|CORP)-/.test(String(reference))) return false;
   try {
     const Payment = (await import("../models/payment.model.js")).default;
     const payment = await Payment.findOne({ reference });
-    if (!payment?.eventPass && !payment?.escrowPayment && !payment?.featuredBoost) {
+    if (!payment?.eventPass && !payment?.escrowPayment && !payment?.featuredBoost && !payment?.corporateInvoice) {
       res.status(404).json({ message: "Payment not found" });
       return true;
     }

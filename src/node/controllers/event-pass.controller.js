@@ -18,7 +18,7 @@ export const getMyPasses = async (req, res, next) => {
       const pass = await EventPass.findOne({ event: req.query.eventId, user: req.user._id }).lean();
       return res.status(200).json({
         status: "success",
-        data: { pass: pass && pass.status === "active" ? { tier: pass.tier, activatedAt: pass.activatedAt } : null },
+        data: { pass: pass && pass.status === "active" ? { tier: pass.tier, activatedAt: pass.activatedAt, currency: pass.currency } : null },
       });
     }
     res.status(200).json({ status: "success", data: { passes: await eventPassService.passesForUser(req.user._id) } });
