@@ -49,11 +49,8 @@ app.use(morgan("dev"));
 app.use(express.json());
 app.use(express.urlencoded({ extended: true }));
 
-// Security — NoSQL injection prevention and rate limiting
+// Security — NoSQL injection prevention
 app.use(sanitizeData);
-app.use("/api/v1", blockBlacklistedIPs);
-app.use("/api/v1", generalLimiter);
-app.use("/api/v1/auth", authLimiter);
 
 // Configure CORS
 // Browser origins allowed to call the API with credentials. Extra origins
@@ -122,6 +119,12 @@ app.use(cors(corsOptions));
 
 // Handle preflight requests for AI planner
 app.options("/api/v1/ai-planner/*", cors(corsOptions));
+
+// IP blocking and rate limiting go after CORS so their 403/429 responses
+// carry CORS headers; otherwise the browser reports them as CORS failures
+app.use("/api/v1", blockBlacklistedIPs);
+app.use("/api/v1", generalLimiter);
+app.use("/api/v1/auth", authLimiter);
 
 // Cookie parser middleware (before routes)
 app.use(cookieParser());
